@@ -1,0 +1,4 @@
+tokenizer check if it is hex
+tokenizer check if it is bin
+
+tokenizer maybe find the row end when changing the row instead of finding it when printing error
