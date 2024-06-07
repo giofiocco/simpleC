@@ -10,4 +10,5 @@ A compiler for a subset of `C`
 - `<funcdecl> -> <sym> <sym>() <block>`
 - `<block> -> { <code>* }`
 - `<code> -> <statement>`
-- `<statement> -> return <int>;`
+- `<statement> -> return <expr>;`
+- `<expr> -> <int> | <sym>`

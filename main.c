@@ -85,17 +85,13 @@ void eprintf(token_t token, char *fmt, ...) {
   exit(1);
 }
 
-bool token_next(tokenizer_t *tokenizer, token_t *token) {
+token_t token_next(tokenizer_t *tokenizer) {
   assert(tokenizer);
-  assert(token);
 
   if (tokenizer->has_last_token) {
-    *token = tokenizer->last_token;
     tokenizer->has_last_token = false;
-    return true;
+    return tokenizer->last_token;
   }
-
-  *token = (token_t) {0};
 
   token_kind_t table[128] = {0};
   table['('] = T_PARO;
@@ -104,22 +100,24 @@ bool token_next(tokenizer_t *tokenizer, token_t *token) {
   table['}'] = T_BRC;
   table[';'] = T_SEMICOLON;
 
+  token_t token = {0};
+
   switch (*tokenizer->buffer) {
     case '\0': 
-      return false;
+      break;
     case ' ': case '\t': case '\r':
       ++ tokenizer->buffer;
       ++ tokenizer->loc.col;
-      return token_next(tokenizer, token);
+      return token_next(tokenizer);
     case '\n':
       ++ tokenizer->loc.row;
       tokenizer->loc.col = 1;
       ++ tokenizer->buffer;
       tokenizer->loc.row_start = tokenizer->buffer;
-      return token_next(tokenizer, token);
+      return token_next(tokenizer);
     case '(': case ')': case '{': case '}': case ';':
       assert(table[(int)*tokenizer->buffer]);
-      *token = (token_t) {
+      token = (token_t) {
         table[(int)*tokenizer->buffer],
         {tokenizer->buffer, 1},
         tokenizer->loc
@@ -137,7 +135,7 @@ bool token_next(tokenizer_t *tokenizer, token_t *token) {
         ++tokenizer->buffer;
       } while (isalpha(*tokenizer->buffer) || isdigit(*tokenizer->buffer) || *tokenizer->buffer == '_');
       sv_t image = {image_start, len};
-      *token = (token_t) {
+      token = (token_t) {
         is_int ? T_INT : 
           sv_eq(image, sv_from_cstr("return")) ? T_RETURN : 
           T_SYM,
@@ -145,29 +143,25 @@ bool token_next(tokenizer_t *tokenizer, token_t *token) {
                tokenizer->loc
       };
       if (!is_int && isdigit(image_start[0])) {
-        eprintf(*token, "SYM cannot start with digit");
+        eprintf(token, "SYM cannot start with digit");
       }
       tokenizer->loc.col += len;
   }
 
-  return true;
+  return token;
 }
 
-bool token_peek(tokenizer_t *tokenizer, token_t *token) {
+token_t token_peek(tokenizer_t *tokenizer) {
   assert(tokenizer);
-  assert(token);
 
   if (tokenizer->has_last_token) {
-    *token = tokenizer->last_token;
-    return true;
+    return tokenizer->last_token;
   }
-  if (!token_next(tokenizer, token)) { return false; }
-  tokenizer->last_token = *token;
+  token_t token = token_next(tokenizer);
+  tokenizer->last_token = token;
   tokenizer->has_last_token = true;
-
-  return true;
+  return token;
 }
-
 
 char *token_kind_to_string(token_kind_t kind) {
   switch (kind) {
@@ -192,11 +186,23 @@ void token_dump(token_t token) {
       token.loc.col);
 }
 
+token_t expect_token_kind(tokenizer_t *tokenizer, token_kind_t kind) {
+  assert(tokenizer);
+  token_t token = token_next(tokenizer);
+  if (token.kind != kind) {
+    eprintf(token, "expected '%s' found '%s'", 
+        token_kind_to_string(kind),
+        token_kind_to_string(token.kind));
+  }
+  return token;
+}
+
 typedef enum {
   A_NONE,
   A_FUNCDECL,
   A_BLOCK,
   A_RETURN,
+  A_EXPR,
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -212,8 +218,11 @@ typedef struct ast_t_ {
       struct ast_t_ *next;
     } block;
     struct {
-      token_t tok;
+      struct ast_t_ *expr;
     } return_;
+    struct {
+      token_t tok;
+    } expr;
   } as;
 } ast_t;
 
@@ -245,31 +254,37 @@ void ast_dump(ast_t *ast) {
       printf(")");
       break;
     case A_RETURN:
-      printf("RETURN(" SV_FMT ")", 
-          SV_UNPACK(ast->as.return_.tok.image));
+      printf("RETURN(");
+      ast_dump(ast->as.return_.expr);
+      printf(")");
+      break;
+    case A_EXPR:
+      printf("EXPR(" SV_FMT ")", 
+          SV_UNPACK(ast->as.expr.tok.image));
       break;
   }
 }
 
-token_t expect_token_kind(tokenizer_t *tokenizer, token_kind_t kind) {
-  assert(tokenizer);
-  token_t token;
-  if (!token_next(tokenizer, &token) || token.kind != kind) {
-    eprintf(token, "expected '%s' found '%s'", 
-        token_kind_to_string(kind),
+ast_t *parse_expr(tokenizer_t *tokenizer) {
+assert(tokenizer);
+
+  token_t token = token_next(tokenizer);
+  if (token.kind != T_SYM && token.kind != T_INT) {
+    eprintf(token, "expected SYM or INT found '%s'", 
         token_kind_to_string(token.kind));
   }
-  return token;
+
+  return ast_malloc((ast_t){A_EXPR, {.expr = {token}}});
 }
 
 ast_t *parse_code(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   expect_token_kind(tokenizer, T_RETURN);
-  token_t num = expect_token_kind(tokenizer, T_INT);
+  ast_t *expr = parse_expr(tokenizer);
   expect_token_kind(tokenizer, T_SEMICOLON);
 
-  return ast_malloc((ast_t){A_RETURN, {.return_ = {num}}});
+  return ast_malloc((ast_t){A_RETURN, {.return_ = {expr}}});
 }
 
 ast_t *parse_block(tokenizer_t *tokenizer) {
@@ -284,8 +299,7 @@ ast_t *parse_block(tokenizer_t *tokenizer) {
   ast_t *block = &ast;
   ast_t *code = NULL;
 
-  token_t token;
-  while (token_peek(tokenizer, &token) && token.kind != T_BRC) {
+  while (token_peek(tokenizer).kind != T_BRC) {
     code = parse_code(tokenizer);
     if (code) {
       block->as.block.next = ast_malloc((ast_t){A_BLOCK, {.block = {code, NULL}}});
