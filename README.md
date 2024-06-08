@@ -10,5 +10,8 @@ A compiler for a subset of `C`
 - `<funcdecl> -> <sym> <sym>() <block>`
 - `<block> -> { <code>* }`
 - `<code> -> <statement>`
-- `<statement> -> return <expr>;`
-- `<expr> -> <int> | <sym>`
+- `<statement> -> return <expr>\?; | <sym> <sym> \(= <expr>\)\?;`
+- `<expr> -> <term> \(+ <term> | - <term>\)\*`
+- `<term> -> <unary> \(* <unary> | / <unary>\)\*`
+- `<unary> -> + <fac> | - <fac> | <fac>`
+- `<fac> -> <int> | <sym>`
