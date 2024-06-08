@@ -13,5 +13,5 @@ A compiler for a subset of `C`
 - `<statement> -> return <expr>\?; | <sym> <sym> \(= <expr>\)\?;`
 - `<expr> -> <term> \(+ <term> | - <term>\)\*`
 - `<term> -> <unary> \(* <unary> | / <unary>\)\*`
-- `<unary> -> + <fac> | - <fac> | <fac>`
+- `<unary> -> + <fac> | - <fac> | <fac> | &<sym>`
 - `<fac> -> <int> | <sym>`

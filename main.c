@@ -43,6 +43,7 @@ typedef enum {
   T_STAR,
   T_SLASH,
   T_EQUAL,
+  T_AND,
 } token_kind_t;
 
 typedef struct {
@@ -111,6 +112,7 @@ token_t token_next(tokenizer_t *tokenizer) {
   table['*'] = T_STAR;
   table['/'] = T_SLASH;
   table['='] = T_EQUAL;
+  table['&'] = T_AND;
 
   token_t token = {0};
 
@@ -129,7 +131,7 @@ token_t token_next(tokenizer_t *tokenizer) {
       return token_next(tokenizer);
     case '(': case ')': case '{': case '}': case ';':
     case '+': case '-': case '*': case '/':
-    case '=':
+    case '=': case '&':
       assert(table[(int)*tokenizer->buffer]);
       token = (token_t) {
         table[(int)*tokenizer->buffer],
@@ -193,6 +195,7 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_STAR: return "STAR";
     case T_SLASH: return "SLASH";
     case T_EQUAL: return "EQUAL";
+    case T_AND: return "AND";
   }
   assert(0);
 }
@@ -565,10 +568,14 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   token_t token = token_peek(tokenizer);
-  if (token.kind == T_PLUS || token.kind == T_MINUS) {
-    token_next(tokenizer);
-    ast_t *arg = parse_fac(tokenizer);
-    return ast_malloc((ast_t){A_UNARYOP, token, {0}, {.unaryop = {token, arg}}});
+  switch (token.kind) {
+    case T_PLUS: case T_MINUS:
+    case T_AND:
+      token_next(tokenizer);
+      ast_t *arg = parse_fac(tokenizer);
+      return ast_malloc((ast_t){A_UNARYOP, token, {0}, {.unaryop = {token, arg}}});
+    default:
+      break;
   }
 
   return parse_fac(tokenizer);
@@ -784,9 +791,17 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       break;
     case A_BINARYOP:
-      TODO;
+      assert(ast->as.binaryop.lhs);
+      typecheck_expandable(ast->as.binaryop.lhs, state, (type_t){TY_INT, {{0}}});
+      assert(ast->as.binaryop.rhs);
+      typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, {{0}}});
+      ast->type.kind = TY_INT;
+      break;
     case A_UNARYOP:
-      TODO;
+      assert(ast->as.unaryop.arg);
+      typecheck_expandable(ast->as.unaryop.arg, state, (type_t){TY_INT, {{0}}});
+      ast->type.kind = TY_INT;
+      break;
     case A_FAC:
       if (ast->as.fac.tok.kind == T_INT) {
         ast->type.kind = TY_INT;
@@ -847,12 +862,21 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_UNARYOP:
-      if (ast->as.unaryop.op.kind == T_MINUS) {
-        assert(ast->as.unaryop.arg);
-        compile(ast->as.unaryop.arg, state);
-        printf("RAM_BL 0x00 SUB\n\t");
-      } else {
-        assert(0);
+      assert(ast->as.unaryop.arg);
+      compile(ast->as.unaryop.arg, state);
+      switch (ast->as.unaryop.op.kind) {
+        case T_MINUS:
+          printf("RAM_BL 0x00 SUB\n\t");
+          break;
+        case T_AND:
+          {
+            symbol_t *s = state_find_symbol(state, ast->as.unaryop.arg->as.fac.tok);
+            int num = 2*(state->sp - s->info.local);
+            assert(num < 256 && num >= 0);
+            printf("SP_A RAM_BL 0x%02X SUM\n\t", num);
+          } break;
+        default:
+          assert(0);
       }
       break;
     case A_FAC: 
@@ -862,7 +886,7 @@ void compile(ast_t *ast, state_t *state) {
           printf("RAM_A 0x%04d\n\t", atoi(token.image.start));
         } else if (token.kind == T_SYM) {
           symbol_t *s = state_find_symbol(state, token); 
-          int num = state->sp - s->info.local;
+          int num = 2*(state->sp - s->info.local);
           assert(num < 256 && num >= 0);
           if (num == 1) {
             printf("PEEKA\n\t");
@@ -887,7 +911,7 @@ void compile(ast_t *ast, state_t *state) {
 }
 
 int main() {
-  char *buffer = "int main() { int a = 2; return a; }";
+  char *buffer = "int main() { int a = 2; return &a; }";
 
   tokenizer_t tokenizer = {0};
   tokenizer_init(&tokenizer, buffer, "boh");
