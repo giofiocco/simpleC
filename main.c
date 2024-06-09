@@ -208,7 +208,7 @@ void token_dump(token_t token) {
       token.loc.col);
 }
 
-token_t expect_token_kind(tokenizer_t *tokenizer, token_kind_t kind) {
+token_t token_expect(tokenizer_t *tokenizer, token_kind_t kind) {
   assert(tokenizer);
   token_t token = token_next(tokenizer);
   if (token.kind != kind) {
@@ -236,11 +236,13 @@ typedef struct type_t_ {
   TY_CHAR,
   TY_INT,
   TY_FUNC,
+  TY_PTR,
   } kind;
   union {
     struct {
       struct type_t_ *ret;
     } func;
+    struct type_t_ *ptr;
   } as;
 } type_t;
 
@@ -263,6 +265,10 @@ void type_free(type_t *type) {
     case TY_FUNC:
       type_free(type->as.func.ret);
       free(type->as.func.ret);
+      break;
+    case TY_PTR:
+      type_free(type->as.ptr);
+      free(type->as.ptr);
       break;
   } 
 }
@@ -288,41 +294,53 @@ void type_dump(type_t *type) {
       assert(type->as.func.ret);
       type_dump(type->as.func.ret);
       break;
+    case TY_PTR:
+      printf("PTR ");
+      assert(type->as.ptr);
+      type_dump(type->as.ptr);
+      break;
   }
 }
 
-void type_dump_to_string(type_t *type, char **str, int *size) {
+char *type_dump_to_string(type_t *type) {
   assert(type);
-  assert(str);
-  assert(*str);
-  assert(size);
-  assert(*size > 0);
+  
+  char *string = malloc(128);
+  memset(string, 0, 128);
 
   switch (type->kind) {
     case TY_NONE: 
       assert(0);
     case TY_VOID:
-      if (*size < 4) { **str = '_'; return; }
-      strcpy(*str, "VOID"); 
-      *size -= 4; *str += 4;
+      strcpy(string, "VOID");
       break;
     case TY_CHAR:
-      if (*size < 4) { **str = '_'; return; }
-      strcpy(*str, "CHAR"); 
-      *size -= 4; *str += 4;
+      strcpy(string, "CHAR");
       break;
     case TY_INT:
-      if (*size < 4) { **str = '_'; return; }
-      strcpy(*str, "INT"); 
-      *size -= 3; *str += 3;
+      strcpy(string, "INT");
       break;
     case TY_FUNC:
-       if (*size < 5) { **str = '_'; return; }
-      strcpy(*str, "FUNC "); 
-      *size -= 5; *str += 5;
-      type_dump_to_string(type->as.func.ret, str, size);
-     break;
+      {
+        strcpy(string, "FUNC ");
+        assert(type->as.func.ret);
+        char *str = type_dump_to_string(type->as.func.ret);
+        assert(strlen(str) < 128 - 5);
+        strcpy(string + 5, str);
+        free(str);
+      } break;
+    case TY_PTR:
+      {
+        strcpy(string, "PTR ");
+        assert(type->as.ptr);
+        char *str = type_dump_to_string(type->as.ptr);
+        assert(strlen(str) < 128 - 4);
+        strcpy(string + 4, str);
+        free(str);
+      } break;
   }
+
+  return string;
 }
 
 bool type_cmp(type_t *a, type_t *b) {
@@ -337,6 +355,8 @@ bool type_cmp(type_t *a, type_t *b) {
         return true;
       case TY_FUNC:
         return type_cmp(a->as.func.ret, b->as.func.ret);
+      case TY_PTR:
+        return type_cmp(a->as.ptr, b->as.ptr);
     }
   }
   return false;
@@ -359,7 +379,7 @@ typedef struct ast_t_ {
   type_t type;
   union {
     struct {
-      token_t type;
+      type_t type;
       token_t name;
       struct ast_t_ *block;
     } funcdecl;
@@ -383,7 +403,7 @@ typedef struct ast_t_ {
       token_t tok;
     } fac;
     struct {
-      token_t type;
+      type_t type;
       token_t name;
       struct ast_t_ *expr;
     } decl;
@@ -438,8 +458,9 @@ void ast_dump(ast_t *ast) {
     case A_NONE: 
       assert(0);
     case A_FUNCDECL:
-      printf("FUNCDECL(" SV_FMT " " SV_FMT " ", 
-          SV_UNPACK(ast->as.funcdecl.type.image),
+      printf("FUNCDECL(");
+      type_dump(&ast->as.funcdecl.type);
+      printf(" " SV_FMT " ", 
           SV_UNPACK(ast->as.funcdecl.name.image));
       ast_dump(ast->as.funcdecl.block);
       printf(") {");
@@ -461,7 +482,6 @@ void ast_dump(ast_t *ast) {
       printf(") {");
       type_dump(&ast->type);
       printf("}");
-
       break;
     case A_BINARYOP:
       printf("BINARYOP(" SV_FMT " ", 
@@ -488,8 +508,9 @@ void ast_dump(ast_t *ast) {
       printf("}");
       break;
     case A_DECL:
-      printf("DECL(" SV_FMT " " SV_FMT " ", 
-          SV_UNPACK(ast->as.decl.type.image),
+      printf("DECL(");
+      type_dump(&ast->as.decl.type);
+      printf(" " SV_FMT " ", 
           SV_UNPACK(ast->as.decl.name.image));
       ast_dump(ast->as.decl.expr);
       printf(") {");
@@ -550,6 +571,29 @@ symbol_t *state_find_symbol(state_t *state, token_t token) {
   }
   eprintf(token, "symbol not declared: " SV_FMT, SV_UNPACK(token.image));
   assert(0);
+}
+
+type_t parse_type(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  type_t type = {0};
+  token_t token = token_expect(tokenizer, T_SYM);
+
+  if (sv_eq(token.image, sv_from_cstr("int"))) {
+    type.kind = TY_INT;
+  } else if (sv_eq(token.image, sv_from_cstr("char"))) {
+    type.kind = TY_CHAR;
+  } else if (sv_eq(token.image, sv_from_cstr("void"))) {
+    type.kind = TY_VOID;
+  } else {
+    eprintf(token, "is not a type");
+  } 
+
+  if (token_next_if_kind(tokenizer, T_STAR)) {
+    type = (type_t) {TY_PTR, {.ptr = type_malloc(type)}};
+  }
+
+  return type;
 }
 
 ast_t *parse_fac(tokenizer_t *tokenizer) {
@@ -618,19 +662,19 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
     ast_t *expr = NULL;
     if (!token_next_if_kind(tokenizer, T_SEMICOLON)) {
       expr = parse_expr(tokenizer);
-      expect_token_kind(tokenizer, T_SEMICOLON);
+      token_expect(tokenizer, T_SEMICOLON);
     }
     return ast_malloc((ast_t){A_RETURN, token, {0}, {.return_ = {expr}}});
 
   } else if (token.kind == T_SYM) {
-    token_t type = token_next(tokenizer);
-    token_t name = expect_token_kind(tokenizer, T_SYM);
+    type_t type = parse_type(tokenizer);
+    token_t name = token_expect(tokenizer, T_SYM);
     ast_t *expr = NULL;
     if (token_next_if_kind(tokenizer, T_EQUAL)) {
       expr = parse_expr(tokenizer);
     }
-    expect_token_kind(tokenizer, T_SEMICOLON);
-    return ast_malloc((ast_t){A_DECL, type, {0}, {.decl = {type, name, expr}}});
+    token_expect(tokenizer, T_SEMICOLON);
+    return ast_malloc((ast_t){A_DECL, name, {0}, {.decl = {type, name, expr}}});
   }
 
   eprintf(token, "expected return or decl statement");
@@ -646,7 +690,7 @@ ast_t *parse_code(tokenizer_t *tokenizer) {
 ast_t *parse_block(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  token_t token = expect_token_kind(tokenizer, T_BRO);
+  token_t token = token_expect(tokenizer, T_BRO);
 
   ast_t ast = {A_BLOCK, token, {0}, {.block = {NULL, NULL}}};
 
@@ -666,7 +710,7 @@ ast_t *parse_block(tokenizer_t *tokenizer) {
     }
   } 
 
-  expect_token_kind(tokenizer, T_BRC);
+  token_expect(tokenizer, T_BRC);
 
   return ast_malloc(ast);
 }
@@ -674,15 +718,15 @@ ast_t *parse_block(tokenizer_t *tokenizer) {
 ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  token_t type = expect_token_kind(tokenizer, T_SYM);
-  token_t name = expect_token_kind(tokenizer, T_SYM);
+  type_t type = parse_type(tokenizer);
+  token_t name = token_expect(tokenizer, T_SYM);
 
-  expect_token_kind(tokenizer, T_PARO);
-  expect_token_kind(tokenizer, T_PARC);
+  token_expect(tokenizer, T_PARO);
+  token_expect(tokenizer, T_PARC);
 
   ast_t *block = parse_block(tokenizer);
 
-  return ast_malloc((ast_t){A_FUNCDECL, type, {0}, {.funcdecl = {type, name, block}}});
+  return ast_malloc((ast_t){A_FUNCDECL, name, {0}, {.funcdecl = {type, name, block}}});
 } 
 
 ast_t *parse(tokenizer_t *tokenizer) {
@@ -691,35 +735,18 @@ ast_t *parse(tokenizer_t *tokenizer) {
   return parse_funcdecl(tokenizer);
 }
 
-type_t parse_type(token_t token) {
-  type_t type = {0};
-  if (sv_eq(token.image, sv_from_cstr("int"))) {
-    type.kind = TY_INT;
-  } else if (sv_eq(token.image, sv_from_cstr("char"))) {
-    type.kind = TY_CHAR;
-  } else if (sv_eq(token.image, sv_from_cstr("void"))) {
-    type.kind = TY_VOID;
-  } else {
-    eprintf(token, "is not a type");
-  } 
-  return type;
-}
-
 void typecheck(ast_t *ast, state_t *state);
 void typecheck_expect(ast_t *ast, state_t *state, type_t type) {
   assert(ast);
   typecheck(ast, state);
 
-  if (type_cmp(&ast->type, &type)) { return; }
 
-  int size = 128;
-  char str[128] = {0};
-  char *str2 = str;
-  type_dump_to_string(&type, &str2, &size);
-  str2 += 1; size -= 1;
-  char *str3 = str2;
-  type_dump_to_string(&ast->type, &str2, &size);
-  eprintf(ast->forerror, "expected '%s', found '%s'", str, str3);
+  if (type_cmp(&ast->type, &type)) { return; }
+  char *expectstr = type_dump_to_string(&type);
+  char *foundstr = type_dump_to_string(&ast->type);
+  eprintf(ast->forerror, "expected '%s', found '%s'", expectstr, foundstr);
+  free(expectstr);
+  free(foundstr);
 }
 
 void typecheck_expandable(ast_t *ast, state_t *state, type_t type) {
@@ -731,14 +758,7 @@ void typecheck_expandable(ast_t *ast, state_t *state, type_t type) {
     return;
   }
 
-  int size = 128;
-  char str[128] = {0};
-  char *str2 = str;
-  type_dump_to_string(&type, &str2, &size);
-  str2 += 1; size -= 1;
-  char *str3 = str2;
-  type_dump_to_string(&ast->type, &str2, &size);
-  eprintf(ast->forerror, "expected '%s', found '%s'", str, str3);
+  typecheck_expect(ast, state, type);
 }
 
 void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
@@ -771,10 +791,9 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_FUNCDECL:
       {
         state_push_scope(state);
-        type_t type = parse_type(ast->as.funcdecl.type);
-        typecheck_funcbody(ast->as.funcdecl.block, state, type);
+        typecheck_funcbody(ast->as.funcdecl.block, state, ast->as.funcdecl.type);
         state_drop_scope(state);
-        ast->type = (type_t) {TY_FUNC, {.func = {type_malloc(type)}}};
+        ast->type = (type_t) {TY_FUNC, {.func = {type_malloc(ast->as.funcdecl.type)}}};
       } break;
     case A_BLOCK:
       assert(ast->as.block.code);
@@ -785,7 +804,7 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_RETURN:
       typecheck(ast->as.return_.expr, state);
       if (ast->as.return_.expr) {
-        ast->type.kind = ast->as.return_.expr->type.kind;
+        ast->type = ast->as.return_.expr->type;
       } else {
         ast->type.kind = TY_VOID;
       }
@@ -799,8 +818,18 @@ void typecheck(ast_t *ast, state_t *state) {
       break;
     case A_UNARYOP:
       assert(ast->as.unaryop.arg);
-      typecheck_expandable(ast->as.unaryop.arg, state, (type_t){TY_INT, {{0}}});
-      ast->type.kind = TY_INT;
+      switch (ast->as.unaryop.op.kind) {
+        case T_MINUS:
+          typecheck_expandable(ast->as.unaryop.arg, state, (type_t){TY_INT, {{0}}});
+          ast->type.kind = TY_INT;
+          break;
+        case T_AND:
+          typecheck(ast->as.unaryop.arg, state);
+          ast->type = (type_t){TY_PTR, {.ptr = type_malloc(ast->as.unaryop.arg->type)}};
+          break;
+        default:
+          assert(0);
+      }
       break;
     case A_FAC:
       if (ast->as.fac.tok.kind == T_INT) {
@@ -814,11 +843,10 @@ void typecheck(ast_t *ast, state_t *state) {
       break;
     case A_DECL:
       {
-        type_t type = parse_type(ast->as.decl.type);
         if (ast->as.decl.expr) {
-          typecheck_expandable(ast->as.decl.expr, state, type);
+          typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
         }
-        state_add_local_symbol(state, ast->as.decl.name.image, type);
+        state_add_local_symbol(state, ast->as.decl.name.image, ast->as.decl.type);
         ast->type.kind = TY_VOID;
       } break;
   }
@@ -898,8 +926,7 @@ void compile(ast_t *ast, state_t *state) {
         }
       } break;
     case A_DECL:
-      type_t type = parse_type(ast->as.decl.type);
-      state_add_local_symbol(state, ast->as.decl.name.image, type);
+      state_add_local_symbol(state, ast->as.decl.name.image, ast->as.decl.type);
       if (ast->as.decl.expr) {
         compile(ast->as.decl.expr, state);
         printf("PUSHA\n\t");
