@@ -1,3 +1,7 @@
+defers
+
+parser assign deref and name into one thing
+
 tokenizer check if it is hex
 tokenizer check if it is bin
 

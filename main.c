@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <string.h>
+#include <setjmp.h>
 
 #define TODO assert(0 && "TODO")
 
@@ -73,7 +74,10 @@ void tokenizer_init(tokenizer_t *tokenizer, char *buffer, char *filename) {
   };
 } 
 
+static bool catch = false;
+static jmp_buf catch_buf;
 void eprintf(token_t token, char *fmt, ...) {
+  if (catch) { catch = false; longjmp(catch_buf, 1); }
   char *row_end = token.loc.row_start;
   while (*row_end != '\n' && *row_end != '\0') { ++row_end; }
   int row_len = row_end - token.loc.row_start;
@@ -160,6 +164,7 @@ token_t token_next(tokenizer_t *tokenizer) {
       };
       if (!is_int && isdigit(image_start[0])) {
         eprintf(token, "SYM cannot start with digit");
+        exit(1);
       }
       tokenizer->loc.col += len;
   }
@@ -253,6 +258,28 @@ type_t *type_malloc(type_t type) {
   return ptr;
 }
 
+type_t type_clone(type_t type) {
+  type_t clone = {type.kind, {{0}}};
+
+  switch (type.kind) {
+    case TY_NONE:
+    case TY_VOID:
+    case TY_CHAR:
+    case TY_INT:
+      break;
+    case TY_FUNC:
+      assert(type.as.func.ret);
+      clone.as.func.ret = type_malloc(*type.as.func.ret);
+      break;
+    case TY_PTR:
+      assert(type.as.ptr);
+      clone.as.ptr = type_malloc(*type.as.ptr);
+      break;
+  }
+
+  return clone;
+}
+
 void type_free(type_t *type) {
   if (!type) { return; }
 
@@ -304,7 +331,7 @@ void type_dump(type_t *type) {
 
 char *type_dump_to_string(type_t *type) {
   assert(type);
-  
+
   char *string = malloc(128);
   memset(string, 0, 128);
 
@@ -371,6 +398,7 @@ typedef enum {
   A_UNARYOP,
   A_FAC,
   A_DECL,
+  A_ASSIGN,
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -407,6 +435,11 @@ typedef struct ast_t_ {
       token_t name;
       struct ast_t_ *expr;
     } decl;
+    struct {
+      bool deref;
+      token_t name;
+      struct ast_t_ *expr;
+    } assign;
   } as;
 } ast_t;
 
@@ -446,6 +479,9 @@ void ast_free(ast_t *ast) {
       break;
     case A_DECL:
       ast_free(ast->as.decl.expr);
+      break;
+    case A_ASSIGN:
+      ast_free(ast->as.assign.expr);
       break;
   }
   free(ast);
@@ -513,6 +549,15 @@ void ast_dump(ast_t *ast) {
       printf(" " SV_FMT " ", 
           SV_UNPACK(ast->as.decl.name.image));
       ast_dump(ast->as.decl.expr);
+      printf(") {");
+      type_dump(&ast->type);
+      printf("}");
+      break;
+ case A_ASSIGN:
+      printf("ASSIGN(%s " SV_FMT " ", 
+          ast->as.assign.deref ? "true" : "false",
+          SV_UNPACK(ast->as.assign.name.image));
+      ast_dump(ast->as.assign.expr);
       printf(") {");
       type_dump(&ast->type);
       printf("}");
@@ -653,10 +698,23 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
   return a;
 }
 
+ast_t *parse_decl(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+  type_t type = parse_type(tokenizer);
+  token_t name = token_expect(tokenizer, T_SYM);
+  ast_t *expr = NULL;
+  if (token_next_if_kind(tokenizer, T_EQUAL)) {
+    expr = parse_expr(tokenizer);
+  }
+  token_expect(tokenizer, T_SEMICOLON);
+  return ast_malloc((ast_t){A_DECL, name, {0}, {.decl = {type, name, expr}}});
+}
+
 ast_t *parse_statement(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   token_t token = token_peek(tokenizer);
+
   if (token.kind == T_RETURN) {
     token_next(tokenizer);
     ast_t *expr = NULL;
@@ -665,20 +723,36 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
       token_expect(tokenizer, T_SEMICOLON);
     }
     return ast_malloc((ast_t){A_RETURN, token, {0}, {.return_ = {expr}}});
-
-  } else if (token.kind == T_SYM) {
-    type_t type = parse_type(tokenizer);
-    token_t name = token_expect(tokenizer, T_SYM);
-    ast_t *expr = NULL;
-    if (token_next_if_kind(tokenizer, T_EQUAL)) {
-      expr = parse_expr(tokenizer);
-    }
-    token_expect(tokenizer, T_SEMICOLON);
-    return ast_malloc((ast_t){A_DECL, name, {0}, {.decl = {type, name, expr}}});
   }
 
-  eprintf(token, "expected return or decl statement");
-  return NULL;
+  tokenizer_t savetok = *tokenizer;
+  catch = true;
+  if (setjmp(catch_buf) == 0) {
+   ast_t *ast = parse_decl(tokenizer);
+    catch = false;
+    return ast;
+  }
+  *tokenizer = savetok;
+
+  bool deref = false;
+  if (token.kind == T_STAR) {
+    token_next(tokenizer);
+    deref = true;
+  }
+
+  //catch = true;
+  if (setjmp(catch_buf) == 0) {
+    token_t name = token_expect(tokenizer, T_SYM);
+    token_expect(tokenizer, T_EQUAL);
+    ast_t *expr = parse_expr(tokenizer);
+    ast_t *ast = ast_malloc((ast_t){A_ASSIGN, name, {0}, {.assign = {deref, name, expr}}});
+    token_expect(tokenizer, T_SEMICOLON);
+    catch = false;
+    return ast;
+  }
+
+  eprintf(token, "expected a statement");
+  assert(0);
 }
 
 ast_t *parse_code(tokenizer_t *tokenizer) {
@@ -804,7 +878,7 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_RETURN:
       typecheck(ast->as.return_.expr, state);
       if (ast->as.return_.expr) {
-        ast->type = ast->as.return_.expr->type;
+        ast->type = type_clone(ast->as.return_.expr->type);
       } else {
         ast->type.kind = TY_VOID;
       }
@@ -827,6 +901,16 @@ void typecheck(ast_t *ast, state_t *state) {
           typecheck(ast->as.unaryop.arg, state);
           ast->type = (type_t){TY_PTR, {.ptr = type_malloc(ast->as.unaryop.arg->type)}};
           break;
+        case T_STAR:
+          typecheck(ast->as.unaryop.arg, state);
+          if (ast->as.unaryop.arg->type.kind != TY_PTR) {
+            char *type = type_dump_to_string(&ast->as.unaryop.arg->type);
+            eprintf(ast->as.unaryop.arg->forerror, "cannot dereference non PTR type: '%s'", type);
+            free(type);
+          }
+          type_dump(ast->as.unaryop.arg->type.as.ptr);
+          ast->type = type_clone(*ast->as.unaryop.arg->type.as.ptr);
+          break;
         default:
           assert(0);
       }
@@ -836,7 +920,7 @@ void typecheck(ast_t *ast, state_t *state) {
         ast->type.kind = TY_INT;
       } else if (ast->as.fac.tok.kind == T_SYM) {
         symbol_t *s = state_find_symbol(state, ast->as.fac.tok);
-        ast->type = s->type;
+        ast->type = type_clone(s->type);
       } else {
         assert(0);
       }
@@ -849,8 +933,39 @@ void typecheck(ast_t *ast, state_t *state) {
         state_add_local_symbol(state, ast->as.decl.name.image, ast->as.decl.type);
         ast->type.kind = TY_VOID;
       } break;
+    case A_ASSIGN:
+      {
+        symbol_t *s = state_find_symbol(state, ast->as.assign.name);
+        if (ast->as.assign.deref) {
+          if (s->type.kind != TY_PTR) {
+            char *type = type_dump_to_string(&s->type);
+            eprintf(ast->forerror, "cannot dereference non PTR type: '%s'", type);
+            free(type);
+          }
+          typecheck_expect(ast->as.assign.expr, state, *s->type.as.ptr);
+          ast->type = type_clone(*s->type.as.ptr);
+        } else {
+          typecheck_expect(ast->as.assign.expr, state, s->type);
+          ast->type = type_clone(s->type);
+        }
+      }
   }
 }
+
+/*
+   void add_returns(ast_t *ast) {
+   assert(ast);
+
+   if (ast->kind != A_FUNCDECL) { return; }
+   ast_t *block = ast->as.funcdecl.block;
+   while (true) {
+   add_returns(block->code);
+   if (!block->next) { break; }
+   block = block->next;
+   };
+   block->next = ast_malloc((ast_t){});
+   }
+   */
 
 void compile(ast_t *ast, state_t *state) {
   assert(state);
@@ -870,8 +985,7 @@ void compile(ast_t *ast, state_t *state) {
       compile(ast->as.block.next, state);
       break;
     case A_RETURN: 
-      assert(ast->as.return_.expr);
-      compile(ast->as.return_.expr, state);
+      if (ast->as.return_.expr) { compile(ast->as.return_.expr, state); }
       for (int i = 0; i < state->sp; ++i) { printf("INCSP "); }
       printf("RET\n\t");
       break;
@@ -891,16 +1005,16 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_UNARYOP:
       assert(ast->as.unaryop.arg);
-      compile(ast->as.unaryop.arg, state);
       switch (ast->as.unaryop.op.kind) {
         case T_MINUS:
+          compile(ast->as.unaryop.arg, state);
           printf("RAM_BL 0x00 SUB\n\t");
           break;
         case T_AND:
           {
             symbol_t *s = state_find_symbol(state, ast->as.unaryop.arg->as.fac.tok);
-            int num = 2*(state->sp - s->info.local);
-            assert(num < 256 && num >= 0);
+            int num = 2*(state->sp - s->info.local - 1);
+            assert(num < 256 && num >= 2);
             printf("SP_A RAM_BL 0x%02X SUM\n\t", num);
           } break;
         default:
@@ -915,11 +1029,11 @@ void compile(ast_t *ast, state_t *state) {
         } else if (token.kind == T_SYM) {
           symbol_t *s = state_find_symbol(state, token); 
           int num = 2*(state->sp - s->info.local);
-          assert(num < 256 && num >= 0);
-          if (num == 1) {
+          assert(num < 256 && num >= 2);
+          if (num == 2) {
             printf("PEEKA\n\t");
           } else {
-            printf("PEEKAR 0x%02X\n\t", 2*num);
+            printf("PEEKAR 0x%02X\n\t", num);
           }
         } else {
           assert(0);
@@ -934,14 +1048,39 @@ void compile(ast_t *ast, state_t *state) {
         printf("DECSP\n\t");
       }
       break;
+    case A_ASSIGN:
+      {
+        symbol_t *s = state_find_symbol(state, ast->as.assign.name);
+        if (ast->as.assign.deref) {
+          int num = 2*(state->sp - s->info.local);
+          assert(num < 256 && num >= 2);
+          if (num == 2) {
+            printf("PEEKB\n\t");
+          } else {
+            printf("PEEKAR 0x%02X A_B\n\t", num);
+          }
+          compile(ast->as.assign.expr, state);
+          printf("A_rB\n\t");
+        } else {
+          int num = state->sp - s->info.local;
+          assert(num > 0);
+          compile(ast->as.assign.expr, state);
+          for (int i = 0; i < num; ++i) { printf("INCSP "); }
+          printf("PUSHA ");
+          for (int i = 0; i < num-1; ++i) { printf("DECSP "); }
+          printf("\n\t");
+        }
+      }
   }
 }
 
 int main() {
-  char *buffer = "int main() { int a = 2; return &a; }";
+  char *buffer = "int *main() { int a = 2; int *b = &a; *b = 2; return b; }";
 
   tokenizer_t tokenizer = {0};
   tokenizer_init(&tokenizer, buffer, "boh");
+
+  printf("%s\n", buffer);
 
   ast_t *ast = parse(&tokenizer);
   assert(ast);
