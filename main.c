@@ -625,25 +625,57 @@ void ast_dump(ast_t *ast) {
       break;
   }
 }
-/*
-   typedef struct {
-   enum {
-   B_INST,
-   B_HEX,
-   B_SETLABEL,
-   B_LABEL,
-   B_RELLABEL,
-   } kind;
-   struct {
-   instruction_t inst;
-   int num;
-   sv_t label;
-   } arg;
-   } bytecode_t;
-   */
+
+#define LABEL_MAX 128
+#include "../defs.h"
+
+typedef struct {
+  enum {
+    B_INST,
+    B_HEX,
+    B_HEX2,
+    B_SETLABEL,
+    B_LABEL,
+    B_RELLABEL,
+    B_STRING,
+  } kind;
+  struct {
+    instruction_t inst;
+    int num;
+    char str[LABEL_MAX];
+  } arg;
+} bytecode_t;
+
+void bytecode_dump(bytecode_t b) {
+  switch (b.kind) {
+    case B_INST:
+      printf("%s ", instruction_to_string(b.arg.inst));
+      break;
+    case B_HEX:
+      printf("0x%02X ", b.arg.num);
+      break;
+         case B_HEX2:
+      printf("0x%04X ", b.arg.num);
+      break;
+         case B_SETLABEL:
+      printf("%s: ", b.arg.str);
+      break;
+         case B_LABEL:
+      printf("%s ", b.arg.str);
+      break;
+         case B_RELLABEL:
+      printf("$%s ", b.arg.str);
+      break;
+         case B_STRING:
+      printf("%s ", b.arg.str);
+      break;
+  }
+}
+
 #define SYMBOL_MAX 128
 #define SCOPE_MAX 32
-#define DATA_MAX 4096
+#define DATA_MAX 128
+#define CODE_MAX 128
 
 typedef struct {
   sv_t image;
@@ -662,11 +694,11 @@ typedef struct {
   scope_t scopes[SCOPE_MAX];
   int scope_num;
   int sp;
-  char data[DATA_MAX];
-  int data_num;
   int uli; // unique label id
-  char *compiled;
-  int compiled_num;
+  bytecode_t data[DATA_MAX];
+  int data_num;
+  bytecode_t code[CODE_MAX];
+  int code_num;
 } state_t;
 
 void state_push_scope(state_t *state) {
@@ -700,31 +732,18 @@ symbol_t *state_find_symbol(state_t *state, token_t token) {
   assert(0);
 }
 
-
-void state_data_printf(state_t *state, char *fmt, ...) {
+void code_dump(state_t *state) {
   assert(state);
-  assert(fmt);
-
-  char str[DATA_MAX] = {0};
-  va_list argptr;
-  va_start(argptr, fmt);
-  int len = vsprintf(str, fmt, argptr);
-  va_end(argptr);
-  assert(state->data_num + len < DATA_MAX);
-  memcpy(state->data + state->data_num, str, len);
-  state->data_num += len;
-}
-
-void compile_printf(state_t *state, char *fmt, ...) {
-  assert(state);
-  assert(state->compiled);
-  assert(fmt);
-
-  va_list argptr;
-  va_start(argptr, fmt);
-  int len = vsprintf(state->compiled + state->compiled_num, fmt, argptr);
-  va_end(argptr);
-  state->compiled_num += len;
+  
+  printf("GLOBAL main\n");
+  for (int i = 0; i < state->data_num; ++i) {
+    bytecode_dump(state->data[i]);
+  }
+  if (state->data_num) { printf("\n"); }
+  for (int i = 0; i < state->code_num; ++i) {
+    bytecode_dump(state->code[i]);
+  }
+  printf("\n");
 }
 
 type_t parse_type(tokenizer_t *tokenizer) {
@@ -771,7 +790,7 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
   token_t token = token_peek(tokenizer);
   switch (token.kind) {
     case T_PLUS: case T_MINUS:
-    case T_AND:
+    case T_AND: case T_STAR:
       token_next(tokenizer);
       ast_t *arg = parse_fac(tokenizer);
       return ast_malloc((ast_t){A_UNARYOP, token, {0}, {.unaryop = {token, arg}}});
@@ -838,7 +857,7 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
   }
 
   tokenizer_t savetok = *tokenizer;
-  catch = true;
+  catch = false;
   if (setjmp(catch_buf) == 0) {
     ast_t *ast = parse_decl(tokenizer);
     catch = false;
@@ -1030,7 +1049,6 @@ void typecheck(ast_t *ast, state_t *state) {
             eprintf(ast->as.unaryop.arg->forerror, "cannot dereference non PTR type: '%s'", type);
             free(type);
           }
-          type_dump(ast->as.unaryop.arg->type.as.ptr);
           ast->type = type_clone(*ast->as.unaryop.arg->type.as.ptr);
           break;
         default:
@@ -1097,6 +1115,18 @@ void typecheck(ast_t *ast, state_t *state) {
    }
    */
 
+void data(state_t *state, bytecode_t b) {
+  assert(state);
+  assert(state->data_num + 1 < DATA_MAX);
+  state->data[state->data_num ++] = b;
+}
+
+void code(state_t *state, bytecode_t b) {
+  assert(state);
+  assert(state->code_num + 1 < CODE_MAX);
+  state->code[state->code_num ++] = b;
+}
+
 void compile(ast_t *ast, state_t *state) {
   assert(state);
 
@@ -1106,9 +1136,17 @@ void compile(ast_t *ast, state_t *state) {
     case A_NONE: 
       assert(0);
     case A_FUNCDECL: 
-      compile_printf(state, SV_FMT ":\n", SV_UNPACK(ast->as.funcdecl.name.image));
-      compile(ast->as.funcdecl.block, state);
-      break;
+      {
+        bytecode_t b = {B_SETLABEL, {0}};
+        memcpy(b.arg.str, ast->as.funcdecl.name.image.start, ast->as.funcdecl.name.image.len);
+        code(state, b);
+        compile(ast->as.funcdecl.block, state);
+        if (!(state->code[state->code_num-1].kind == B_INST && 
+              state->code[state->code_num-1].arg.inst == RET)) {
+          for (int i = 0; i < state->sp; ++i) { code(state, (bytecode_t){B_INST, {.inst = INCSP}}); }
+          code(state, (bytecode_t){B_INST, {.inst = RET}});
+        }
+      } break;
     case A_BLOCK: 
       assert(ast->as.block.code);
       compile(ast->as.block.code, state);
@@ -1116,19 +1154,18 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_RETURN: 
       if (ast->as.return_.expr) { compile(ast->as.return_.expr, state); }
-      compile_printf(state, "\t");
-      for (int i = 0; i < state->sp; ++i) { compile_printf(state, "INCSP "); }
-      compile_printf(state, "RET\n");
+      for (int i = 0; i < state->sp; ++i) { code(state, (bytecode_t){B_INST, {.inst = INCSP}}); }
+      code(state, (bytecode_t){B_INST, {.inst = RET}});
       break;
     case A_BINARYOP:
       assert(ast->as.binaryop.lhs);
       compile(ast->as.binaryop.lhs, state);
-      compile_printf(state, "\tA_B\n");
+      code(state, (bytecode_t){B_INST, {.inst = A_B}});
       assert(ast->as.binaryop.rhs);
       compile(ast->as.binaryop.rhs, state);
       switch (ast->as.binaryop.op.kind) {
-        case T_PLUS: compile_printf(state, "\tSUM\n"); break;
-        case T_MINUS: compile_printf(state, "\tSUB\n"); break;
+        case T_PLUS: code(state, (bytecode_t){B_INST, {.inst = SUM}}); break;
+        case T_MINUS: code(state, (bytecode_t){B_INST, {.inst = SUB}}); break;
         case T_STAR: assert(0);
         case T_SLASH: assert(0);
         default: assert(0);
@@ -1139,14 +1176,32 @@ void compile(ast_t *ast, state_t *state) {
       switch (ast->as.unaryop.op.kind) {
         case T_MINUS:
           compile(ast->as.unaryop.arg, state);
-          compile_printf(state, "\tRAM_BL 0x00 SUB\n");
+          code(state, (bytecode_t){B_INST, {.inst = RAM_AL}});
+          code(state, (bytecode_t){B_HEX, {.num = 0}});
+          code(state, (bytecode_t){B_INST, {.inst = SUB}});
           break;
         case T_AND:
           {
+            assert(ast->as.unaryop.arg->kind == A_FAC);
             symbol_t *s = state_find_symbol(state, ast->as.unaryop.arg->as.fac.tok);
             int num = 2*(state->sp - s->info.local - 1);
             assert(num < 256 && num >= 2);
-            compile_printf(state, "\tSP_A RAM_BL 0x%02X SUM\n", num);
+            code(state, (bytecode_t){B_INST, {.inst = SP_A}});
+            code(state, (bytecode_t){B_INST, {.inst = RAM_BL}});
+            code(state, (bytecode_t){B_HEX, {.num = num}});
+            code(state, (bytecode_t){B_INST, {.inst = SUM}});
+          } break;
+        case T_STAR:
+          {
+            compile(ast->as.unaryop.arg, state);
+            assert(ast->as.unaryop.arg->type.kind == TY_PTR);
+            code(state, (bytecode_t){B_INST, {.inst = A_B}});
+            int size = type_size(ast->as.unaryop.arg->type.as.ptr);
+            if (size == 1) {
+              code(state, (bytecode_t){B_INST, {.inst = rB_AL}});
+            } else if (size == 2) {
+              code(state, (bytecode_t){B_INST, {.inst = rB_A}});
+            } else { assert(0); }
           } break;
         default:
           assert(0);
@@ -1155,38 +1210,58 @@ void compile(ast_t *ast, state_t *state) {
     case A_FAC: 
       {
         token_t token = ast->as.fac.tok;
-        if (token.kind == T_INT) {
-          compile_printf(state, "\tRAM_A 0x%04d\n", atoi(token.image.start));
-        } else if (token.kind == T_SYM) {
-          symbol_t *s = state_find_symbol(state, token); 
-          int num = 2*(state->sp - s->info.local);
-          assert(num < 256 && num >= 2);
-          if (num == 2) {
-            compile_printf(state, "\tPEEKA\n");
-          } else {
-            compile_printf(state, "\tPEEKAR 0x%02X\n", num);
-          }
-        } else if (token.kind == T_STRING) {
-          state_data_printf(state, "_%03d: " SV_FMT " 0x00\n", state->uli, SV_UNPACK(token.image));
-          compile_printf(state, "\t_%03d\n", state->uli);
-          ++ state->uli;
-        } else if (token.kind == T_HEX) {
-          if (token.image.len - 2 == 2) {
-            compile_printf(state, "\tRAM_AL " SV_FMT "\n", SV_UNPACK(token.image));
-          } else {
-            compile_printf(state, "\tRAM_A " SV_FMT "\n", SV_UNPACK(token.image));
-          }
-        } else{
-          assert(0);
+        switch (token.kind) {
+          case T_INT:
+            code(state, (bytecode_t){B_INST, {.inst = RAM_A}});
+            code(state, (bytecode_t){B_HEX2, {.num = atoi(token.image.start)}});
+            break;
+          case T_SYM:
+            {
+              symbol_t *s = state_find_symbol(state, token); 
+              int num = 2*(state->sp - s->info.local);
+              assert(num < 256 && num >= 2);
+              if (num == 2) {
+                code(state, (bytecode_t){B_INST, {.inst = PEEKA}});
+              } else {
+                code(state, (bytecode_t){B_INST, {.inst = PEEKAR}});
+                code(state, (bytecode_t){B_HEX, {.num = num}});
+              }
+            } break;
+          case T_STRING:
+            {
+              code(state, (bytecode_t){B_INST, {.inst = RAM_A}});
+              bytecode_t b = {B_SETLABEL, {0}};
+              sprintf(b.arg.str, "_%03d", state->uli);
+              data(state, b);
+              b.kind = B_LABEL;
+              code(state, b);
+              b.kind = B_STRING;
+              memset(b.arg.str, 0, LABEL_MAX);
+              memcpy(b.arg.str, token.image.start, token.image.len);
+              data(state, b);
+              data(state, (bytecode_t){B_HEX, {.num = 0}});
+              ++ state->uli;
+            } break;
+          case T_HEX:
+            if (token.image.len - 2 == 2) {
+              code(state, (bytecode_t){B_INST, {.inst = RAM_AL}});
+              code(state, (bytecode_t){B_HEX, {.num = strtol(token.image.start+2, NULL, 16)}});
+            } else {
+              code(state, (bytecode_t){B_INST, {.inst = RAM_A}});
+              code(state, (bytecode_t){B_HEX2, {.num = strtol(token.image.start+2, NULL, 16)}});
+            }
+            break;
+          default:
+            assert(0);
         }
       } break;
     case A_DECL:
       state_add_local_symbol(state, ast->as.decl.name.image, ast->as.decl.type);
       if (ast->as.decl.expr) {
         compile(ast->as.decl.expr, state);
-        compile_printf(state, "\tPUSHA\n");
+        code(state, (bytecode_t){B_INST, {.inst = PUSHA}});
       } else {
-        compile_printf(state, "\tDECSP\n");
+        code(state, (bytecode_t){B_INST, {.inst = DECSP}});
       }
       break;
     case A_ASSIGN:
@@ -1197,35 +1272,33 @@ void compile(ast_t *ast, state_t *state) {
           int num = 2*(state->sp - s->info.local);
           assert(num < 256 && num >= 2);
           if (num == 2) {
-            compile_printf(state, "\tPEEKB\n");
+            code(state, (bytecode_t){B_INST, {.inst = PEEKB}});
           } else {
-            compile_printf(state, "\tPEEKAR 0x%02X A_B\n", num);
+            code(state, (bytecode_t){B_INST, {.inst = PEEKAR}});
+            code(state, (bytecode_t){B_HEX, {.num = num}});
+            code(state, (bytecode_t){B_INST, {.inst = A_B}});
           }
           compile(ast->as.assign.expr, state);
           int size = type_size(s->type.as.ptr);
           if (size == 1) {
-            compile_printf(state, "\tAL_rB\n");
+            code(state, (bytecode_t){B_INST, {.inst = AL_rB}});
           } else if (size == 2) {
-            compile_printf(state, "\tA_rB\n");
+            code(state, (bytecode_t){B_INST, {.inst = A_rB}});
           } else { assert(0); }
         } else {
           int num = state->sp - s->info.local;
           assert(num > 0);
           compile(ast->as.assign.expr, state);
-          compile_printf(state, "\t");
-          for (int i = 0; i < num; ++i) { compile_printf(state, "INCSP "); }
-          compile_printf(state, "PUSHA ");
-          for (int i = 0; i < num-1; ++i) { compile_printf(state, "DECSP "); }
-          compile_printf(state, "\n");
+          for (int i = 0; i < num; ++i) { code(state, (bytecode_t){B_INST, {.inst = INCSP}}); }
+          code(state, (bytecode_t){B_INST, {.inst = PUSHA}});
+          for (int i = 0; i < num-1; ++i) { code(state, (bytecode_t){B_INST, {.inst = DECSP}}); }
         }
       }
   }
 }
 
-#define COMPILED_MAX (1<<15)
-
 int main() {
-  char *buffer = "int *main() { char *a = \"asd\"; *a = 0x12; }";
+  char *buffer = "int main() { char *a = \"a\"; }";
 
   tokenizer_t tokenizer = {0};
   tokenizer_init(&tokenizer, buffer, "boh");
@@ -1250,13 +1323,9 @@ int main() {
   printf("\n");
 
   state = (state_t) {0};
-  char compiled[COMPILED_MAX] = {0};
-  state.compiled = compiled;
   compile(ast, &state);
 
-  printf("GLOBAL main\n\n");
-  printf("%s\n", state.data);
-  printf("%s\n", state.compiled);
+  code_dump(&state);
 
   ast_free(ast);
 
