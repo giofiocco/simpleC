@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdarg.h>
 #include <ctype.h>
 #include <string.h>
@@ -33,6 +34,8 @@ typedef enum {
   T_NONE,
   T_SYM,
   T_INT,
+  T_HEX,
+  T_STRING,
   T_PARO,
   T_PARC,
   T_BRO,
@@ -145,28 +148,65 @@ token_t token_next(tokenizer_t *tokenizer) {
       ++ tokenizer->buffer;
       ++ tokenizer->loc.col;
       break;
-    default:
-      char *image_start = tokenizer->buffer;
-      bool is_int = isdigit(*tokenizer->buffer) ? true : false;
-      int len = 0;
+    case '"':
+      {
+      char *start = tokenizer->buffer;
       do {
-        if (!isdigit(*tokenizer->buffer)) { is_int = false; }
-        ++len;
-        ++tokenizer->buffer;
-      } while (isalpha(*tokenizer->buffer) || isdigit(*tokenizer->buffer) || *tokenizer->buffer == '_');
-      sv_t image = {image_start, len};
+        ++ tokenizer->buffer;
+      } while (*tokenizer->buffer != '"');
+      ++ tokenizer->buffer;
+      sv_t str = {start, tokenizer->buffer - start};
       token = (token_t) {
-        is_int ? T_INT : 
-          sv_eq(image, sv_from_cstr("return")) ? T_RETURN : 
-          T_SYM,
-               image,
-               tokenizer->loc
+        T_STRING,
+          str,
+          tokenizer->loc
       };
-      if (!is_int && isdigit(image_start[0])) {
-        eprintf(token, "SYM cannot start with digit");
-        exit(1);
+      tokenizer->loc.col += str.len;
+      } break;
+    case '0':
+      if (*(tokenizer->buffer + 1) == 'x' || *(tokenizer->buffer + 1) == 'X') {
+        char *image_start = tokenizer->buffer;
+        tokenizer->buffer += 2;
+        while (isdigit(*tokenizer->buffer) || 
+            ('a' <= *tokenizer->buffer && *tokenizer->buffer <= 'f') ||
+            ('A' <= *tokenizer->buffer && *tokenizer->buffer <= 'F')) {
+          ++ tokenizer->buffer;
+        }
+        token = (token_t) {
+          T_HEX,
+            {image_start, tokenizer->buffer - image_start},
+            tokenizer->loc
+        };
+        if (token.image.len - 2 != 2 && token.image.len - 2 != 4) {
+          eprintf(token, "HEX can be 1 or 2 bytes\n");
+        }
+        tokenizer->loc.col += token.image.len;
+        break;
       }
-      tokenizer->loc.col += len;
+      __attribute__((fallthrough));
+    default:
+      {
+        char *image_start = tokenizer->buffer;
+        bool is_int = isdigit(*tokenizer->buffer) ? true : false;
+        int len = 0;
+        do {
+          if (!isdigit(*tokenizer->buffer)) { is_int = false; }
+          ++len;
+          ++tokenizer->buffer;
+        } while (isalpha(*tokenizer->buffer) || isdigit(*tokenizer->buffer) || *tokenizer->buffer == '_');
+        sv_t image = {image_start, len};
+        token = (token_t) {
+          is_int ? T_INT : 
+            sv_eq(image, sv_from_cstr("return")) ? T_RETURN : 
+            T_SYM,
+            image,
+            tokenizer->loc
+        };
+        if (!is_int && isdigit(image_start[0])) {
+          eprintf(token, "SYM cannot start with digit");
+        }
+        tokenizer->loc.col += len;
+      }
   }
 
   return token;
@@ -189,6 +229,8 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_NONE: return "NONE";
     case T_SYM: return "SYM";
     case T_INT: return "INT";
+    case T_HEX: return "HEX";
+    case T_STRING: return "STRING";
     case T_PARO: return "PARO";
     case T_PARC: return "PARC";
     case T_BRO: return "BRO";
@@ -236,12 +278,12 @@ bool token_next_if_kind(tokenizer_t *tokenizer, token_kind_t kind) {
 
 typedef struct type_t_ {
   enum {
-  TY_NONE,
-  TY_VOID,
-  TY_CHAR,
-  TY_INT,
-  TY_FUNC,
-  TY_PTR,
+    TY_NONE,
+    TY_VOID,
+    TY_CHAR,
+    TY_INT,
+    TY_FUNC,
+    TY_PTR,
   } kind;
   union {
     struct {
@@ -387,6 +429,25 @@ bool type_cmp(type_t *a, type_t *b) {
     }
   }
   return false;
+}
+
+int type_size(type_t *type) {
+  assert(type);
+  switch (type->kind) {
+    case TY_NONE:
+      assert(0);
+    case TY_VOID:
+      return 0;
+    case TY_CHAR:
+      return 1;
+    case TY_INT:
+      return 2;
+    case TY_FUNC:
+      assert(0);
+    case TY_PTR:
+      return 2;
+  }
+  assert(0);
 }
 
 typedef enum {
@@ -553,7 +614,7 @@ void ast_dump(ast_t *ast) {
       type_dump(&ast->type);
       printf("}");
       break;
- case A_ASSIGN:
+    case A_ASSIGN:
       printf("ASSIGN(%s " SV_FMT " ", 
           ast->as.assign.deref ? "true" : "false",
           SV_UNPACK(ast->as.assign.name.image));
@@ -564,9 +625,25 @@ void ast_dump(ast_t *ast) {
       break;
   }
 }
-
+/*
+   typedef struct {
+   enum {
+   B_INST,
+   B_HEX,
+   B_SETLABEL,
+   B_LABEL,
+   B_RELLABEL,
+   } kind;
+   struct {
+   instruction_t inst;
+   int num;
+   sv_t label;
+   } arg;
+   } bytecode_t;
+   */
 #define SYMBOL_MAX 128
 #define SCOPE_MAX 32
+#define DATA_MAX 4096
 
 typedef struct {
   sv_t image;
@@ -585,6 +662,11 @@ typedef struct {
   scope_t scopes[SCOPE_MAX];
   int scope_num;
   int sp;
+  char data[DATA_MAX];
+  int data_num;
+  int uli; // unique label id
+  char *compiled;
+  int compiled_num;
 } state_t;
 
 void state_push_scope(state_t *state) {
@@ -618,6 +700,33 @@ symbol_t *state_find_symbol(state_t *state, token_t token) {
   assert(0);
 }
 
+
+void state_data_printf(state_t *state, char *fmt, ...) {
+  assert(state);
+  assert(fmt);
+
+  char str[DATA_MAX] = {0};
+  va_list argptr;
+  va_start(argptr, fmt);
+  int len = vsprintf(str, fmt, argptr);
+  va_end(argptr);
+  assert(state->data_num + len < DATA_MAX);
+  memcpy(state->data + state->data_num, str, len);
+  state->data_num += len;
+}
+
+void compile_printf(state_t *state, char *fmt, ...) {
+  assert(state);
+  assert(state->compiled);
+  assert(fmt);
+
+  va_list argptr;
+  va_start(argptr, fmt);
+  int len = vsprintf(state->compiled + state->compiled_num, fmt, argptr);
+  va_end(argptr);
+  state->compiled_num += len;
+}
+
 type_t parse_type(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
@@ -645,8 +754,11 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   token_t token = token_next(tokenizer);
-  if (token.kind != T_SYM && token.kind != T_INT) {
-    eprintf(token, "expected SYM or INT found '%s'", 
+  if (token.kind != T_SYM && 
+      token.kind != T_INT && 
+      token.kind != T_STRING && 
+      token.kind != T_HEX) {
+    eprintf(token, "unvalid token for fac: '%s'", 
         token_kind_to_string(token.kind));
   }
 
@@ -728,7 +840,7 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
   tokenizer_t savetok = *tokenizer;
   catch = true;
   if (setjmp(catch_buf) == 0) {
-   ast_t *ast = parse_decl(tokenizer);
+    ast_t *ast = parse_decl(tokenizer);
     catch = false;
     return ast;
   }
@@ -740,12 +852,22 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
     deref = true;
   }
 
-  //catch = true;
+  savetok = *tokenizer;
+  catch = true;
   if (setjmp(catch_buf) == 0) {
     token_t name = token_expect(tokenizer, T_SYM);
     token_expect(tokenizer, T_EQUAL);
     ast_t *expr = parse_expr(tokenizer);
     ast_t *ast = ast_malloc((ast_t){A_ASSIGN, name, {0}, {.assign = {deref, name, expr}}});
+    token_expect(tokenizer, T_SEMICOLON);
+    catch = false;
+    return ast;
+  }
+  *tokenizer = savetok;
+
+  catch = true;
+  if (setjmp(catch_buf) == 0) {
+    ast_t *ast = parse_expr(tokenizer);
     token_expect(tokenizer, T_SEMICOLON);
     catch = false;
     return ast;
@@ -921,6 +1043,14 @@ void typecheck(ast_t *ast, state_t *state) {
       } else if (ast->as.fac.tok.kind == T_SYM) {
         symbol_t *s = state_find_symbol(state, ast->as.fac.tok);
         ast->type = type_clone(s->type);
+      } else if (ast->as.fac.tok.kind == T_STRING) {
+        ast->type = (type_t){TY_PTR, {.ptr = type_malloc((type_t){TY_CHAR, {{0}}})}};
+      } else if (ast->as.fac.tok.kind == T_HEX) {
+        if (ast->as.fac.tok.image.len - 2 == 2) {
+          ast->type.kind = TY_CHAR;
+        } else {
+          ast->type.kind = TY_INT;
+        }
       } else {
         assert(0);
       }
@@ -976,7 +1106,7 @@ void compile(ast_t *ast, state_t *state) {
     case A_NONE: 
       assert(0);
     case A_FUNCDECL: 
-      printf(SV_FMT ":\n\t", SV_UNPACK(ast->as.funcdecl.name.image));
+      compile_printf(state, SV_FMT ":\n", SV_UNPACK(ast->as.funcdecl.name.image));
       compile(ast->as.funcdecl.block, state);
       break;
     case A_BLOCK: 
@@ -986,18 +1116,19 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_RETURN: 
       if (ast->as.return_.expr) { compile(ast->as.return_.expr, state); }
-      for (int i = 0; i < state->sp; ++i) { printf("INCSP "); }
-      printf("RET\n\t");
+      compile_printf(state, "\t");
+      for (int i = 0; i < state->sp; ++i) { compile_printf(state, "INCSP "); }
+      compile_printf(state, "RET\n");
       break;
     case A_BINARYOP:
       assert(ast->as.binaryop.lhs);
       compile(ast->as.binaryop.lhs, state);
-      printf("A_B\n\t");
+      compile_printf(state, "\tA_B\n");
       assert(ast->as.binaryop.rhs);
       compile(ast->as.binaryop.rhs, state);
       switch (ast->as.binaryop.op.kind) {
-        case T_PLUS: printf("SUM\n\t"); break;
-        case T_MINUS: printf("SUB\n\t"); break;
+        case T_PLUS: compile_printf(state, "\tSUM\n"); break;
+        case T_MINUS: compile_printf(state, "\tSUB\n"); break;
         case T_STAR: assert(0);
         case T_SLASH: assert(0);
         default: assert(0);
@@ -1008,14 +1139,14 @@ void compile(ast_t *ast, state_t *state) {
       switch (ast->as.unaryop.op.kind) {
         case T_MINUS:
           compile(ast->as.unaryop.arg, state);
-          printf("RAM_BL 0x00 SUB\n\t");
+          compile_printf(state, "\tRAM_BL 0x00 SUB\n");
           break;
         case T_AND:
           {
             symbol_t *s = state_find_symbol(state, ast->as.unaryop.arg->as.fac.tok);
             int num = 2*(state->sp - s->info.local - 1);
             assert(num < 256 && num >= 2);
-            printf("SP_A RAM_BL 0x%02X SUM\n\t", num);
+            compile_printf(state, "\tSP_A RAM_BL 0x%02X SUM\n", num);
           } break;
         default:
           assert(0);
@@ -1025,17 +1156,27 @@ void compile(ast_t *ast, state_t *state) {
       {
         token_t token = ast->as.fac.tok;
         if (token.kind == T_INT) {
-          printf("RAM_A 0x%04d\n\t", atoi(token.image.start));
+          compile_printf(state, "\tRAM_A 0x%04d\n", atoi(token.image.start));
         } else if (token.kind == T_SYM) {
           symbol_t *s = state_find_symbol(state, token); 
           int num = 2*(state->sp - s->info.local);
           assert(num < 256 && num >= 2);
           if (num == 2) {
-            printf("PEEKA\n\t");
+            compile_printf(state, "\tPEEKA\n");
           } else {
-            printf("PEEKAR 0x%02X\n\t", num);
+            compile_printf(state, "\tPEEKAR 0x%02X\n", num);
           }
-        } else {
+        } else if (token.kind == T_STRING) {
+          state_data_printf(state, "_%03d: " SV_FMT " 0x00\n", state->uli, SV_UNPACK(token.image));
+          compile_printf(state, "\t_%03d\n", state->uli);
+          ++ state->uli;
+        } else if (token.kind == T_HEX) {
+          if (token.image.len - 2 == 2) {
+            compile_printf(state, "\tRAM_AL " SV_FMT "\n", SV_UNPACK(token.image));
+          } else {
+            compile_printf(state, "\tRAM_A " SV_FMT "\n", SV_UNPACK(token.image));
+          }
+        } else{
           assert(0);
         }
       } break;
@@ -1043,42 +1184,59 @@ void compile(ast_t *ast, state_t *state) {
       state_add_local_symbol(state, ast->as.decl.name.image, ast->as.decl.type);
       if (ast->as.decl.expr) {
         compile(ast->as.decl.expr, state);
-        printf("PUSHA\n\t");
+        compile_printf(state, "\tPUSHA\n");
       } else {
-        printf("DECSP\n\t");
+        compile_printf(state, "\tDECSP\n");
       }
       break;
     case A_ASSIGN:
       {
         symbol_t *s = state_find_symbol(state, ast->as.assign.name);
         if (ast->as.assign.deref) {
+          assert(s->type.kind == TY_PTR);
           int num = 2*(state->sp - s->info.local);
           assert(num < 256 && num >= 2);
           if (num == 2) {
-            printf("PEEKB\n\t");
+            compile_printf(state, "\tPEEKB\n");
           } else {
-            printf("PEEKAR 0x%02X A_B\n\t", num);
+            compile_printf(state, "\tPEEKAR 0x%02X A_B\n", num);
           }
           compile(ast->as.assign.expr, state);
-          printf("A_rB\n\t");
+          int size = type_size(s->type.as.ptr);
+          if (size == 1) {
+            compile_printf(state, "\tAL_rB\n");
+          } else if (size == 2) {
+            compile_printf(state, "\tA_rB\n");
+          } else { assert(0); }
         } else {
           int num = state->sp - s->info.local;
           assert(num > 0);
           compile(ast->as.assign.expr, state);
-          for (int i = 0; i < num; ++i) { printf("INCSP "); }
-          printf("PUSHA ");
-          for (int i = 0; i < num-1; ++i) { printf("DECSP "); }
-          printf("\n\t");
+          compile_printf(state, "\t");
+          for (int i = 0; i < num; ++i) { compile_printf(state, "INCSP "); }
+          compile_printf(state, "PUSHA ");
+          for (int i = 0; i < num-1; ++i) { compile_printf(state, "DECSP "); }
+          compile_printf(state, "\n");
         }
       }
   }
 }
 
+#define COMPILED_MAX (1<<15)
+
 int main() {
-  char *buffer = "int *main() { int a = 2; int *b = &a; *b = 2; return b; }";
+  char *buffer = "int *main() { char *a = \"asd\"; *a = 0x12; }";
 
   tokenizer_t tokenizer = {0};
   tokenizer_init(&tokenizer, buffer, "boh");
+
+  if (false) {
+    token_t token;
+    while ((token = token_next(&tokenizer)).kind != T_NONE) {
+      token_dump(token);
+    }
+    return 2;
+  }
 
   printf("%s\n", buffer);
 
@@ -1092,7 +1250,13 @@ int main() {
   printf("\n");
 
   state = (state_t) {0};
+  char compiled[COMPILED_MAX] = {0};
+  state.compiled = compiled;
   compile(ast, &state);
+
+  printf("GLOBAL main\n\n");
+  printf("%s\n", state.data);
+  printf("%s\n", state.compiled);
 
   ast_free(ast);
 
