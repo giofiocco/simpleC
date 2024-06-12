@@ -48,6 +48,7 @@ typedef enum {
   T_SLASH,
   T_EQUAL,
   T_AND,
+  T_COLON,
 } token_kind_t;
 
 typedef struct {
@@ -77,19 +78,10 @@ void tokenizer_init(tokenizer_t *tokenizer, char *buffer, char *filename) {
   };
 } 
 
-static bool catch = false;
-static jmp_buf catch_buf;
-void eprintf(token_t token, char *fmt, ...) {
-  if (catch) { catch = false; longjmp(catch_buf, 1); }
+void print_location(token_t token) {
   char *row_end = token.loc.row_start;
   while (*row_end != '\n' && *row_end != '\0') { ++row_end; }
   int row_len = row_end - token.loc.row_start;
-  fprintf(stderr, "ERROR:%s:%d:%d: ", token.loc.filename, token.loc.row, token.loc.col);
-  va_list argptr;
-  va_start(argptr, fmt);
-  vfprintf(stderr, fmt, argptr);
-  va_end(argptr);
-  fprintf(stderr, "\n");
   fprintf(stderr, "%*d | %*.*s\n", token.loc.row < 1000 ? 3: 5, token.loc.row, row_len, row_len, token.loc.row_start);
   fprintf(stderr, "%s   %*.*s%c%*.*s\n", 
       token.loc.row < 1000 ? "   " : "     ", 
@@ -97,6 +89,19 @@ void eprintf(token_t token, char *fmt, ...) {
       "                                                                                                                                                                                                        ", '^',
       token.image.len-1, token.image.len-1,
       "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+}
+
+static bool catch = false;
+static jmp_buf catch_buf;
+void eprintf(token_t token, char *fmt, ...) {
+  if (catch) { catch = false; longjmp(catch_buf, 1); }
+  fprintf(stderr, "ERROR:%s:%d:%d: ", token.loc.filename, token.loc.row, token.loc.col);
+  va_list argptr;
+  va_start(argptr, fmt);
+  vfprintf(stderr, fmt, argptr);
+  va_end(argptr);
+  fprintf(stderr, "\n");
+  print_location(token);
   exit(1);
 }
 
@@ -120,6 +125,7 @@ token_t token_next(tokenizer_t *tokenizer) {
   table['/'] = T_SLASH;
   table['='] = T_EQUAL;
   table['&'] = T_AND;
+  table[','] = T_COLON;
 
   token_t token = {0};
 
@@ -138,7 +144,7 @@ token_t token_next(tokenizer_t *tokenizer) {
       return token_next(tokenizer);
     case '(': case ')': case '{': case '}': case ';':
     case '+': case '-': case '*': case '/':
-    case '=': case '&':
+    case '=': case '&': case ',':
       assert(table[(int)*tokenizer->buffer]);
       token = (token_t) {
         table[(int)*tokenizer->buffer],
@@ -150,18 +156,18 @@ token_t token_next(tokenizer_t *tokenizer) {
       break;
     case '"':
       {
-      char *start = tokenizer->buffer;
-      do {
+        char *start = tokenizer->buffer;
+        do {
+          ++ tokenizer->buffer;
+        } while (*tokenizer->buffer != '"');
         ++ tokenizer->buffer;
-      } while (*tokenizer->buffer != '"');
-      ++ tokenizer->buffer;
-      sv_t str = {start, tokenizer->buffer - start};
-      token = (token_t) {
-        T_STRING,
-          str,
-          tokenizer->loc
-      };
-      tokenizer->loc.col += str.len;
+        sv_t str = {start, tokenizer->buffer - start};
+        token = (token_t) {
+          T_STRING,
+            str,
+            tokenizer->loc
+        };
+        tokenizer->loc.col += str.len;
       } break;
     case '0':
       if (*(tokenizer->buffer + 1) == 'x' || *(tokenizer->buffer + 1) == 'X') {
@@ -243,6 +249,7 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_SLASH: return "SLASH";
     case T_EQUAL: return "EQUAL";
     case T_AND: return "AND";
+    case T_COLON: return "COLON";
   }
   assert(0);
 }
@@ -453,6 +460,7 @@ int type_size(type_t *type) {
 typedef enum {
   A_NONE,
   A_FUNCDECL,
+  A_PARAMDEF,
   A_BLOCK,
   A_RETURN,
   A_BINARYOP,
@@ -470,8 +478,14 @@ typedef struct ast_t_ {
     struct {
       type_t type;
       token_t name;
+      struct ast_t_ *params;
       struct ast_t_ *block;
     } funcdecl;
+    struct {
+      type_t type;
+      token_t name;
+      struct ast_t_ *next;
+    } paramdef;
     struct {
       struct ast_t_ *code;
       struct ast_t_ *next;
@@ -520,7 +534,11 @@ void ast_free(ast_t *ast) {
     case A_NONE:
       break;
     case A_FUNCDECL:
+      ast_free(ast->as.funcdecl.params);
       ast_free(ast->as.funcdecl.block);
+      break;
+    case A_PARAMDEF:
+      ast_free(ast->as.paramdef.next);
       break;
     case A_BLOCK:
       ast_free(ast->as.block.code);
@@ -559,7 +577,19 @@ void ast_dump(ast_t *ast) {
       type_dump(&ast->as.funcdecl.type);
       printf(" " SV_FMT " ", 
           SV_UNPACK(ast->as.funcdecl.name.image));
+      ast_dump(ast->as.funcdecl.params);
+      printf(" ");
       ast_dump(ast->as.funcdecl.block);
+      printf(") {");
+      type_dump(&ast->type);
+      printf("}");
+      break;
+    case A_PARAMDEF:
+      printf("PARAMDEF(");
+      type_dump(&ast->as.paramdef.type);
+      printf(" " SV_FMT " ", 
+          SV_UNPACK(ast->as.paramdef.name.image));
+      ast_dump(ast->as.paramdef.next);
       printf(") {");
       type_dump(&ast->type);
       printf("}");
@@ -654,19 +684,19 @@ void bytecode_dump(bytecode_t b) {
     case B_HEX:
       printf("0x%02X ", b.arg.num);
       break;
-         case B_HEX2:
+    case B_HEX2:
       printf("0x%04X ", b.arg.num);
       break;
-         case B_SETLABEL:
+    case B_SETLABEL:
       printf("%s: ", b.arg.str);
       break;
-         case B_LABEL:
+    case B_LABEL:
       printf("%s ", b.arg.str);
       break;
-         case B_RELLABEL:
+    case B_RELLABEL:
       printf("$%s ", b.arg.str);
       break;
-         case B_STRING:
+    case B_STRING:
       printf("%s ", b.arg.str);
       break;
   }
@@ -678,7 +708,7 @@ void bytecode_dump(bytecode_t b) {
 #define CODE_MAX 128
 
 typedef struct {
-  sv_t image;
+  token_t name;
   type_t type;
   union {
     int local;
@@ -694,6 +724,7 @@ typedef struct {
   scope_t scopes[SCOPE_MAX];
   int scope_num;
   int sp;
+  int param;
   int uli; // unique label id
   bytecode_t data[DATA_MAX];
   int data_num;
@@ -709,32 +740,45 @@ void state_push_scope(state_t *state) {
 
 void state_drop_scope(state_t *state) {
   assert(state);
+  assert(state->scope_num > 0);
   -- state->scope_num;
-}
-
-void state_add_local_symbol(state_t *state, sv_t image, type_t type) {
-  assert(state);
-  scope_t *scope = &state->scopes[state->scope_num];
-  assert(scope->symbol_num + 1 < SYMBOL_MAX);
-  scope->symbols[scope->symbol_num ++] = (symbol_t) {image, type, {state->sp}};
-  state->sp ++;
 }
 
 symbol_t *state_find_symbol(state_t *state, token_t token) {
   assert(state);
-  scope_t *scope = &state->scopes[state->scope_num];
-  for (int i = 0; i < scope->symbol_num; ++i) {
-    if (sv_eq(scope->symbols[i].image, token.image)) {
-      return &scope->symbols[i];
+  assert(state->scope_num >= 1);
+  for (int j = state->scope_num-1; j >= 0; --j) {
+    scope_t *scope = &state->scopes[j];
+    for (int i = 0; i < scope->symbol_num; ++i) {
+      if (sv_eq(scope->symbols[i].name.image, token.image)) {
+        return &scope->symbols[i];
+      }
     }
   }
   eprintf(token, "symbol not declared: " SV_FMT, SV_UNPACK(token.image));
   assert(0);
 }
 
+void state_add_local_symbol(state_t *state, token_t token, type_t type) {
+  assert(state);
+  assert(state->scope_num >= 1);
+  for (int j = state->scope_num-1; j >= 0; --j) {
+    scope_t *scope = &state->scopes[j];
+    for (int i = 0; i < scope->symbol_num; ++i) {
+      if (sv_eq(scope->symbols[i].name.image, token.image)) {
+        eprintf(token, "redefinition of symbol '" SV_FMT "', defined at %d:%d", SV_UNPACK(token.image), scope->symbols[i].name.loc.row, scope->symbols[i].name.loc.col);
+      }
+    }
+  }
+  scope_t *scope = &state->scopes[state->scope_num-1];
+  assert(scope->symbol_num + 1 < SYMBOL_MAX);
+  scope->symbols[scope->symbol_num ++] = (symbol_t) {token, type, {state->sp}};
+  state->sp ++;
+}
+
 void code_dump(state_t *state) {
   assert(state);
-  
+
   printf("GLOBAL main\n");
   for (int i = 0; i < state->data_num; ++i) {
     bytecode_dump(state->data[i]);
@@ -930,18 +974,44 @@ ast_t *parse_block(tokenizer_t *tokenizer) {
   return ast_malloc(ast);
 }
 
+ast_t *parse_paramdef(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  token_t par = token_expect(tokenizer, T_PARO);
+  if (token_next_if_kind(tokenizer, T_PARC)) {
+    return NULL;
+  }
+
+  type_t type = parse_type(tokenizer);
+  token_t name = token_expect(tokenizer, T_SYM);
+  ast_t *ast = ast_malloc((ast_t){A_PARAMDEF, par, {0}, {.paramdef = {type, name, NULL}}});
+  ast_t *asti = ast;
+
+  // TODO maybe change the forerror
+
+  while (token_next_if_kind(tokenizer, T_COLON)) {
+    type = parse_type(tokenizer);
+    name = token_expect(tokenizer, T_SYM); 
+    asti->as.paramdef.next = ast_malloc((ast_t){A_PARAMDEF, par, {0}, {.paramdef = {type, name, NULL}}});
+    asti = asti->as.paramdef.next;
+  }
+
+  token_expect(tokenizer, T_PARC);
+
+  return ast;
+}
+
 ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   type_t type = parse_type(tokenizer);
   token_t name = token_expect(tokenizer, T_SYM);
 
-  token_expect(tokenizer, T_PARO);
-  token_expect(tokenizer, T_PARC);
+  ast_t *param = parse_paramdef(tokenizer);
 
   ast_t *block = parse_block(tokenizer);
 
-  return ast_malloc((ast_t){A_FUNCDECL, name, {0}, {.funcdecl = {type, name, block}}});
+  return ast_malloc((ast_t){A_FUNCDECL, name, {0}, {.funcdecl = {type, name, param, block}}});
 } 
 
 ast_t *parse(tokenizer_t *tokenizer) {
@@ -1006,9 +1076,21 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_FUNCDECL:
       {
         state_push_scope(state);
+        state->param = 0;
+        typecheck(ast->as.funcdecl.params, state);
         typecheck_funcbody(ast->as.funcdecl.block, state, ast->as.funcdecl.type);
         state_drop_scope(state);
         ast->type = (type_t) {TY_FUNC, {.func = {type_malloc(ast->as.funcdecl.type)}}};
+      } break;
+    case A_PARAMDEF:
+      {
+        scope_t *scope = &state->scopes[state->scope_num-1];
+        assert(scope->symbol_num + 1 < SYMBOL_MAX);
+        ++state->param;
+        scope->symbols[scope->symbol_num ++] = (symbol_t) {ast->as.paramdef.name, ast->as.paramdef.type, {-1-state->param}};
+
+        typecheck(ast->as.paramdef.next, state);
+        ast->type.kind = TY_VOID;
       } break;
     case A_BLOCK:
       assert(ast->as.block.code);
@@ -1074,13 +1156,12 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       break;
     case A_DECL:
-      {
-        if (ast->as.decl.expr) {
-          typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
-        }
-        state_add_local_symbol(state, ast->as.decl.name.image, ast->as.decl.type);
-        ast->type.kind = TY_VOID;
-      } break;
+      if (ast->as.decl.expr) {
+        typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
+      }
+      state_add_local_symbol(state, ast->as.decl.name, ast->as.decl.type);
+      ast->type.kind = TY_VOID;
+      break;
     case A_ASSIGN:
       {
         symbol_t *s = state_find_symbol(state, ast->as.assign.name);
@@ -1137,6 +1218,9 @@ void compile(ast_t *ast, state_t *state) {
       assert(0);
     case A_FUNCDECL: 
       {
+        state_push_scope(state);
+        state->param = 0;
+        compile(ast->as.funcdecl.params, state);
         bytecode_t b = {B_SETLABEL, {0}};
         memcpy(b.arg.str, ast->as.funcdecl.name.image.start, ast->as.funcdecl.name.image.len);
         code(state, b);
@@ -1146,6 +1230,16 @@ void compile(ast_t *ast, state_t *state) {
           for (int i = 0; i < state->sp; ++i) { code(state, (bytecode_t){B_INST, {.inst = INCSP}}); }
           code(state, (bytecode_t){B_INST, {.inst = RET}});
         }
+        state_drop_scope(state);
+      } break;
+    case A_PARAMDEF:
+      {
+        scope_t *scope = &state->scopes[state->scope_num-1];
+        assert(scope->symbol_num + 1 < SYMBOL_MAX);
+        ++state->param;
+        scope->symbols[scope->symbol_num ++] = (symbol_t) {ast->as.paramdef.name, ast->as.paramdef.type, {-1-state->param}};
+
+        compile(ast->as.paramdef.next, state);
       } break;
     case A_BLOCK: 
       assert(ast->as.block.code);
@@ -1256,7 +1350,7 @@ void compile(ast_t *ast, state_t *state) {
         }
       } break;
     case A_DECL:
-      state_add_local_symbol(state, ast->as.decl.name.image, ast->as.decl.type);
+      state_add_local_symbol(state, ast->as.decl.name, ast->as.decl.type);
       if (ast->as.decl.expr) {
         compile(ast->as.decl.expr, state);
         code(state, (bytecode_t){B_INST, {.inst = PUSHA}});
@@ -1298,7 +1392,7 @@ void compile(ast_t *ast, state_t *state) {
 }
 
 int main() {
-  char *buffer = "int main() { char *a = \"a\"; }";
+  char *buffer = "int main(int a, int b) { return a+b; }";
 
   tokenizer_t tokenizer = {0};
   tokenizer_init(&tokenizer, buffer, "boh");
@@ -1311,7 +1405,7 @@ int main() {
     return 2;
   }
 
-  printf("%s\n", buffer);
+  printf("INPUT: %s\n", buffer);
 
   ast_t *ast = parse(&tokenizer);
   assert(ast);
@@ -1319,12 +1413,14 @@ int main() {
   state_t state = {0};
   typecheck(ast, &state);
 
+  printf("AST: ");
   ast_dump(ast);
   printf("\n");
 
   state = (state_t) {0};
   compile(ast, &state);
 
+  printf("CODE:\n");
   code_dump(&state);
 
   ast_free(ast);

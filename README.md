@@ -9,7 +9,8 @@ A compiler for a subset of `C`
 - STRING: `"[^"]*"` 
 
 # Grammar
-- `<funcdecl> -> <type> <sym>() <block>`
+- `<funcdecl> -> <type> <sym><param-def> <block>`
+- `<param-def> -> (\(<type> <sym> \(, <type> <type>\)\*\)\?)`
 - `<block> -> { <code>* }`
 - `<code> -> <statement>`
 - `<statement> -> return <expr>\?; | <type> <sym> \(= <expr>\)\?; | *\?<sym> = <expr>; <expr>;`
