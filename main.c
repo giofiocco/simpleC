@@ -511,6 +511,7 @@ typedef enum {
   A_ASSIGN,
   A_FUNCALL,
   A_PARAM,
+  A_GROUP,
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -562,6 +563,7 @@ typedef struct ast_t_ {
       token_t name;
       struct ast_t_ *params;
     } funcall;
+    struct ast_t_ *group;
   } as;
 } ast_t;
 
@@ -613,6 +615,9 @@ void ast_free(ast_t *ast) {
       break;
     case A_FUNCALL:
       ast_free(ast->as.funcall.params);
+      break;
+    case A_GROUP:
+      ast_free(ast->as.group);
       break;
   }
   free(ast);
@@ -714,6 +719,11 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.astlist.ast, dumptype);
       printf(" ");
       ast_dump(ast->as.astlist.next, dumptype);
+      printf(")");
+      break;
+    case A_GROUP:
+      printf("GROUP((");
+      ast_dump(ast->as.group, dumptype);
       printf(")");
       break;
   }
@@ -936,6 +946,13 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   token_t token = token_peek(tokenizer);
+  
+  if (token.kind == T_PARO) {
+    token_next(tokenizer);
+    ast_t *expr = parse_expr(tokenizer);
+    return ast_malloc((ast_t){A_GROUP, token, {0}, {.group = expr}});
+  };
+
   tokenizer_t savetok = *tokenizer;
   if (token.kind == T_SYM) {
     token_next(tokenizer);
@@ -1347,6 +1364,11 @@ void typecheck(ast_t *ast, state_t *state) {
       assert(ast->as.astlist.ast);
       ast->type = (type_t){TY_PARAM, {.param = {type_malloc(ast->as.astlist.ast->type), ast->as.astlist.next ? type_malloc(ast->as.astlist.next->type) : NULL}}};
       break;
+    case A_GROUP:
+      assert(ast->as.group);
+      typecheck(ast->as.group, state);
+      ast->type = type_clone(ast->as.group->type);
+      break;
   }
 }
 
@@ -1579,6 +1601,9 @@ void compile(ast_t *ast, state_t *state) {
       compile(ast->as.astlist.ast, state);
       code(&state->compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
       ++ state->sp;
+      break;
+    case A_GROUP:
+      compile(ast->as.group, state);
       break;
   }
 }
