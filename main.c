@@ -1561,7 +1561,7 @@ void compile(ast_t *ast, state_t *state) {
   }
 }
 
-void help() {
+void help(int errorcode) {
   fprintf(stderr, 
       "Usage: simpleC [options] [files]\n\n"
       "Options:\n"   
@@ -1578,7 +1578,7 @@ void help() {
       "  par           parser\n"
       "  typ           typechecker\n"
       "  com           compiler to assembly\n");
-  exit(0);
+  exit(errorcode);
 }
 
 #define STR_INPUT_MAX 128
@@ -1605,7 +1605,7 @@ uint8_t parse_module(char *str) {
     return 1 << M_COM;
   } else {
     fprintf(stderr, "ERROR: unknown module '%s'\n", str);
-    help();
+    help(1);
   }
   assert(0);
 }
@@ -1652,7 +1652,7 @@ int main(int argc, char **argv) {
           ++argv;
           if (!*argv) {
             fprintf(stderr, "ERROR: -e expects a string\n");
-            help();
+            help(1);
           }
           strinput[strinputi ++] = *argv;
           ++argv;
@@ -1660,16 +1660,16 @@ int main(int argc, char **argv) {
         case 'o':
           TODO;
         case 'h':
-          help();
+          help(0);
           break;
         case '-':
           if (strcmp(arg + 2, "help") == 0) {
-            help();
+            help(0);
           }
           __attribute__((fallthrough));
         default:
           fprintf(stderr, "ERROR: unknown flag '%s'", arg);
-          exit(1);
+          help(1);
       }
     } else {
       TODO;
