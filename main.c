@@ -622,7 +622,7 @@ void ast_free(ast_t *ast) {
   free(ast);
 }
 
-void ast_dump(ast_t *ast) {
+void ast_dump(ast_t *ast, bool dumptype) {
   if (!ast) { printf("NULL"); return; }
 
   switch (ast->kind) {
@@ -636,9 +636,9 @@ void ast_dump(ast_t *ast) {
             str,
             SV_UNPACK(ast->as.funcdecl.name.image));
         free(str);
-        ast_dump(ast->as.funcdecl.params);
+        ast_dump(ast->as.funcdecl.params, dumptype);
         printf(" ");
-        ast_dump(ast->as.funcdecl.block);
+        ast_dump(ast->as.funcdecl.block, dumptype);
         printf(")");
       } break;
     case A_PARAMDEF:
@@ -649,33 +649,33 @@ void ast_dump(ast_t *ast) {
             str,
             SV_UNPACK(ast->as.paramdef.name.image));
         free(str);
-        ast_dump(ast->as.paramdef.next);
+        ast_dump(ast->as.paramdef.next, dumptype);
         printf(")");
       } break;
     case A_BLOCK:
       printf("BLOCK(");
-      ast_dump(ast->as.block.code);
+      ast_dump(ast->as.block.code, dumptype);
       printf(" ");
-      ast_dump(ast->as.block.next);
+      ast_dump(ast->as.block.next, dumptype);
       printf(")");
       break;
     case A_RETURN:
       printf("RETURN(");
-      ast_dump(ast->as.return_.expr);
+      ast_dump(ast->as.return_.expr, dumptype);
       printf(")");
       break;
     case A_BINARYOP:
       printf("BINARYOP(" SV_FMT " ", 
           SV_UNPACK(ast->as.binaryop.op.image));
-      ast_dump(ast->as.binaryop.lhs);
+      ast_dump(ast->as.binaryop.lhs, dumptype);
       printf(" ");
-      ast_dump(ast->as.binaryop.rhs);
+      ast_dump(ast->as.binaryop.rhs, dumptype);
       printf(")");
       break;
     case A_UNARYOP:
       printf("UNARYOP(" SV_FMT " ", 
           SV_UNPACK(ast->as.unaryop.op.image));
-      ast_dump(ast->as.unaryop.arg);
+      ast_dump(ast->as.unaryop.arg, dumptype);
       printf(")");
       break;
     case A_FAC:
@@ -690,33 +690,35 @@ void ast_dump(ast_t *ast) {
             str,
             SV_UNPACK(ast->as.decl.name.image));
         free(str);
-        ast_dump(ast->as.decl.expr);
+        ast_dump(ast->as.decl.expr, dumptype);
         printf(")");
       } break;
     case A_ASSIGN:
       printf("ASSIGN(%s " SV_FMT " ", 
           ast->as.assign.deref ? "true" : "false",
           SV_UNPACK(ast->as.assign.name.image));
-      ast_dump(ast->as.assign.expr);
+      ast_dump(ast->as.assign.expr, dumptype);
       printf(")");
       break;
     case A_FUNCALL:
       printf("FUNCALL(" SV_FMT " ",
           SV_UNPACK(ast->as.funcall.name.image));
-      ast_dump(ast->as.funcall.params);
+      ast_dump(ast->as.funcall.params, dumptype);
       printf(")");
       break;
     case A_PARAM:
       printf("PARAM(");
-      ast_dump(ast->as.param.expr);
+      ast_dump(ast->as.param.expr, dumptype);
       printf(" ");
-      ast_dump(ast->as.param.next);
+      ast_dump(ast->as.param.next, dumptype);
       printf(")");
       break;
   }
+  if (dumptype) {
   char *str = type_dump_to_string(&ast->type);
   printf(" {%s}", str);
   free(str);
+  }
 }
 
 #define LABEL_MAX 128
@@ -1074,13 +1076,11 @@ ast_t *parse_block(tokenizer_t *tokenizer) {
 
   token_t token = token_expect(tokenizer, T_BRO);
 
-  ast_t ast = {A_BLOCK, token, {0}, {.block = {NULL, NULL}}};
-
   if (token_next_if_kind(tokenizer, T_BRC)) {
-    return ast_malloc(ast);
+    return NULL;
   }
 
-  ast.as.block.code = parse_code(tokenizer);
+  ast_t ast = {A_BLOCK, token, {0}, {.block = {parse_code(tokenizer), NULL}}};
   ast_t *block = &ast;
   ast_t *code = NULL;
 
@@ -1205,7 +1205,9 @@ void typecheck(ast_t *ast, state_t *state) {
         ast->type = (type_t) {TY_FUNC, {.func = {type_malloc(ast->as.funcdecl.type), ast->as.funcdecl.params ? type_malloc(ast->as.funcdecl.params->type) : NULL}}};
         state_add_global_symbol(state, ast->as.funcdecl.name, ast->type);
 
-        typecheck_funcbody(ast->as.funcdecl.block, state, ast->as.funcdecl.type);
+        if (ast->as.funcdecl.block) {
+          typecheck_funcbody(ast->as.funcdecl.block, state, ast->as.funcdecl.type);
+        }
         state_drop_scope(state);
       } break;
     case A_PARAMDEF:
@@ -1559,39 +1561,162 @@ void compile(ast_t *ast, state_t *state) {
   }
 }
 
-int main() {
-  char *buffer = "int main(int a, int b) { return 1+23; }";
+void help() {
+  fprintf(stderr, 
+      "Usage: simpleC [options] [files]\n\n"
+      "Options:\n"   
+      " -d [<module>]  enable debug options for a module\n"
+      " -D [<module>]  stop the execution after a module and print the output\n"
+      "                (if no module name or module all then it will execute only the tokenizer)\n"
+      " -e <string>    compile the string provided\n"
+      " -o <file>      write output to the file\n"
+      " -h | --help    print this page and exit\n\n"
+      "Modules:\n"
+      "no module name is enables all the modules\n"
+      "  all           all the modules\n"
+      "  tok           tokenizer\n"
+      "  par           parser\n"
+      "  typ           typechecker\n"
+      "  com           compiler to assembly\n");
+  exit(0);
+}
 
-  tokenizer_t tokenizer = {0};
-  tokenizer_init(&tokenizer, buffer, "boh");
+#define STR_INPUT_MAX 128
+typedef enum {
+  M_TOK,
+  M_PAR,
+  M_TYP,
+  M_COM,
+  M_COUNT
+} module_t;
 
-  if (false) {
-    token_t token;
-    while ((token = token_next(&tokenizer)).kind != T_NONE) {
-      token_dump(token);
+uint8_t parse_module(char *str) {
+  assert(M_COUNT < 8);
+
+  if (strcmp(str, "all") == 0) {
+    return (1 << M_COUNT) - 1;
+  } else if (strcmp(str, "tok") == 0) {
+    return 1 << M_TOK;
+  } else if (strcmp(str, "par") == 0) {
+    return 1 << M_PAR;
+   } else if (strcmp(str, "typ") == 0) {
+    return 1 << M_TYP;
+   } else if (strcmp(str, "com") == 0) {
+    return 1 << M_COM;
+  } else {
+    fprintf(stderr, "ERROR: unknown module '%s'\n", str);
+    help();
+  }
+  assert(0);
+}
+
+int main(int argc, char **argv) {
+  if (argc == 1) {
+    fprintf(stderr, "ERROR: no input\n"); exit(1);
+  } 
+
+  char *strinput[STR_INPUT_MAX] = {0};
+  int strinputi = 0;
+  assert(M_COUNT < 8);
+  uint8_t debug = 0;
+  uint8_t exitat = 0;
+
+  char *arg = NULL;
+  ++ argv;
+  while (*argv) {
+    arg = *argv;
+    if (arg[0] == '-') {
+      switch (arg[1]) {
+        case 'd':
+          if (!*(argv + 1)) {
+            debug = (1 << M_COUNT) - 1;
+          } else {
+            ++ argv;
+            debug = parse_module(*argv);
+          }
+          ++ argv;
+          break;
+        case 'D':
+           if (!*(argv + 1)) {
+            debug = (1 << M_COUNT) - 1;
+            exitat = (1 << M_COUNT) - 1;
+          } else {
+            ++ argv;
+            debug = parse_module(*argv);
+            exitat = parse_module(*argv);
+          }
+          ++ argv;
+          break;
+        case 'e':
+          assert(strinputi + 1 < STR_INPUT_MAX);
+          ++argv;
+          if (!*argv) {
+            fprintf(stderr, "ERROR: -e expects a string\n");
+            help();
+          }
+          strinput[strinputi ++] = *argv;
+          ++argv;
+          break;
+        case 'o':
+          TODO;
+        case 'h':
+          help();
+          break;
+        case '-':
+          if (strcmp(arg + 2, "help") == 0) {
+            help();
+          }
+          __attribute__((fallthrough));
+        default:
+          fprintf(stderr, "ERROR: unknown flag '%s'", arg);
+          exit(1);
+      }
+    } else {
+      TODO;
     }
-    tokenizer_init(&tokenizer, buffer, "boh");
   }
 
-  printf("INPUT: %s\n", buffer);
+  tokenizer_t tokenizer = {0};
+  state_t state;
+  ast_t *ast;
+  for (int i = 0; i < strinputi; ++i) {
+    tokenizer_init(&tokenizer, strinput[i], "cmd");
+    if ((debug >> M_TOK) & 1) {
+      printf("TOKENS:\n");
+      token_t token;
+      while ((token = token_next(&tokenizer)).kind != T_NONE) {
+        token_dump(token);
+      }
+      tokenizer_init(&tokenizer, strinput[i], "cmd");
+    }
+    if ((exitat >> M_TOK) & 1) { exit(0); }
 
-  ast_t *ast = parse(&tokenizer);
-  assert(ast);
+    ast = parse(&tokenizer);
+    if ((debug >> M_PAR) & 1) {
+      printf("AST:\n");
+      ast_dump(ast, false);
+    }
+    if ((exitat >> M_PAR) & 1) { exit(0); }
 
-  state_t state = {0};
-  typecheck(ast, &state);
+    state = (state_t){0};
+    typecheck(ast, &state);
+    if ((debug >> M_TYP) & 1) {
+      printf("TYPED AST:\n");
+      ast_dump(ast, true);
+    }
+    if ((exitat >> M_TYP) & 1) { exit(0); }
 
-  printf("AST: ");
-  ast_dump(ast);
-  printf("\n");
+    state = (state_t){0};
+    compile(ast, &state);
+    if ((debug >> M_COM) & 1) {
+      printf("ASSEMBLY:\n");
+      code_dump(&state.compiled);
+    }
+    if ((exitat >> M_COM) & 1) { exit(0); }
 
-  state = (state_t) {0};
-  compile(ast, &state);
-
-  printf("CODE:\n");
-  code_dump(&state.compiled);
-
-  ast_free(ast);
+    ast_free(ast); // TODO: defer
+  }
 
   return 0;
 }
+

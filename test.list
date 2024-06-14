@@ -1,0 +1,1 @@
+./simpleC -d com -e "int main() {}"
