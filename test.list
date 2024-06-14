@@ -1,4 +1,6 @@
+./simpleC -D com -e ""
 ./simpleC -D com -e "int main() {}"
+./simpleC -D com -e "int add() {} int main() {}"
 ./simpleC -D com -e "int main() { return 1; }"
 ./simpleC -D com -e "void main() { return; }"
 ./simpleC -D com -e "int main() { int a = 0; return a; }"
@@ -12,4 +14,4 @@
 ./simpleC -D com -e "int main() { int *a; return *a; }"
 ./simpleC -D com -e "int main() { main(); }"
 ./simpleC -D com -e "int main(int a, char b) { main(2,0x02); }"
-
+./simpleC -D com -e "int add(int a) { return a; } int main() { return add(10); }"

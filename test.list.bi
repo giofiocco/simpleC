@@ -1,10 +1,31 @@
-:i count 14
+:i count 17
+:b shell 22
+./simpleC -D com -e ""
+:i returncode 0
+:b stdout 23
+ASSEMBLY:
+GLOBAL main
+
+
+:b stderr 0
+
 :b shell 35
 ./simpleC -D com -e "int main() {}"
 :i returncode 0
 :b stdout 33
 ASSEMBLY:
 GLOBAL main
+main: RET 
+
+:b stderr 0
+
+:b shell 48
+./simpleC -D com -e "int add() {} int main() {}"
+:i returncode 0
+:b stdout 43
+ASSEMBLY:
+GLOBAL main
+add: RET 
 main: RET 
 
 :b stderr 0
@@ -92,9 +113,9 @@ main: RAM_AL 0x02 RAM_BL 0x00 SUB A_B RAM_AL 0x01 SUM RET
 :b shell 44
 ./simpleC -D typ -e "int main() { -2*1/2; }"
 :i returncode 0
-:b stdout 156
+:b stdout 176
 TYPED AST:
-FUNCDECL(INT main NULL BLOCK(BINARYOP(/ BINARYOP(* UNARYOP(- FAC(2) {INT}) {INT} FAC(1) {INT}) {INT} FAC(2) {INT}) {INT} NULL) {VOID}) {FUNC INT}
+GLOBAL(FUNCDECL(INT main NULL BLOCK(BINARYOP(/ BINARYOP(* UNARYOP(- FAC(2) {INT}) {INT} FAC(1) {INT}) {INT} FAC(2) {INT}) {INT} NULL) {VOID}) {FUNC INT} NULL) {VOID}
 :b stderr 0
 
 :b shell 55
@@ -134,6 +155,17 @@ main: CALLR $main RET
 ASSEMBLY:
 GLOBAL main
 main: RAM_AL 0x02 PUSHA RAM_AL 0x02 PUSHA CALLR $main INCSP INCSP RET 
+
+:b stderr 0
+
+:b shell 81
+./simpleC -D com -e "int add(int a) { return a; } int main() { return add(10); }"
+:i returncode 0
+:b stdout 90
+ASSEMBLY:
+GLOBAL main
+add: PEEKAR 0x04 RET 
+main: RAM_AL 0x0A PUSHA CALLR $add INCSP RET 
 
 :b stderr 0
 

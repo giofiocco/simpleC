@@ -871,7 +871,8 @@ void code_dump(compiled_t *compiled) {
   for (int i = 0; i < compiled->code_num; ++i) {
     if (i != 0 && compiled->code[i].kind == B_SETLABEL) { printf("\n"); }
     bytecode_dump(compiled->code[i]);
-  i != 0 && }
+  }
+
   printf("\n");
 }
 
@@ -1144,6 +1145,10 @@ ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
 
 ast_t *parse(tokenizer_t *tokenizer) {
   assert(tokenizer);
+
+  if (token_peek(tokenizer).kind == T_NONE) {
+    return NULL;
+  }
 
   ast_t *func = parse_funcdecl(tokenizer);
   ast_t *ast = ast_malloc((ast_t){A_GLOBAL, func->forerror, {0}, {.astlist = {func, NULL}}});
