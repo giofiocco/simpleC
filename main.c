@@ -351,6 +351,7 @@ void type_free(type_t *type) {
 
   switch (type->kind) {
     case TY_NONE:
+      assert(0);
     case TY_VOID:
     case TY_CHAR:
     case TY_INT:
@@ -938,6 +939,7 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
       *tokenizer = savetok;
       return parse_funccall(tokenizer);
     }
+    *tokenizer = savetok;
   }
 
   if (token.kind != T_INT && 
@@ -1053,7 +1055,7 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
   }
   *tokenizer = savetok;
 
-  catch = false;
+  catch = true;
   if (setjmp(catch_buf) == 0) {
     ast_t *ast = parse_expr(tokenizer);
     token_expect(tokenizer, T_SEMICOLON);
@@ -1174,8 +1176,6 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
   assert(ret.kind != TY_FUNC);
   assert(ast->kind == A_BLOCK);
 
-  typecheck(ast, state);
-
   ast_t *code = ast->as.block.code;
   assert(code);
 
@@ -1187,6 +1187,8 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
   if (ast->as.block.next) {
     typecheck_funcbody(ast->as.block.next, state, ret);
   }
+
+  ast->type.kind = TY_VOID;
 }
 
 void typecheck(ast_t *ast, state_t *state) {
@@ -1418,7 +1420,7 @@ void compile(ast_t *ast, state_t *state) {
       switch (ast->as.unaryop.op.kind) {
         case T_MINUS:
           compile(ast->as.unaryop.arg, state);
-          code(&state->compiled, (bytecode_t){B_INST, {.inst = RAM_AL}});
+          code(&state->compiled, (bytecode_t){B_INST, {.inst = RAM_BL}});
           code(&state->compiled, (bytecode_t){B_HEX, {.num = 0}});
           code(&state->compiled, (bytecode_t){B_INST, {.inst = SUB}});
           break;
@@ -1426,7 +1428,7 @@ void compile(ast_t *ast, state_t *state) {
           {
             assert(ast->as.unaryop.arg->kind == A_FAC);
             symbol_t *s = state_find_symbol(state, ast->as.unaryop.arg->as.fac.tok);
-            int num = 2*(state->sp - s->info.local - 1);
+            int num = 2*(state->sp - s->info.local);
             assert(num < 256 && num >= 2);
             code(&state->compiled, (bytecode_t){B_INST, {.inst = SP_A}});
             code(&state->compiled, (bytecode_t){B_INST, {.inst = RAM_BL}});
