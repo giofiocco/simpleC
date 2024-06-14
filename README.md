@@ -13,7 +13,7 @@ A compiler for a subset of `C`
 - `<paramdef> -> (\(<type> <sym> \(, <type> <type>\)\*\)\?)`
 - `<block> -> { <code>* }`
 - `<code> -> <statement>`
-- `<statement> -> return <expr>\?; | <type> <sym> \(= <expr>\)\?; | *\?<sym> = <expr>; <expr>;`
+- `<statement> -> return <expr>\?; | <type> <sym> \(= <expr>\)\?; | *\?<sym> = <expr>; | <expr>;`
 - `<expr> -> <term> \(+ <term> | - <term>\)\*`
 - `<term> -> <unary> \(* <unary> | / <unary>\)\*`
 - `<unary> -> + <fac> | - <fac> | <fac> | &<sym> | *<sym>`
