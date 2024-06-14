@@ -1,4 +1,4 @@
-:i count 17
+:i count 18
 :b shell 22
 ./simpleC -D com -e ""
 :i returncode 0
@@ -167,5 +167,13 @@ GLOBAL main
 add: PEEKAR 0x04 RET 
 main: RAM_AL 0x0A PUSHA CALLR $add INCSP RET 
 
+:b stderr 0
+
+:b shell 45
+./simpleC -D typ -e "int main() { 2*(1+3); }"
+:i returncode 0
+:b stdout 173
+TYPED AST:
+GLOBAL(FUNCDECL(INT main NULL BLOCK(BINARYOP(* FAC(2) {INT} GROUP((BINARYOP(+ FAC(1) {INT} FAC(3) {INT}) {INT}) {INT}) {INT} NULL) {VOID}) {FUNC INT} NULL) {VOID}
 :b stderr 0
 

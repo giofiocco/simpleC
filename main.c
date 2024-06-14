@@ -950,6 +950,7 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
   if (token.kind == T_PARO) {
     token_next(tokenizer);
     ast_t *expr = parse_expr(tokenizer);
+    token_expect(tokenizer, T_PARC);
     return ast_malloc((ast_t){A_GROUP, token, {0}, {.group = expr}});
   };
 
