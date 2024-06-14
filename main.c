@@ -499,6 +499,7 @@ int type_size(type_t *type) {
 
 typedef enum {
   A_NONE,
+  A_GLOBAL,
   A_FUNCDECL,
   A_PARAMDEF,
   A_BLOCK,
@@ -518,6 +519,10 @@ typedef struct ast_t_ {
   type_t type;
   union {
     struct {
+      struct ast_t_ *ast;
+      struct ast_t_ *next;
+    } astlist;
+    struct {
       type_t type;
       token_t name;
       struct ast_t_ *params;
@@ -528,10 +533,6 @@ typedef struct ast_t_ {
       token_t name;
       struct ast_t_ *next;
     } paramdef;
-    struct {
-      struct ast_t_ *code;
-      struct ast_t_ *next;
-    } block;
     struct {
       struct ast_t_ *expr;
     } return_;
@@ -561,10 +562,6 @@ typedef struct ast_t_ {
       token_t name;
       struct ast_t_ *params;
     } funcall;
-    struct {
-      struct ast_t_ *expr;
-      struct ast_t_ *next;
-    } param;
   } as;
 } ast_t;
 
@@ -583,16 +580,18 @@ void ast_free(ast_t *ast) {
   switch (ast->kind) {
     case A_NONE:
       break;
+    case A_GLOBAL:
+    case A_BLOCK:
+    case A_PARAM:
+      ast_free(ast->as.astlist.ast);
+      ast_free(ast->as.astlist.next);
+      break;
     case A_FUNCDECL:
       ast_free(ast->as.funcdecl.params);
       ast_free(ast->as.funcdecl.block);
       break;
     case A_PARAMDEF:
       ast_free(ast->as.paramdef.next);
-      break;
-    case A_BLOCK:
-      ast_free(ast->as.block.code);
-      ast_free(ast->as.block.next);
       break;
     case A_RETURN:
       ast_free(ast->as.return_.expr);
@@ -615,10 +614,6 @@ void ast_free(ast_t *ast) {
     case A_FUNCALL:
       ast_free(ast->as.funcall.params);
       break;
-    case A_PARAM:
-      ast_free(ast->as.param.expr);
-      ast_free(ast->as.param.next);
-      break;
   }
   free(ast);
 }
@@ -629,6 +624,13 @@ void ast_dump(ast_t *ast, bool dumptype) {
   switch (ast->kind) {
     case A_NONE: 
       assert(0);
+    case A_GLOBAL:
+      printf("GLOBAL(");
+      ast_dump(ast->as.astlist.ast, dumptype);
+      printf(" ");
+      ast_dump(ast->as.astlist.next, dumptype);
+      printf(")");
+      break;
     case A_FUNCDECL:
       {
         printf("FUNCDECL(");
@@ -655,9 +657,9 @@ void ast_dump(ast_t *ast, bool dumptype) {
       } break;
     case A_BLOCK:
       printf("BLOCK(");
-      ast_dump(ast->as.block.code, dumptype);
+      ast_dump(ast->as.astlist.ast, dumptype);
       printf(" ");
-      ast_dump(ast->as.block.next, dumptype);
+      ast_dump(ast->as.astlist.next, dumptype);
       printf(")");
       break;
     case A_RETURN:
@@ -709,16 +711,16 @@ void ast_dump(ast_t *ast, bool dumptype) {
       break;
     case A_PARAM:
       printf("PARAM(");
-      ast_dump(ast->as.param.expr, dumptype);
+      ast_dump(ast->as.astlist.ast, dumptype);
       printf(" ");
-      ast_dump(ast->as.param.next, dumptype);
+      ast_dump(ast->as.astlist.next, dumptype);
       printf(")");
       break;
   }
   if (dumptype) {
-  char *str = type_dump_to_string(&ast->type);
-  printf(" {%s}", str);
-  free(str);
+    char *str = type_dump_to_string(&ast->type);
+    printf(" {%s}", str);
+    free(str);
   }
 }
 
@@ -867,8 +869,9 @@ void code_dump(compiled_t *compiled) {
   }
   if (compiled->data_num) { printf("\n"); }
   for (int i = 0; i < compiled->code_num; ++i) {
+    if (i != 0 && compiled->code[i].kind == B_SETLABEL) { printf("\n"); }
     bytecode_dump(compiled->code[i]);
-  }
+  i != 0 && }
   printf("\n");
 }
 
@@ -905,13 +908,13 @@ ast_t *parse_param(tokenizer_t *tokenizer) {
   }
 
   ast_t *expr = parse_expr(tokenizer);
-  ast_t *ast = ast_malloc((ast_t){A_PARAM, par, {0}, {.param = {expr, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_PARAM, par, {0}, {.astlist = {expr, NULL}}});
   ast_t *asti = ast;
 
   while (token_next_if_kind(tokenizer, T_COLON)) {
     expr = parse_expr(tokenizer);
-    asti->as.param.next = ast_malloc((ast_t){A_PARAM, par, {0}, {.param = {expr, NULL}}});
-    asti = asti->as.param.next;
+    asti->as.astlist.next = ast_malloc((ast_t){A_PARAM, par, {0}, {.astlist = {expr, NULL}}});
+    asti = asti->as.astlist.next;
   }
 
   token_expect(tokenizer, T_PARC);
@@ -1082,15 +1085,15 @@ ast_t *parse_block(tokenizer_t *tokenizer) {
     return NULL;
   }
 
-  ast_t ast = {A_BLOCK, token, {0}, {.block = {parse_code(tokenizer), NULL}}};
+  ast_t ast = {A_BLOCK, token, {0}, {.astlist = {parse_code(tokenizer), NULL}}};
   ast_t *block = &ast;
   ast_t *code = NULL;
 
   while (token_peek(tokenizer).kind != T_BRC) {
     code = parse_code(tokenizer);
     if (code) {
-      block->as.block.next = ast_malloc((ast_t){A_BLOCK, token, {0}, {.block = {code, NULL}}});
-      block = block->as.block.next;
+      block->as.astlist.next = ast_malloc((ast_t){A_BLOCK, token, {0}, {.astlist = {code, NULL}}});
+      block = block->as.astlist.next;
     }
   } 
 
@@ -1142,7 +1145,17 @@ ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
 ast_t *parse(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  return parse_funcdecl(tokenizer);
+  ast_t *func = parse_funcdecl(tokenizer);
+  ast_t *ast = ast_malloc((ast_t){A_GLOBAL, func->forerror, {0}, {.astlist = {func, NULL}}});
+  ast_t *asti = ast;
+
+  while (token_peek(tokenizer).kind != T_NONE) {
+    ast_t *func = parse_funcdecl(tokenizer);
+    asti->as.astlist.next = ast_malloc((ast_t){A_GLOBAL, func->forerror, {0}, {.astlist = {func, NULL}}});
+    asti = asti->as.astlist.next;
+  }
+
+  return ast;
 }
 
 void typecheck(ast_t *ast, state_t *state);
@@ -1176,7 +1189,7 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
   assert(ret.kind != TY_FUNC);
   assert(ast->kind == A_BLOCK);
 
-  ast_t *code = ast->as.block.code;
+  ast_t *code = ast->as.astlist.ast;
   assert(code);
 
   if (code->kind == A_RETURN) {
@@ -1184,8 +1197,8 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
   } else {
     typecheck(code, state);
   } 
-  if (ast->as.block.next) {
-    typecheck_funcbody(ast->as.block.next, state, ret);
+  if (ast->as.astlist.next) {
+    typecheck_funcbody(ast->as.astlist.next, state, ret);
   }
 
   ast->type.kind = TY_VOID;
@@ -1199,6 +1212,13 @@ void typecheck(ast_t *ast, state_t *state) {
   switch (ast->kind) {
     case A_NONE:
       assert(0);
+    case A_GLOBAL:
+    case A_BLOCK:
+      assert(ast->as.astlist.ast);
+      typecheck(ast->as.astlist.ast, state);
+      typecheck(ast->as.astlist.next, state);
+      ast->type.kind = TY_VOID;
+      break;
     case A_FUNCDECL:
       {
         state_push_scope(state);
@@ -1222,12 +1242,6 @@ void typecheck(ast_t *ast, state_t *state) {
         typecheck(ast->as.paramdef.next, state);
         ast->type = (type_t){TY_PARAM, {.param = {type_malloc(ast->as.paramdef.type), ast->as.paramdef.next ? type_malloc(ast->as.paramdef.next->type) : NULL}}};
       } break;
-    case A_BLOCK:
-      assert(ast->as.block.code);
-      typecheck(ast->as.block.code, state);
-      typecheck(ast->as.block.next, state);
-      ast->type.kind = TY_VOID;
-      break;
     case A_RETURN:
       typecheck(ast->as.return_.expr, state);
       if (ast->as.return_.expr) {
@@ -1323,10 +1337,10 @@ void typecheck(ast_t *ast, state_t *state) {
         ast->type = type_clone(*s->type.as.func.ret);
       } break;
     case A_PARAM:
-      typecheck(ast->as.param.expr, state);
-      typecheck(ast->as.param.next, state);
-      assert(ast->as.param.expr);
-      ast->type = (type_t){TY_PARAM, {.param = {type_malloc(ast->as.param.expr->type), ast->as.param.next ? type_malloc(ast->as.param.next->type) : NULL}}};
+      typecheck(ast->as.astlist.ast, state);
+      typecheck(ast->as.astlist.next, state);
+      assert(ast->as.astlist.ast);
+      ast->type = (type_t){TY_PARAM, {.param = {type_malloc(ast->as.astlist.ast->type), ast->as.astlist.next ? type_malloc(ast->as.astlist.next->type) : NULL}}};
       break;
   }
 }
@@ -1366,6 +1380,12 @@ void compile(ast_t *ast, state_t *state) {
   switch (ast->kind) {
     case A_NONE: 
       assert(0);
+    case A_GLOBAL:
+    case A_BLOCK: 
+      assert(ast->as.astlist.ast);
+      compile(ast->as.astlist.ast, state);
+      compile(ast->as.astlist.next, state);
+      break;
     case A_FUNCDECL: 
       {
         state_push_scope(state);
@@ -1390,12 +1410,7 @@ void compile(ast_t *ast, state_t *state) {
         scope->symbols[scope->symbol_num ++] = (symbol_t) {ast->as.paramdef.name, ast->as.paramdef.type, {-1-state->param}};
 
         compile(ast->as.paramdef.next, state);
-      } break;
-    case A_BLOCK: 
-      assert(ast->as.block.code);
-      compile(ast->as.block.code, state);
-      compile(ast->as.block.next, state);
-      break;
+      } break;  
     case A_RETURN: 
       if (ast->as.return_.expr) { compile(ast->as.return_.expr, state); }
       for (int i = 0; i < state->sp; ++i) { code(&state->compiled, (bytecode_t){B_INST, {.inst = INCSP}}); }
@@ -1555,8 +1570,8 @@ void compile(ast_t *ast, state_t *state) {
         code(&state->compiled, b);
       } break;
     case A_PARAM:
-      compile(ast->as.param.next, state);
-      compile(ast->as.param.expr, state);
+      compile(ast->as.astlist.next, state);
+      compile(ast->as.astlist.ast, state);
       code(&state->compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
       ++ state->sp;
       break;
@@ -1601,9 +1616,9 @@ uint8_t parse_module(char *str) {
     return 1 << M_TOK;
   } else if (strcmp(str, "par") == 0) {
     return 1 << M_PAR;
-   } else if (strcmp(str, "typ") == 0) {
+  } else if (strcmp(str, "typ") == 0) {
     return 1 << M_TYP;
-   } else if (strcmp(str, "com") == 0) {
+  } else if (strcmp(str, "com") == 0) {
     return 1 << M_COM;
   } else {
     fprintf(stderr, "ERROR: unknown module '%s'\n", str);
@@ -1639,7 +1654,7 @@ int main(int argc, char **argv) {
           ++ argv;
           break;
         case 'D':
-           if (!*(argv + 1)) {
+          if (!*(argv + 1)) {
             debug = (1 << M_COUNT) - 1;
             exitat = (1 << M_COUNT) - 1;
           } else {

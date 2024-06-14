@@ -9,14 +9,15 @@ A compiler for a subset of `C`
 - STRING: `"[^"]*"` 
 
 # Grammar
-- `<funcdecl> -> <type> <sym><paramdef> <block>`
-- `<paramdef> -> (\(<type> <sym> \(, <type> <type>\)\*\)\?)`
-- `<block> -> { <code>* }`
-- `<code> -> <statement>`
-- `<statement> -> return <expr>\?; | <type> <sym> \(= <expr>\)\?; | *\?<sym> = <expr>; | <expr>;`
-- `<expr> -> <term> \(+ <term> | - <term>\)\*`
-- `<term> -> <unary> \(* <unary> | / <unary>\)\*`
-- `<unary> -> + <fac> | - <fac> | <fac> | &<sym> | *<sym>`
-- `<fac> -> <int> | <sym> | <string> | <funccall>`
-- `<funccall> -> <sym>(\(<expr> \(, <expr>\)\*\)\?)`
-- `<type> -> <sym>*\?`
+- `<global>` &rarr; `<funcdecl>\*`
+- `<funcdecl>` &rarr; `<type> <sym><paramdef> <block>`
+- `<paramdef>` &rarr; `(\(<type> <sym> \(, <type> <type>\)\*\)\?)`
+- `<block>` &rarr; `{ <code>* }`
+- `<code>` &rarr; `<statement>`
+- `<statement>` &rarr; `return <expr>\?; | <type> <sym> \(= <expr>\)\?; | *\?<sym> = <expr>; | <expr>;`
+- `<expr>` &rarr; `<term> \(+ <term> | - <term>\)\*`
+- `<term>` &rarr; `<unary> \(* <unary> | / <unary>\)\*`
+- `<unary>` &rarr; `+ <fac> | - <fac> | <fac> | &<sym> | *<sym>`
+- `<fac>` &rarr; `<int> | <sym> | <string> | <funccall>`
+- `<funccall>` &rarr; `<sym>(\(<expr> \(, <expr>\)\*\)\?)`
+- `<type>` &rarr; `<sym>*\?`
