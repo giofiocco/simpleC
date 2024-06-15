@@ -1,4 +1,4 @@
-:i count 18
+:i count 21
 :b shell 22
 ./simpleC -D com -e ""
 :i returncode 0
@@ -138,6 +138,16 @@ main: DECSP PEEKA A_B rB_A INCSP RET
 
 :b stderr 0
 
+:b shell 56
+./simpleC -D com -e "int main() { char *a; return *a; }"
+:i returncode 0
+:b stdout 61
+ASSEMBLY:
+GLOBAL main
+main: DECSP PEEKA A_B rB_AL INCSP RET 
+
+:b stderr 0
+
 :b shell 44
 ./simpleC -D com -e "int main() { main(); }"
 :i returncode 0
@@ -175,5 +185,27 @@ main: RAM_AL 0x0A PUSHA CALLR $add INCSP RET
 :b stdout 173
 TYPED AST:
 GLOBAL(FUNCDECL(INT main NULL BLOCK(BINARYOP(* FAC(2) {INT} GROUP((BINARYOP(+ FAC(1) {INT} FAC(3) {INT}) {INT}) {INT}) {INT} NULL) {VOID}) {FUNC INT} NULL) {VOID}
+:b stderr 0
+
+:b shell 55
+./simpleC -D com -e "int main() { char *a = \"asd\"; }"
+:i returncode 0
+:b stdout 74
+ASSEMBLY:
+GLOBAL main
+_000: "asd" 0x00 
+main: RAM_A _000 PUSHA INCSP RET 
+
+:b stderr 0
+
+:b shell 66
+./simpleC -D com -e "int main() { char *a = \"asd\"; *a = 0x10; }"
+:i returncode 0
+:b stdout 98
+ASSEMBLY:
+GLOBAL main
+_000: "asd" 0x00 
+main: RAM_A _000 PUSHA PEEKB RAM_AL 0x10 AL_rB INCSP RET 
+
 :b stderr 0
 
