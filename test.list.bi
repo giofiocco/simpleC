@@ -1,4 +1,4 @@
-:i count 21
+:i count 23
 :b shell 22
 ./simpleC -D com -e ""
 :i returncode 0
@@ -83,10 +83,10 @@ main: RAM_AL 0x00 PUSHA RAM_AL 0x02 INCSP PUSHA INCSP RET
 :b shell 52
 ./simpleC -D com -e "int main() { int *b; *b = 1; }"
 :i returncode 0
-:b stdout 68
+:b stdout 72
 ASSEMBLY:
 GLOBAL main
-main: DECSP PEEKB RAM_AL 0x01 A_rB INCSP RET 
+main: DECSP PEEKA A_B RAM_AL 0x01 A_rB INCSP RET 
 
 :b stderr 0
 
@@ -201,11 +201,33 @@ main: RAM_A _000 PUSHA INCSP RET
 :b shell 66
 ./simpleC -D com -e "int main() { char *a = \"asd\"; *a = 0x10; }"
 :i returncode 0
-:b stdout 98
+:b stdout 102
 ASSEMBLY:
 GLOBAL main
 _000: "asd" 0x00 
-main: RAM_A _000 PUSHA PEEKB RAM_AL 0x10 AL_rB INCSP RET 
+main: RAM_A _000 PUSHA PEEKA A_B RAM_AL 0x10 AL_rB INCSP RET 
+
+:b stderr 0
+
+:b shell 73
+./simpleC -D com -e "char main() { char *a = \"asd\"; return *(a + 2); }"
+:i returncode 0
+:b stdout 110
+ASSEMBLY:
+GLOBAL main
+_000: "asd" 0x00 
+main: RAM_A _000 PUSHA PEEKA A_B RAM_AL 0x02 SUM A_B rB_AL INCSP RET 
+
+:b stderr 0
+
+:b shell 71
+./simpleC -D com -e "char main() { char *a = \"asd\"; *(a+1) = 0x01; }"
+:i returncode 0
+:b stdout 122
+ASSEMBLY:
+GLOBAL main
+_000: "asd" 0x00 
+main: RAM_A _000 PUSHA PEEKA A_B RAM_AL 0x01 SUM A_B RAM_AL 0x01 AL_rB INCSP RET 
 
 :b stderr 0
 
