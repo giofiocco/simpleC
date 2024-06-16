@@ -9,12 +9,13 @@ A compiler for a subset of `C`
 - STRING: `"[^"]*"` 
 
 # Grammar
-- `<global>` &rarr; `<funcdecl>\*`
+- `<global>` &rarr; `<funcdecl>\* | <decl>`
 - `<funcdecl>` &rarr; `<type> <sym><paramdef> <block>`
 - `<paramdef>` &rarr; `(\(<type> <sym> \(, <type> <type>\)\*\)\?)`
 - `<block>` &rarr; `{ <code>* }`
 - `<code>` &rarr; `<statement>`
-- `<statement>` &rarr; `return <expr>\?; | <type> <sym> \(= <expr>\)\?; | (<sym> | *<expr>) = <expr>; | <expr>;`
+- `<statement>` &rarr; `return <expr>\?; | <decl> | (<sym> | *<expr>) = <expr>; | <expr>;`
+- `<decl>` &rarr; `<type> <sym> \(= <expr>\)\?`
 - `<expr>` &rarr; `<term> \(+ <term> | - <term>\)\*`
 - `<term>` &rarr; `<unary> \(* <unary> | / <unary>\)\*`
 - `<unary>` &rarr; `+ <fac> | - <fac> | <fac> | &<sym> | *<sym>`

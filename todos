@@ -1,6 +1,6 @@
-defers
+when ast_malloc a group return the ast of the expr
 
-parser assign deref and name into one thing
+defers
 
 tokenizer check if it is bin
 
@@ -10,5 +10,3 @@ escape char in string
 
 typecheck maybe check if code is if or something with a block and then call typecheck_funcbody on it
 typecheck warn if no return in some function
-
-check if there is no main function

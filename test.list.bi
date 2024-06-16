@@ -1,13 +1,11 @@
-:i count 23
+:i count 29
 :b shell 22
 ./simpleC -D com -e ""
-:i returncode 0
-:b stdout 23
-ASSEMBLY:
-GLOBAL main
+:i returncode 1
+:b stdout 0
 
-
-:b stderr 0
+:b stderr 30
+ERROR: no main function found
 
 :b shell 35
 ./simpleC -D com -e "int main() {}"
@@ -228,6 +226,72 @@ ASSEMBLY:
 GLOBAL main
 _000: "asd" 0x00 
 main: RAM_A _000 PUSHA PEEKA A_B RAM_AL 0x01 SUM A_B RAM_AL 0x01 AL_rB INCSP RET 
+
+:b stderr 0
+
+:b shell 47
+./simpleC -D com -e "int a = 10; int main() {}"
+:i returncode 0
+:b stdout 50
+ASSEMBLY:
+GLOBAL main
+_000: 0x00 0x00 
+main: RET 
+
+:b stderr 0
+
+:b shell 42
+./simpleC -D com -e "int a; int main() {}"
+:i returncode 0
+:b stdout 40
+ASSEMBLY:
+GLOBAL main
+_000: 
+main: RET 
+
+:b stderr 0
+
+:b shell 53
+./simpleC -D com -e "int a; int main() { return a; }"
+:i returncode 0
+:b stdout 60
+ASSEMBLY:
+GLOBAL main
+_000: 
+main: RAM_A _000 A_B rB_A RET 
+
+:b stderr 0
+
+:b shell 50
+./simpleC -D com -e "int a; int main() { a = 2; }"
+:i returncode 0
+:b stdout 72
+ASSEMBLY:
+GLOBAL main
+_000: 
+main: RAM_A _000 A_B RAM_AL 0x02 A_rB RET 
+
+:b stderr 0
+
+:b shell 55
+./simpleC -D com -e "int a; int *main() { return &a; }"
+:i returncode 0
+:b stdout 51
+ASSEMBLY:
+GLOBAL main
+_000: 
+main: RAM_A _000 RET 
+
+:b stderr 0
+
+:b shell 54
+./simpleC -D com -e "char *a = \"asd\"; int main() {}"
+:i returncode 0
+:b stdout 46
+ASSEMBLY:
+GLOBAL main
+_000: "asd" 
+main: RET 
 
 :b stderr 0
 
