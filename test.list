@@ -27,3 +27,6 @@
 ./simpleC -D com -e "int a; int main() { a = 2; }"
 ./simpleC -D com -e "int a; int *main() { return &a; }"
 ./simpleC -D com -e "char *a = \"asd\"; int main() {}"
+./simpleC -D com -O1 -e "int a; int main() { return a; }"
+./simpleC -D com -O1 -e "int main() { int *b; *b = 1; }"
+./simpleC -D com -O1 -e "int main() { int a = 0; return a; }"

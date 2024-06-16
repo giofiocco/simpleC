@@ -1,4 +1,4 @@
-:i count 29
+:i count 32
 :b shell 22
 ./simpleC -D com -e ""
 :i returncode 1
@@ -243,10 +243,10 @@ main: RET
 :b shell 42
 ./simpleC -D com -e "int a; int main() {}"
 :i returncode 0
-:b stdout 40
+:b stdout 50
 ASSEMBLY:
 GLOBAL main
-_000: 
+_000: 0x00 0x00 
 main: RET 
 
 :b stderr 0
@@ -254,10 +254,10 @@ main: RET
 :b shell 53
 ./simpleC -D com -e "int a; int main() { return a; }"
 :i returncode 0
-:b stdout 60
+:b stdout 70
 ASSEMBLY:
 GLOBAL main
-_000: 
+_000: 0x00 0x00 
 main: RAM_A _000 A_B rB_A RET 
 
 :b stderr 0
@@ -265,10 +265,10 @@ main: RAM_A _000 A_B rB_A RET
 :b shell 50
 ./simpleC -D com -e "int a; int main() { a = 2; }"
 :i returncode 0
-:b stdout 72
+:b stdout 82
 ASSEMBLY:
 GLOBAL main
-_000: 
+_000: 0x00 0x00 
 main: RAM_A _000 A_B RAM_AL 0x02 A_rB RET 
 
 :b stderr 0
@@ -276,10 +276,10 @@ main: RAM_A _000 A_B RAM_AL 0x02 A_rB RET
 :b shell 55
 ./simpleC -D com -e "int a; int *main() { return &a; }"
 :i returncode 0
-:b stdout 51
+:b stdout 61
 ASSEMBLY:
 GLOBAL main
-_000: 
+_000: 0x00 0x00 
 main: RAM_A _000 RET 
 
 :b stderr 0
@@ -292,6 +292,37 @@ ASSEMBLY:
 GLOBAL main
 _000: "asd" 
 main: RET 
+
+:b stderr 0
+
+:b shell 57
+./simpleC -D com -O1 -e "int a; int main() { return a; }"
+:i returncode 0
+:b stdout 66
+ASSEMBLY:
+GLOBAL main
+_000: 0x00 0x00 
+main: RAM_B _000 rB_A RET 
+
+:b stderr 0
+
+:b shell 56
+./simpleC -D com -O1 -e "int main() { int *b; *b = 1; }"
+:i returncode 0
+:b stdout 68
+ASSEMBLY:
+GLOBAL main
+main: DECSP PEEKB RAM_AL 0x01 A_rB INCSP RET 
+
+:b stderr 0
+
+:b shell 61
+./simpleC -D com -O1 -e "int main() { int a = 0; return a; }"
+:i returncode 0
+:b stdout 57
+ASSEMBLY:
+GLOBAL main
+main: RAM_AL 0x00 PUSHA INCSP RET 
 
 :b stderr 0
 

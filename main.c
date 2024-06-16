@@ -1643,7 +1643,7 @@ void compile(ast_t *ast, state_t *state) {
         sprintf(b.arg.str, "_%03d", state->uli);
         ++ state->uli;
         data(compiled, b);
-       
+
         if (ast->as.decl.expr) {
           if (ast->as.decl.expr->kind == A_FAC && ast->as.decl.expr->as.fac.kind == T_STRING) {
             token_t token = ast->as.decl.expr->as.fac;
@@ -1651,18 +1651,18 @@ void compile(ast_t *ast, state_t *state) {
             memset(b.arg.str, 0, LABEL_MAX);
             memcpy(b.arg.str, token.image.start, token.image.len);
             data(compiled, b);
-          } else {
-            for (int i = 0; i < type_size(&ast->as.decl.type); ++i) {
-              data(compiled, (bytecode_t){B_HEX, {.num = 0}});
-            }
-            compiled->is_init = true;
-            compile(ast->as.decl.expr, state);
-            code(compiled, (bytecode_t){B_INST, {.inst = RAM_B}});
-            b.kind = B_LABEL;
-            code(compiled, b);
-            read(compiled, ast->as.decl.type);
-            compiled->is_init = false;
-          }
+            return;
+          } 
+          compiled->is_init = true;
+          compile(ast->as.decl.expr, state);
+          code(compiled, (bytecode_t){B_INST, {.inst = RAM_B}});
+          b.kind = B_LABEL;
+          code(compiled, b);
+          read(compiled, ast->as.decl.type);
+          compiled->is_init = false;
+        }
+        for (int i = 0; i < type_size(&ast->as.decl.type); ++i) {
+          data(compiled, (bytecode_t){B_HEX, {.num = 0}});
         }
       } break;
     case A_DECL:
@@ -1730,6 +1730,43 @@ void compile(ast_t *ast, state_t *state) {
   }
 }
 
+bool compiled_is_inst(compiled_t *compiled, int i, instruction_t inst) {
+  assert(compiled);
+
+  if (i >= compiled->code_num) { return false; }
+  if (compiled->code[i].kind != B_INST) { return false; }
+  if (compiled->code[i].arg.inst != inst) { return false; }
+  return true;
+}
+
+void compiled_copy(compiled_t *compiled, int i, int a, int n) {
+  assert(compiled);
+  assert(n >= a+1);
+  memcpy(&compiled->code[i+a], &compiled->code[i+n], (compiled->code_num-i-n)*sizeof(bytecode_t));
+  compiled->code_num -= n-a;
+}
+
+void optimize_compiled(compiled_t *compiled) {
+  assert(compiled);
+
+  for (int i = 0; i < compiled->code_num;) {
+    if (compiled_is_inst(compiled, i, PEEKA) && compiled_is_inst(compiled, i+1, A_B)) {
+      compiled->code[i] = (bytecode_t){B_INST, {.inst = PEEKB}};
+      compiled_copy(compiled, i, 1, 2);
+      i = 0;
+    } else if (compiled_is_inst(compiled, i, RAM_A) && compiled_is_inst(compiled, i+2, A_B)) {
+      compiled->code[i] = (bytecode_t){B_INST, {.inst = RAM_B}};
+      compiled_copy(compiled, i, 2, 3);
+      i = 0;
+    } else if (compiled_is_inst(compiled, i, PUSHA) && compiled_is_inst(compiled, i+1, PEEKA)) {
+      compiled_copy(compiled, i, 1, 2);
+      i = 0;
+    } else {
+      ++i;
+    }
+  } 
+}
+
 void help(int errorcode) {
   fprintf(stderr, 
       "Usage: simpleC [options] [files]\n\n"
@@ -1739,6 +1776,9 @@ void help(int errorcode) {
       "                (if no module name or module all then it will execute only the tokenizer)\n"
       " -e <string>    compile the string provided\n"
       " -o <file>      write output to the file\n"
+      " -O1            optimize the assembly code\n"
+      " -O1            optimize pre-compilation\n"
+      " -O3            optimize both ways\n"
       " -h | --help    print this page and exit\n\n"
       "Modules:\n"
       "no module name is enables all the modules\n"
@@ -1758,6 +1798,12 @@ typedef enum {
   M_COM,
   M_COUNT
 } module_t;
+
+typedef enum {
+  OL_POST,
+  OL_PRE,
+  OL_COUNT
+} optlevel_t;
 
 uint8_t parse_module(char *str) {
   assert(M_COUNT < 8);
@@ -1786,6 +1832,8 @@ int main(int argc, char **argv) {
 
   char *strinput[STR_INPUT_MAX] = {0};
   int strinputi = 0;
+  assert(OL_COUNT < 8);
+  uint8_t opt = 0;
   assert(M_COUNT < 8);
   uint8_t debug = 0;
   uint8_t exitat = 0;
@@ -1828,6 +1876,10 @@ int main(int argc, char **argv) {
           break;
         case 'o':
           TODO;
+        case 'O':
+          opt = atoi(arg+2);
+          ++ argv;
+          break;
         case 'h':
           help(0);
           break;
@@ -1889,8 +1941,17 @@ int main(int argc, char **argv) {
       exit(1);
     }
 
+    if ((opt >> OL_PRE) & 1) {
+      TODO;
+    }
+
     state = (state_t){0};
     compile(ast, &state);
+
+    if ((opt >> OL_POST) & 1) {
+      optimize_compiled(&state.compiled);
+    }
+
     if ((debug >> M_COM) & 1) {
       printf("ASSEMBLY:\n");
       code_dump(&state.compiled);
