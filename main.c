@@ -30,6 +30,10 @@ sv_t sv_from_cstr(char *str) {
 return (sv_t) {str, strlen(str)};
 }
 
+sv_t sv_union(sv_t a, sv_t b) {
+  return (sv_t) {a.start, b.start + b.len - a.start};
+}
+
 #define ALLOCED_MAX 2048
 void *alloced[ALLOCED_MAX];
 int alloced_num = 0;
@@ -373,6 +377,7 @@ char *type_dump_to_string(type_t *type) {
 
   switch (type->kind) {
     case TY_NONE: 
+      strcpy(string, "NONE"); break;
       assert(0);
     case TY_VOID:
       strcpy(string, "VOID");
@@ -878,7 +883,7 @@ ast_t *parse_param(tokenizer_t *tokenizer) {
   return ast;
 }
 
-ast_t *parse_funccall(tokenizer_t *tokenizer) {
+ast_t *parse_funcall(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   token_t name = token_expect(tokenizer, T_SYM);
@@ -904,7 +909,7 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     token_next(tokenizer);
     if (token_peek(tokenizer).kind == T_PARO) {
       *tokenizer = savetok;
-      return parse_funccall(tokenizer);
+      return parse_funcall(tokenizer);
     }
     *tokenizer = savetok;
   }
@@ -1321,6 +1326,12 @@ void typecheck(ast_t *ast, state_t *state) {
           char *foundstr = type_dump_to_string(&s->type);
           eprintf(ast->forerror, "expected 'TY_FUNC', found '%s'", foundstr);
         }
+        if (s->type.as.func.params == NULL && ast->as.funcall.params != NULL) {
+          eprintf(ast->forerror, "too many parameters");
+        }
+        if (s->type.as.func.params != NULL && ast->as.funcall.params == NULL) {
+          eprintf(ast->forerror, "too few parameters");
+        }
         if (s->type.as.func.params) {
           typecheck_expect(ast->as.funcall.params, state, *s->type.as.func.params);
         }
@@ -1658,8 +1669,6 @@ void compiled_copy(compiled_t *compiled, int i, int a, int n) {
 void optimize_compiled(compiled_t *compiled) {
   assert(compiled);
 
-  // TODO: pusha incsp -> nothing
-
   for (int i = 0; i < compiled->code_num;) {
     if (compiled_is_inst(compiled, i, PEEKA) && compiled_is_inst(compiled, i+1, A_B)) {
       compiled->code[i] = (bytecode_t){B_INST, {.inst = PEEKB}};
@@ -1700,6 +1709,7 @@ void help(int errorcode) {
       "                (if no module name or module all then it will execute only the tokenizer)\n"
       " -e <string>    compile the string provided\n"
       " -o <file>      write output to the file\n"
+      " -O0 | -O       no optimization\n"
       " -O1            optimize the assembly code\n"
       " -O2            optimize pre-compilation\n"
       " -O3            optimize both ways\n"
@@ -1752,7 +1762,7 @@ uint8_t parse_module(char *str) {
 int main(int argc, char **argv) {
   if (argc == 1) {
     fprintf(stderr, "ERROR: no input\n"); exit(1);
-  } 
+  }
 
   assert(atexit(free_all) == 0);
 
