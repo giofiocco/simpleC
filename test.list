@@ -1,4 +1,4 @@
-./simpleC -D com -e ""
+./simpleC -D par -e ""
 ./simpleC -D com -e "int main() {}"
 ./simpleC -D com -e "int add() {} int main() {}"
 ./simpleC -D com -e "int main() { return 1; }"

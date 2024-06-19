@@ -884,16 +884,21 @@ void state_add_global_symbol(state_t *state, token_t token, type_t type, int id)
 void code_dump(compiled_t *compiled) {
   assert(compiled);
 
-  printf("GLOBAL main\n");
+  printf("GLOBAL _start\n");
   for (int i = 0; i < compiled->data_num; ++i) {
     bytecode_dump(compiled->data[i]);
   }
-  if (compiled->data_num) { printf("\n"); }
+  if (compiled->data_num > 0) { printf("\n"); }
+  printf("_start:\n\t");
+  for (int i = 0; i < compiled->init_num; ++i) {
+    bytecode_dump(compiled->init[i]);
+  }
+  if (compiled->init_num > 0) { printf("\n"); }
+  printf("\tJMPR $main\n");
   for (int i = 0; i < compiled->code_num; ++i) {
     if (i != 0 && compiled->code[i].kind == B_SETLABEL) { printf("\n"); }
     bytecode_dump(compiled->code[i]);
   }
-
   printf("\n");
 }
 
@@ -1587,27 +1592,10 @@ void compile(ast_t *ast, state_t *state) {
               }
             } break;
           case T_SYM:
-            {
-              // TODO
-              symbol_t *s = state_find_symbol(state, token); 
-              switch (s->kind) {
-                case INFO_LOCAL:
-                  {
-                    int num = 2*(state->sp - s->info.local);
-                    assert(num < 256 && num >= 2);
-                    if (num == 2) {
-                      code(compiled, (bytecode_t){B_INST, {.inst = PEEKA}});
-                    } else {
-                      code(compiled, (bytecode_t){B_INST, {.inst = PEEKAR}});
-                      code(compiled, (bytecode_t){B_HEX, {.num = num}});
-                    }
-                  } break;
-                case INFO_GLOBAL:
-                  get_addr(state, token);
-                  code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
-                  read(compiled, ast->type);
-              }
-            } break;
+            get_addr(state, token);
+            code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
+            read(compiled, ast->type);
+            break;
           case T_STRING:
             {
               code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
@@ -1658,7 +1646,7 @@ void compile(ast_t *ast, state_t *state) {
           code(compiled, (bytecode_t){B_INST, {.inst = RAM_B}});
           b.kind = B_LABEL;
           code(compiled, b);
-          read(compiled, ast->as.decl.type);
+          write(compiled, ast->as.decl.type);
           compiled->is_init = false;
         }
         for (int i = 0; i < type_size(&ast->as.decl.type); ++i) {
@@ -1669,16 +1657,13 @@ void compile(ast_t *ast, state_t *state) {
       state_add_local_symbol(state, ast->as.decl.name, ast->as.decl.type);
       if (ast->as.decl.expr) {
         compile(ast->as.decl.expr, state);
-        code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
-      } else {
-        code(compiled, (bytecode_t){B_INST, {.inst = DECSP}});
       }
+      code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
       break;
     case A_ASSIGN:
       switch (ast->as.assign.dest->kind) {
         case A_FAC: 
           {
-
             symbol_t *s = state_find_symbol(state, ast->as.assign.dest->as.fac);
             if (s->kind == INFO_LOCAL) {
               int num = 2*(state->sp - s->info.local);
@@ -1749,6 +1734,8 @@ void compiled_copy(compiled_t *compiled, int i, int a, int n) {
 void optimize_compiled(compiled_t *compiled) {
   assert(compiled);
 
+  // TODO: pusha incsp -> nothing
+
   for (int i = 0; i < compiled->code_num;) {
     if (compiled_is_inst(compiled, i, PEEKA) && compiled_is_inst(compiled, i+1, A_B)) {
       compiled->code[i] = (bytecode_t){B_INST, {.inst = PEEKB}};
@@ -1760,6 +1747,19 @@ void optimize_compiled(compiled_t *compiled) {
       i = 0;
     } else if (compiled_is_inst(compiled, i, PUSHA) && compiled_is_inst(compiled, i+1, PEEKA)) {
       compiled_copy(compiled, i, 1, 2);
+      i = 0;
+    } else if (compiled_is_inst(compiled, i, PEEKAR) && compiled->code[i+1].arg.num == 2){
+      compiled->code[i] = (bytecode_t){B_INST, {.inst = PEEKA}};
+      compiled_copy(compiled, i, 1, 2);
+      i = 0;
+    } else if (compiled_is_inst(compiled, i, SP_A) && 
+        compiled_is_inst(compiled, i+1, RAM_BL) &&
+        compiled_is_inst(compiled, i+3, SUM) &&
+        compiled_is_inst(compiled, i+4, A_B) &&
+        compiled_is_inst(compiled, i+5, rB_A)) {
+      compiled->code[i] = (bytecode_t){B_INST, {.inst = PEEKAR}};
+      compiled->code[i+1] = compiled->code[i+2];
+      compiled_copy(compiled, i, 2, 6);
       i = 0;
     } else {
       ++i;
@@ -1777,7 +1777,7 @@ void help(int errorcode) {
       " -e <string>    compile the string provided\n"
       " -o <file>      write output to the file\n"
       " -O1            optimize the assembly code\n"
-      " -O1            optimize pre-compilation\n"
+      " -O2            optimize pre-compilation\n"
       " -O3            optimize both ways\n"
       " -h | --help    print this page and exit\n\n"
       "Modules:\n"
