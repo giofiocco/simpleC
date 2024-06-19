@@ -30,6 +30,24 @@ sv_t sv_from_cstr(char *str) {
 return (sv_t) {str, strlen(str)};
 }
 
+#define ALLOCED_MAX 2048
+void *alloced[ALLOCED_MAX];
+int alloced_num = 0;
+
+void *alloc(int size) {
+  assert(alloced_num + 1 < ALLOCED_MAX);
+  void *ptr = malloc(size);
+  alloced[alloced_num ++] = ptr;
+  return ptr;
+}
+
+void free_all() {
+  for (int i = 0; i < alloced_num; ++i) {
+    assert(alloced[i] != NULL);
+    free(alloced[i]);
+  }
+}
+
 typedef enum {
   T_NONE,
   T_SYM,
@@ -308,7 +326,7 @@ typedef struct type_t_ {
 
 type_t type_clone(type_t type);
 type_t *type_malloc(type_t type) {
-  type_t *ptr = malloc(sizeof(type_t));
+  type_t *ptr = alloc(sizeof(type_t));
   assert(ptr);
   *ptr = type_clone(type);
   return ptr;
@@ -346,39 +364,10 @@ type_t type_clone(type_t type) {
   return clone;
 }
 
-void type_free(type_t *type) {
-  if (!type) { return; }
-
-  switch (type->kind) {
-    case TY_NONE:
-      assert(0);
-    case TY_VOID:
-    case TY_CHAR:
-    case TY_INT:
-      break;
-    case TY_FUNC:
-      type_free(type->as.func.ret);
-      type_free(type->as.func.params);
-      free(type->as.func.ret);
-      free(type->as.func.params);
-      break;
-    case TY_PTR:
-      type_free(type->as.ptr);
-      free(type->as.ptr);
-      break;
-    case TY_PARAM:
-      type_free(type->as.param.type);
-      type_free(type->as.param.next);
-      free(type->as.param.type);
-      free(type->as.param.next);
-      break;
-  } 
-}
-
 char *type_dump_to_string(type_t *type) {
   assert(type);
 
-  char *string = malloc(128);
+  char *string = alloc(128);
   assert(string);
   memset(string, 0, 128);
 
@@ -402,14 +391,12 @@ char *type_dump_to_string(type_t *type) {
         int len = strlen(str);
         assert(len < 128 - 5);
         strcpy(string + 5, str);
-        free(str);
         if (type->as.func.params) {
           str = type_dump_to_string(type->as.func.params);
           int plen = strlen(str);
           assert(plen < 128 - 5 - len);
           string[5+len] = ' ';
           strcpy(string + 5 + 1 + len, str);
-          free(str);
         }
       } break;
     case TY_PTR:
@@ -419,7 +406,6 @@ char *type_dump_to_string(type_t *type) {
         char *str = type_dump_to_string(type->as.ptr);
         assert(strlen(str) < 128 - 4);
         strcpy(string + 4, str);
-        free(str);
       } break;
     case TY_PARAM:
       {
@@ -429,14 +415,12 @@ char *type_dump_to_string(type_t *type) {
         int len = strlen(str);
         assert(len < 128 - 6);
         strcpy(string + 6, str);
-        free(str);
         if (type->as.param.next) {
           str = type_dump_to_string(type->as.param.next);
           int plen = strlen(str);
           assert(plen < 128 - 6 - len);
           string[6+len] = ' ';
           strcpy(string + 6 + 1 + len, str);
-          free(str);
         }
       } break;
   }
@@ -566,61 +550,10 @@ typedef struct ast_t_ {
 } ast_t;
 
 ast_t *ast_malloc(ast_t ast) {
-  ast_t *ptr = malloc(sizeof(ast_t));
+  ast_t *ptr = alloc(sizeof(ast_t));
   assert(ptr);
   *ptr = ast;
   return ptr;
-}
-
-void ast_free(ast_t *ast) {
-  if (!ast) { return; }
-
-  type_free(&ast->type);
-
-  switch (ast->kind) {
-    case A_NONE:
-      break;
-    case A_GLOBAL:
-    case A_BLOCK:
-    case A_PARAM:
-      ast_free(ast->as.astlist.ast);
-      ast_free(ast->as.astlist.next);
-      break;
-    case A_FUNCDECL:
-      ast_free(ast->as.funcdecl.params);
-      ast_free(ast->as.funcdecl.block);
-      break;
-    case A_PARAMDEF:
-      ast_free(ast->as.paramdef.next);
-      break;
-    case A_RETURN:
-      ast_free(ast->as.return_.expr);
-      break;
-    case A_BINARYOP:
-      ast_free(ast->as.binaryop.lhs);
-      ast_free(ast->as.binaryop.rhs);
-      break;
-    case A_UNARYOP:
-      ast_free(ast->as.unaryop.arg);
-      break;
-    case A_FAC:
-      break;
-    case A_GLOBDECL:
-    case A_DECL:
-      ast_free(ast->as.decl.expr);
-      break;
-    case A_ASSIGN:
-      ast_free(ast->as.assign.dest);
-      ast_free(ast->as.assign.expr);
-      break;
-    case A_FUNCALL:
-      ast_free(ast->as.funcall.params);
-      break;
-    case A_GROUP:
-      ast_free(ast->as.group);
-      break;
-  }
-  free(ast);
 }
 
 void ast_dump(ast_t *ast, bool dumptype) {
@@ -643,7 +576,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
         printf("%s " SV_FMT " ", 
             str,
             SV_UNPACK(ast->as.funcdecl.name.image));
-        free(str);
         ast_dump(ast->as.funcdecl.params, dumptype);
         printf(" ");
         ast_dump(ast->as.funcdecl.block, dumptype);
@@ -656,7 +588,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
         printf("%s " SV_FMT " ", 
             str,
             SV_UNPACK(ast->as.paramdef.name.image));
-        free(str);
         ast_dump(ast->as.paramdef.next, dumptype);
         printf(")");
       } break;
@@ -700,7 +631,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
         printf("%s " SV_FMT " ", 
             str,
             SV_UNPACK(ast->as.decl.name.image));
-        free(str);
         ast_dump(ast->as.decl.expr, dumptype);
         printf(")");
       } break;
@@ -733,7 +663,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
   if (dumptype) {
     char *str = type_dump_to_string(&ast->type);
     printf(" {%s}", str);
-    free(str);
   }
 }
 
@@ -1231,8 +1160,6 @@ void typecheck_expect(ast_t *ast, state_t *state, type_t type) {
   char *expectstr = type_dump_to_string(&type);
   char *foundstr = type_dump_to_string(&ast->type);
   eprintf(ast->forerror, "expected '%s', found '%s'", expectstr, foundstr);
-  free(expectstr);
-  free(foundstr);
 }
 
 void typecheck_expandable(ast_t *ast, state_t *state, type_t type) {
@@ -1321,7 +1248,6 @@ void typecheck(ast_t *ast, state_t *state) {
       if (ast->as.binaryop.lhs->type.kind != TY_INT && ast->as.binaryop.lhs->type.kind != TY_PTR) {
         char *typestr = type_dump_to_string(&ast->as.binaryop.lhs->type);
         eprintf(ast->forerror, "expected 'INT' or 'PTR ...' found '%s'", typestr);
-        free(typestr);
       }
       typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, {{0}}});
       ast->type = type_clone(ast->as.binaryop.lhs->type);
@@ -1342,7 +1268,6 @@ void typecheck(ast_t *ast, state_t *state) {
           if (ast->as.unaryop.arg->type.kind != TY_PTR) {
             char *type = type_dump_to_string(&ast->as.unaryop.arg->type);
             eprintf(ast->as.unaryop.arg->forerror, "cannot dereference non PTR type: '%s'", type);
-            free(type);
           }
           ast->type = type_clone(*ast->as.unaryop.arg->type.as.ptr);
           break;
@@ -1395,7 +1320,6 @@ void typecheck(ast_t *ast, state_t *state) {
         if (s->type.kind != TY_FUNC) {
           char *foundstr = type_dump_to_string(&s->type);
           eprintf(ast->forerror, "expected 'TY_FUNC', found '%s'", foundstr);
-          free(foundstr);
         }
         if (s->type.as.func.params) {
           typecheck_expect(ast->as.funcall.params, state, *s->type.as.func.params);
@@ -1830,6 +1754,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "ERROR: no input\n"); exit(1);
   } 
 
+  assert(atexit(free_all) == 0);
+
   char *strinput[STR_INPUT_MAX] = {0};
   int strinputi = 0;
   assert(OL_COUNT < 8);
@@ -1957,8 +1883,6 @@ int main(int argc, char **argv) {
       code_dump(&state.compiled);
     }
     if ((exitat >> M_COM) & 1) { exit(0); }
-
-    ast_free(ast); // TODO: defer
   }
 
   return 0;
