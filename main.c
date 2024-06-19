@@ -27,7 +27,7 @@ bool sv_eq(sv_t a, sv_t b) {
 }
 
 sv_t sv_from_cstr(char *str) {
-return (sv_t) {str, strlen(str)};
+  return (sv_t) {str, strlen(str)};
 }
 
 sv_t sv_union(sv_t a, sv_t b) {
@@ -43,6 +43,19 @@ void *alloc(int size) {
   void *ptr = malloc(size);
   alloced[alloced_num ++] = ptr;
   return ptr;
+}
+
+void free_ptr(void *ptr) {
+  assert(ptr);
+  for (int i = alloced_num - 1; i >= 0; --i) {
+    if (alloced[i] == ptr) {
+      assert(alloced[i] != NULL);
+      free(alloced[i]);
+      memcpy(&alloced[i], &alloced[i+1], (alloced_num - i)*sizeof(void *));
+      -- alloced_num;
+      return;
+    }
+  }
 }
 
 void free_all() {
@@ -76,8 +89,15 @@ typedef enum {
 typedef struct {
   char *filename;
   char *row_start;
-  int row, col;
+  unsigned int row, col;
+  unsigned int len;
 } location_t;
+
+location_t location_union(location_t a, location_t b) {
+  location_t c = a;
+  c.len = b.col + b.len - a.col;
+  return c;
+}
 
 typedef struct {
   token_kind_t kind;
@@ -96,34 +116,34 @@ void tokenizer_init(tokenizer_t *tokenizer, char *buffer, char *filename) {
   assert(tokenizer);
   tokenizer->buffer = buffer;
   tokenizer->loc = (location_t) {
-    filename, buffer, 1, 1
+    filename, buffer, 1, 1, 0,
   };
 } 
 
-void print_location(token_t token) {
-  char *row_end = token.loc.row_start;
+void print_location(location_t location) {
+  char *row_end = location.row_start;
   while (*row_end != '\n' && *row_end != '\0') { ++row_end; }
-  int row_len = row_end - token.loc.row_start;
-  fprintf(stderr, "%*d | %*.*s\n", token.loc.row < 1000 ? 3: 5, token.loc.row, row_len, row_len, token.loc.row_start);
+  int row_len = row_end - location.row_start;
+  fprintf(stderr, "%*d | %*.*s\n", location.row < 1000 ? 3: 5, location.row, row_len, row_len, location.row_start);
   fprintf(stderr, "%s   %*.*s%c%*.*s\n", 
-      token.loc.row < 1000 ? "   " : "     ", 
-      token.loc.col-1, token.loc.col-1, 
+      location.row < 1000 ? "   " : "     ", 
+      location.col-1, location.col-1, 
       "                                                                                                                                                                                                        ", '^',
-      token.image.len-1, token.image.len-1,
+      location.len-1, location.len-1,
       "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
 }
 
 static bool catch = false;
 static jmp_buf catch_buf;
-void eprintf(token_t token, char *fmt, ...) {
+void eprintf(location_t location, char *fmt, ...) {
   if (catch) { catch = false; longjmp(catch_buf, 1); }
-  fprintf(stderr, "ERROR:%s:%d:%d: ", token.loc.filename, token.loc.row, token.loc.col);
+  fprintf(stderr, "ERROR:%s:%d:%d: ", location.filename, location.row, location.col);
   va_list argptr;
   va_start(argptr, fmt);
   vfprintf(stderr, fmt, argptr);
   va_end(argptr);
   fprintf(stderr, "\n");
-  print_location(token);
+  print_location(location);
   exit(1);
 }
 
@@ -168,6 +188,7 @@ token_t token_next(tokenizer_t *tokenizer) {
     case '+': case '-': case '*': case '/':
     case '=': case '&': case ',':
       assert(table[(int)*tokenizer->buffer]);
+      tokenizer->loc.len = 1;
       token = (token_t) {
         table[(int)*tokenizer->buffer],
         {tokenizer->buffer, 1},
@@ -184,6 +205,7 @@ token_t token_next(tokenizer_t *tokenizer) {
         } while (*tokenizer->buffer != '"');
         ++ tokenizer->buffer;
         sv_t str = {start, tokenizer->buffer - start};
+        tokenizer->loc.len = str.len;
         token = (token_t) {
           T_STRING,
             str,
@@ -200,13 +222,14 @@ token_t token_next(tokenizer_t *tokenizer) {
             ('A' <= *tokenizer->buffer && *tokenizer->buffer <= 'F')) {
           ++ tokenizer->buffer;
         }
+        tokenizer->loc.len = tokenizer->buffer - image_start;
         token = (token_t) {
           T_HEX,
-            {image_start, tokenizer->buffer - image_start},
+            {image_start, tokenizer->loc.len},
             tokenizer->loc
         };
         if (token.image.len - 2 != 2 && token.image.len - 2 != 4) {
-          eprintf(token, "HEX can be 1 or 2 bytes\n");
+          eprintf(token.loc, "HEX can be 1 or 2 bytes\n");
         }
         tokenizer->loc.col += token.image.len;
         break;
@@ -223,6 +246,7 @@ token_t token_next(tokenizer_t *tokenizer) {
           ++tokenizer->buffer;
         } while (isalpha(*tokenizer->buffer) || isdigit(*tokenizer->buffer) || *tokenizer->buffer == '_');
         sv_t image = {image_start, len};
+        tokenizer->loc.len = len;
         token = (token_t) {
           is_int ? T_INT : 
             sv_eq(image, sv_from_cstr("return")) ? T_RETURN : 
@@ -231,7 +255,7 @@ token_t token_next(tokenizer_t *tokenizer) {
             tokenizer->loc
         };
         if (!is_int && isdigit(image_start[0])) {
-          eprintf(token, "SYM cannot start with digit");
+          eprintf(token.loc, "SYM cannot start with digit");
         }
         tokenizer->loc.col += len;
       }
@@ -288,7 +312,7 @@ token_t token_expect(tokenizer_t *tokenizer, token_kind_t kind) {
   assert(tokenizer);
   token_t token = token_next(tokenizer);
   if (token.kind != kind) {
-    eprintf(token, "expected '%s' found '%s'", 
+    eprintf(token.loc, "expected '%s' found '%s'", 
         token_kind_to_string(kind),
         token_kind_to_string(token.kind));
   }
@@ -377,7 +401,7 @@ char *type_dump_to_string(type_t *type) {
 
   switch (type->kind) {
     case TY_NONE: 
-      strcpy(string, "NONE"); break;
+      // strcpy(string, "NONE"); break;
       assert(0);
     case TY_VOID:
       strcpy(string, "VOID");
@@ -396,12 +420,14 @@ char *type_dump_to_string(type_t *type) {
         int len = strlen(str);
         assert(len < 128 - 5);
         strcpy(string + 5, str);
+        free_ptr(str);
         if (type->as.func.params) {
           str = type_dump_to_string(type->as.func.params);
           int plen = strlen(str);
           assert(plen < 128 - 5 - len);
           string[5+len] = ' ';
           strcpy(string + 5 + 1 + len, str);
+          free_ptr(str);
         }
       } break;
     case TY_PTR:
@@ -411,6 +437,7 @@ char *type_dump_to_string(type_t *type) {
         char *str = type_dump_to_string(type->as.ptr);
         assert(strlen(str) < 128 - 4);
         strcpy(string + 4, str);
+        free_ptr(str);
       } break;
     case TY_PARAM:
       {
@@ -420,12 +447,14 @@ char *type_dump_to_string(type_t *type) {
         int len = strlen(str);
         assert(len < 128 - 6);
         strcpy(string + 6, str);
+        free_ptr(str);
         if (type->as.param.next) {
           str = type_dump_to_string(type->as.param.next);
           int plen = strlen(str);
           assert(plen < 128 - 6 - len);
           string[6+len] = ' ';
           strcpy(string + 6 + 1 + len, str);
+          free_ptr(str);
         }
       } break;
   }
@@ -506,7 +535,7 @@ typedef enum {
 
 typedef struct ast_t_ {
   ast_kind_t kind;
-  token_t forerror;
+  location_t forerror;
   type_t type;
   union {
     struct {
@@ -581,6 +610,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
         printf("%s " SV_FMT " ", 
             str,
             SV_UNPACK(ast->as.funcdecl.name.image));
+        free_ptr(str);
         ast_dump(ast->as.funcdecl.params, dumptype);
         printf(" ");
         ast_dump(ast->as.funcdecl.block, dumptype);
@@ -593,6 +623,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
         printf("%s " SV_FMT " ", 
             str,
             SV_UNPACK(ast->as.paramdef.name.image));
+        free_ptr(str);
         ast_dump(ast->as.paramdef.next, dumptype);
         printf(")");
       } break;
@@ -636,6 +667,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
         printf("%s " SV_FMT " ", 
             str,
             SV_UNPACK(ast->as.decl.name.image));
+        free_ptr(str);
         ast_dump(ast->as.decl.expr, dumptype);
         printf(")");
       } break;
@@ -668,6 +700,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
   if (dumptype) {
     char *str = type_dump_to_string(&ast->type);
     printf(" {%s}", str);
+    free_ptr(str);
   }
 }
 
@@ -782,7 +815,7 @@ symbol_t *state_find_symbol(state_t *state, token_t token) {
       }
     }
   }
-  eprintf(token, "symbol not declared: " SV_FMT, SV_UNPACK(token.image));
+  eprintf(token.loc, "symbol not declared: " SV_FMT, SV_UNPACK(token.image));
   assert(0);
 }
 
@@ -793,7 +826,7 @@ void state_add_local_symbol(state_t *state, token_t token, type_t type) {
     scope_t *scope = &state->scopes[j];
     for (int i = 0; i < scope->symbol_num; ++i) {
       if (sv_eq(scope->symbols[i].name.image, token.image)) {
-        eprintf(token, "redefinition of symbol '" SV_FMT "', defined at %d:%d", SV_UNPACK(token.image), scope->symbols[i].name.loc.row, scope->symbols[i].name.loc.col);
+        eprintf(token.loc, "redefinition of symbol '" SV_FMT "', defined at %d:%d", SV_UNPACK(token.image), scope->symbols[i].name.loc.row, scope->symbols[i].name.loc.col);
       }
     }
   }
@@ -808,7 +841,7 @@ void state_add_global_symbol(state_t *state, token_t token, type_t type, int id)
   scope_t *scope = &state->scopes[0];
   for (int i = 0; i < scope->symbol_num; ++i) {
     if (sv_eq(scope->symbols[i].name.image, token.image)) {
-      eprintf(token, "redefinition of symbol '" SV_FMT "', defined at %d:%d", SV_UNPACK(token.image), scope->symbols[i].name.loc.row, scope->symbols[i].name.loc.col);
+      eprintf(token.loc, "redefinition of symbol '" SV_FMT "', defined at %d:%d", SV_UNPACK(token.image), scope->symbols[i].name.loc.row, scope->symbols[i].name.loc.col);
     }
   }
   assert(scope->symbol_num + 1 < SYMBOL_MAX);
@@ -849,7 +882,7 @@ type_t parse_type(tokenizer_t *tokenizer) {
   } else if (sv_eq(token.image, sv_from_cstr("void"))) {
     type.kind = TY_VOID;
   } else {
-    eprintf(token, "is not a type");
+    eprintf(token.loc, "is not a type");
   } 
 
   if (token_next_if_kind(tokenizer, T_STAR)) {
@@ -863,18 +896,18 @@ ast_t *parse_expr(tokenizer_t *tokenizer);
 ast_t *parse_param(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  token_t par = token_expect(tokenizer, T_PARO);
+  token_expect(tokenizer, T_PARO);
   if (token_next_if_kind(tokenizer, T_PARC)) {
     return NULL;
   }
 
   ast_t *expr = parse_expr(tokenizer);
-  ast_t *ast = ast_malloc((ast_t){A_PARAM, par, {0}, {.astlist = {expr, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_PARAM, expr->forerror, {0}, {.astlist = {expr, NULL}}});
   ast_t *asti = ast;
 
   while (token_next_if_kind(tokenizer, T_COLON)) {
     expr = parse_expr(tokenizer);
-    asti->as.astlist.next = ast_malloc((ast_t){A_PARAM, par, {0}, {.astlist = {expr, NULL}}});
+    asti->as.astlist.next = ast_malloc((ast_t){A_PARAM, expr->forerror, {0}, {.astlist = {expr, NULL}}});
     asti = asti->as.astlist.next;
   }
 
@@ -889,7 +922,7 @@ ast_t *parse_funcall(tokenizer_t *tokenizer) {
   token_t name = token_expect(tokenizer, T_SYM);
   ast_t *param = parse_param(tokenizer);
 
-  return ast_malloc((ast_t){A_FUNCALL, name, {0}, {.funcall = {name, param}}});
+  return ast_malloc((ast_t){A_FUNCALL, param ? location_union(name.loc, param->forerror) : name.loc, {0}, {.funcall = {name, param}}});
 }
 
 ast_t *parse_fac(tokenizer_t *tokenizer) {
@@ -901,7 +934,7 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     token_next(tokenizer);
     ast_t *expr = parse_expr(tokenizer);
     token_expect(tokenizer, T_PARC);
-    return ast_malloc((ast_t){A_GROUP, token, {0}, {.group = expr}});
+    return ast_malloc((ast_t){A_GROUP, token.loc, {0}, {.group = expr}});
   };
 
   tokenizer_t savetok = *tokenizer;
@@ -918,12 +951,12 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
       token.kind != T_SYM && 
       token.kind != T_STRING && 
       token.kind != T_HEX) {
-    eprintf(token, "unvalid token for fac: '%s'", 
+    eprintf(token.loc, "unvalid token for fac: '%s'", 
         token_kind_to_string(token.kind));
   }
   token_next(tokenizer);
 
-  return ast_malloc((ast_t){A_FAC, token, {0}, {.fac = token}});
+  return ast_malloc((ast_t){A_FAC, token.loc, {0}, {.fac = token}});
 }
 
 ast_t *parse_unary(tokenizer_t *tokenizer) {
@@ -935,7 +968,7 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
     case T_AND: case T_STAR:
       token_next(tokenizer);
       ast_t *arg = parse_fac(tokenizer);
-      return ast_malloc((ast_t){A_UNARYOP, token, {0}, {.unaryop = {token, arg}}});
+      return ast_malloc((ast_t){A_UNARYOP, location_union(token.loc, arg->forerror), {0}, {.unaryop = {token, arg}}});
     default:
       break;
   }
@@ -951,7 +984,7 @@ ast_t *parse_term(tokenizer_t *tokenizer) {
   while (token = token_peek(tokenizer), token.kind == T_STAR || token.kind == T_SLASH) {
     token_next(tokenizer);
     ast_t *b = parse_unary(tokenizer);
-    a = ast_malloc((ast_t){A_BINARYOP, a->forerror, {0}, {.binaryop = {token, a, b}}});
+    a = ast_malloc((ast_t){A_BINARYOP, location_union(a->forerror, b->forerror), {0}, {.binaryop = {token, a, b}}});
   }
 
   return a;
@@ -966,7 +999,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
   while (token = token_peek(tokenizer), token.kind == T_PLUS || token.kind == T_MINUS) {
     token_next(tokenizer);
     ast_t *b = parse_term(tokenizer);
-    a = ast_malloc((ast_t){A_BINARYOP, a->forerror, {0}, {.binaryop = {token, a, b}}});
+    a = ast_malloc((ast_t){A_BINARYOP, location_union(a->forerror, b->forerror), {0}, {.binaryop = {token, a, b}}});
   }
 
   return a;
@@ -981,7 +1014,7 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
     expr = parse_expr(tokenizer);
   }
   token_expect(tokenizer, T_SEMICOLON);
-  return ast_malloc((ast_t){A_DECL, name, {0}, {.decl = {type, name, expr}}});
+  return ast_malloc((ast_t){A_DECL, location_union(name.loc, expr ? expr->forerror : name.loc), {0}, {.decl = {type, name, expr}}});
 }
 
 ast_t *parse_statement(tokenizer_t *tokenizer) {
@@ -996,7 +1029,8 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
       expr = parse_expr(tokenizer);
       token_expect(tokenizer, T_SEMICOLON);
     }
-    return ast_malloc((ast_t){A_RETURN, token, {0}, {.return_ = {expr}}});
+    // TODO: better forerror
+    return ast_malloc((ast_t){A_RETURN, token.loc, {0}, {.return_ = {expr}}});
   }
 
   tokenizer_t savetok = *tokenizer;
@@ -1018,17 +1052,16 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
         dest = parse_expr(tokenizer);
         break;
       case T_SYM:
-        token_next(tokenizer);
-        dest = ast_malloc((ast_t){A_FAC, token, {0}, {.fac = token}});
+        dest = parse_fac(tokenizer);
         break;
       default:
-        eprintf(token, "assertion");
+        eprintf(token.loc, "assertion");
     }
     assert(dest);
     token_expect(tokenizer, T_EQUAL);
     ast_t *expr = parse_expr(tokenizer);
-    ast_t *ast = ast_malloc((ast_t){A_ASSIGN, dest->forerror, {0}, {.assign = {dest, expr}}});
-    token_expect(tokenizer, T_SEMICOLON);
+    token = token_expect(tokenizer, T_SEMICOLON);
+    ast_t *ast = ast_malloc((ast_t){A_ASSIGN, location_union(dest->forerror, token.loc), {0}, {.assign = {dest, expr}}});
     catch = false;
     return ast;
   }
@@ -1042,7 +1075,7 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
     return ast;
   }
 
-  eprintf(token, "expected a statement");
+  eprintf(token.loc, "expected a statement");
   assert(0);
 }
 
@@ -1061,21 +1094,21 @@ ast_t *parse_block(tokenizer_t *tokenizer) {
     return NULL;
   }
 
-  ast_t ast = {A_BLOCK, token, {0}, {.astlist = {parse_code(tokenizer), NULL}}};
-  ast_t *block = &ast;
-  ast_t *code = NULL;
+  ast_t *code = parse_code(tokenizer);
+  ast_t *ast = ast_malloc((ast_t){A_BLOCK, location_union(token.loc, code->forerror), {0}, {.astlist = {code, NULL}}});
+  ast_t *block = ast;
 
   while (token_peek(tokenizer).kind != T_BRC) {
     code = parse_code(tokenizer);
     if (code) {
-      block->as.astlist.next = ast_malloc((ast_t){A_BLOCK, token, {0}, {.astlist = {code, NULL}}});
+      block->as.astlist.next = ast_malloc((ast_t){A_BLOCK, location_union(ast->forerror, code->forerror), {0}, {.astlist = {code, NULL}}});
       block = block->as.astlist.next;
     }
   } 
 
   token_expect(tokenizer, T_BRC);
 
-  return ast_malloc(ast);
+  return ast;
 }
 
 ast_t *parse_paramdef(tokenizer_t *tokenizer) {
@@ -1088,15 +1121,13 @@ ast_t *parse_paramdef(tokenizer_t *tokenizer) {
 
   type_t type = parse_type(tokenizer);
   token_t name = token_expect(tokenizer, T_SYM);
-  ast_t *ast = ast_malloc((ast_t){A_PARAMDEF, par, {0}, {.paramdef = {type, name, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_PARAMDEF, location_union(par.loc, name.loc), {0}, {.paramdef = {type, name, NULL}}});
   ast_t *asti = ast;
-
-  // TODO maybe change the forerror
 
   while (token_next_if_kind(tokenizer, T_COLON)) {
     type = parse_type(tokenizer);
     name = token_expect(tokenizer, T_SYM); 
-    asti->as.paramdef.next = ast_malloc((ast_t){A_PARAMDEF, par, {0}, {.paramdef = {type, name, NULL}}});
+    asti->as.paramdef.next = ast_malloc((ast_t){A_PARAMDEF, location_union(ast->forerror, name.loc), {0}, {.paramdef = {type, name, NULL}}});
     asti = asti->as.paramdef.next;
   }
 
@@ -1108,6 +1139,7 @@ ast_t *parse_paramdef(tokenizer_t *tokenizer) {
 ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
+  token_t token = token_peek(tokenizer);
   type_t type = parse_type(tokenizer);
   token_t name = token_expect(tokenizer, T_SYM);
 
@@ -1115,7 +1147,7 @@ ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
 
   ast_t *block = parse_block(tokenizer);
 
-  return ast_malloc((ast_t){A_FUNCDECL, name, {0}, {.funcdecl = {type, name, param, block}}});
+  return ast_malloc((ast_t){A_FUNCDECL, location_union(token.loc, block ? block->forerror : (param ? param->forerror : name.loc)), {0}, {.funcdecl = {type, name, param, block}}});
 } 
 
 ast_t *parse_global(tokenizer_t *tokenizer) {
