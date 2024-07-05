@@ -7,6 +7,9 @@
 #include <ctype.h>
 #include <string.h>
 #include <setjmp.h>
+#include <errno.h>
+
+#include "../defs.h"
 
 #define TODO assert(0 && "TODO")
 
@@ -531,6 +534,7 @@ typedef enum {
   A_FUNCALL,
   A_PARAM,
   A_GROUP,
+  A_ARRAY,
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -696,6 +700,13 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.group, dumptype);
       printf(")");
       break;
+    case A_ARRAY:
+      printf("ARRAY(");
+      ast_dump(ast->as.astlist.ast, dumptype);
+      printf(" ");
+      ast_dump(ast->as.astlist.next, dumptype);
+      printf(")");
+      break;
   }
   if (dumptype) {
     char *str = type_dump_to_string(&ast->type);
@@ -705,7 +716,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
 }
 
 #define LABEL_MAX 128
-#include "../defs.h"
 
 typedef struct {
   enum {
@@ -724,28 +734,28 @@ typedef struct {
   } arg;
 } bytecode_t;
 
-void bytecode_dump(bytecode_t b) {
+void bytecode_dump(bytecode_t b, FILE *stream) {
   switch (b.kind) {
     case B_INST:
-      printf("%s ", instruction_to_string(b.arg.inst));
+      fprintf(stream, "%s ", instruction_to_string(b.arg.inst));
       break;
     case B_HEX:
-      printf("0x%02X ", b.arg.num);
+      fprintf(stream, "0x%02X ", b.arg.num);
       break;
     case B_HEX2:
-      printf("0x%04X ", b.arg.num);
+      fprintf(stream, "0x%04X ", b.arg.num);
       break;
     case B_SETLABEL:
-      printf("%s: ", b.arg.str);
+      fprintf(stream, "\n%s: ", b.arg.str);
       break;
     case B_LABEL:
-      printf("%s ", b.arg.str);
+      fprintf(stream, "%s ", b.arg.str);
       break;
     case B_RELLABEL:
-      printf("$%s ", b.arg.str);
+      fprintf(stream, "$%s ", b.arg.str);
       break;
     case B_STRING:
-      printf("%s ", b.arg.str);
+      fprintf(stream, "%s ", b.arg.str);
       break;
   }
 }
@@ -789,7 +799,7 @@ typedef struct {
   int sp;
   int param;
   int uli; // unique label id
-  compiled_t compiled;
+  compiled_t *compiled;
 } state_t;
 
 void state_push_scope(state_t *state) {
@@ -848,25 +858,22 @@ void state_add_global_symbol(state_t *state, token_t token, type_t type, int id)
   scope->symbols[scope->symbol_num ++] = (symbol_t) {token, type, INFO_GLOBAL, {.global = id}};
 } 
 
-void code_dump(compiled_t *compiled) {
+void code_dump(compiled_t *compiled, FILE *stream) {
   assert(compiled);
 
-  printf("GLOBAL _start\n");
+  fprintf(stream, "GLOBAL _start");
   for (int i = 0; i < compiled->data_num; ++i) {
-    bytecode_dump(compiled->data[i]);
+    bytecode_dump(compiled->data[i], stream);
   }
-  if (compiled->data_num > 0) { printf("\n"); }
-  printf("_start:\n\t");
+  fprintf(stream, "\n_start: ");
   for (int i = 0; i < compiled->init_num; ++i) {
-    bytecode_dump(compiled->init[i]);
+    bytecode_dump(compiled->init[i], stream);
   }
-  if (compiled->init_num > 0) { printf("\n"); }
-  printf("\tJMPR $main\n");
+  fprintf(stream, "\n\tJMPR $main\n");
   for (int i = 0; i < compiled->code_num; ++i) {
-    if (i != 0 && compiled->code[i].kind == B_SETLABEL) { printf("\n"); }
-    bytecode_dump(compiled->code[i]);
+    bytecode_dump(compiled->code[i], stream);
   }
-  printf("\n");
+  fprintf(stream, "\n");
 }
 
 type_t parse_type(tokenizer_t *tokenizer) {
@@ -925,6 +932,26 @@ ast_t *parse_funcall(tokenizer_t *tokenizer) {
   return ast_malloc((ast_t){A_FUNCALL, param ? location_union(name.loc, param->forerror) : name.loc, {0}, {.funcall = {name, param}}});
 }
 
+ast_t *parse_array(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  // TODO: better forerror
+
+  token_t bro = token_expect(tokenizer, T_BRO);
+  ast_t *expr = parse_expr(tokenizer);
+  ast_t *ast = ast_malloc((ast_t){A_ARRAY, expr->forerror, {0}, {.astlist = {expr, NULL}}});
+  ast_t *asti = ast;
+  while (token_next_if_kind(tokenizer, T_COLON)) {
+    expr = parse_expr(tokenizer);
+    asti->as.astlist.next = ast_malloc((ast_t){A_ARRAY, expr->forerror, {0}, {.astlist = {expr, NULL}}});
+    asti = asti->as.astlist.next;
+  }
+  token_t brc = token_expect(tokenizer, T_BRC);
+  ast->forerror = location_union(bro.loc, brc.loc);
+  return ast;
+
+}
+
 ast_t *parse_fac(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
@@ -936,6 +963,10 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     token_expect(tokenizer, T_PARC);
     return ast_malloc((ast_t){A_GROUP, token.loc, {0}, {.group = expr}});
   };
+
+  if (token.kind == T_BRO) {
+    return parse_array(tokenizer);
+  }
 
   tokenizer_t savetok = *tokenizer;
   if (token.kind == T_SYM) {
@@ -1381,6 +1412,14 @@ void typecheck(ast_t *ast, state_t *state) {
       typecheck(ast->as.group, state);
       ast->type = type_clone(ast->as.group->type);
       break;
+    case A_ARRAY:
+      assert(ast->as.astlist.ast);
+      typecheck(ast->as.astlist.ast, state);
+      ast->type = (type_t){TY_PTR, {.ptr = type_malloc(ast->as.astlist.ast->type)}};
+      if (ast->as.astlist.next) {
+        typecheck_expect(ast->as.astlist.next, state, ast->type);
+      }
+      break;
   }
 }
 
@@ -1402,7 +1441,7 @@ void code(compiled_t *compiled, bytecode_t b) {
 }
 
 // wants in B the addr
-void read(compiled_t *compiled, type_t type) {
+void coderead(compiled_t *compiled, type_t type) {
   assert(compiled);
   switch (type_size(&type)) {
     case 1:
@@ -1417,7 +1456,7 @@ void read(compiled_t *compiled, type_t type) {
 }
 
 // wants in B the addr
-void write(compiled_t *compiled, type_t type) {
+void codewrite(compiled_t *compiled, type_t type) {
   assert(compiled);
   switch (type_size(&type)) {
     case 1:
@@ -1431,12 +1470,37 @@ void write(compiled_t *compiled, type_t type) {
   }
 }
 
+void datanum(compiled_t *compiled, type_t *type, int num) {
+  assert(compiled);
+  assert(type);
+  switch (type_size(type)) {
+    case 1: 
+      data(compiled, (bytecode_t){B_HEX, {.num = num}});
+      break;
+    case 2: 
+      data(compiled, (bytecode_t){B_HEX2, {.num = num}});
+      break;
+    default: 
+      assert(0);
+  }
+}
+
+bytecode_t datauli(compiled_t *compiled, state_t *state) {
+  assert(compiled);
+  assert(state);
+  bytecode_t b = {B_SETLABEL, {0}};
+  sprintf(b.arg.str, "_%03d", state->uli);
+  ++ state->uli;
+  data(compiled, b);
+  return b;
+}
+
 // addr in A
 void get_addr(state_t *state, token_t token) {
   assert(state);
   assert(token.kind == T_SYM);
 
-  compiled_t *compiled = &state->compiled;
+  compiled_t *compiled = state->compiled;
   symbol_t *s = state_find_symbol(state, token);
   switch (s->kind) {
     case INFO_LOCAL:
@@ -1463,7 +1527,7 @@ void compile(ast_t *ast, state_t *state) {
 
   if (!ast) { return; }
 
-  compiled_t *compiled = &state->compiled;
+  compiled_t *compiled = state->compiled;
 
   switch (ast->kind) {
     case A_NONE: 
@@ -1536,7 +1600,7 @@ void compile(ast_t *ast, state_t *state) {
           compile(ast->as.unaryop.arg, state);
           assert(ast->as.unaryop.arg->type.kind == TY_PTR);
           code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
-          read(compiled, ast->type);
+          coderead(compiled, ast->type);
           break;
         default:
           assert(0);
@@ -1561,7 +1625,7 @@ void compile(ast_t *ast, state_t *state) {
           case T_SYM:
             get_addr(state, token);
             code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
-            read(compiled, ast->type);
+            coderead(compiled, ast->type);
             break;
           case T_STRING:
             {
@@ -1594,31 +1658,43 @@ void compile(ast_t *ast, state_t *state) {
     case A_GLOBDECL:
       {
         state_add_global_symbol(state, ast->as.decl.name, ast->as.decl.type, state->uli);
-        bytecode_t b = {B_SETLABEL, {0}};
-        sprintf(b.arg.str, "_%03d", state->uli);
-        ++ state->uli;
-        data(compiled, b);
 
         if (ast->as.decl.expr) {
-          if (ast->as.decl.expr->kind == A_FAC && ast->as.decl.expr->as.fac.kind == T_STRING) {
-            token_t token = ast->as.decl.expr->as.fac;
-            b.kind = B_STRING;
-            memset(b.arg.str, 0, LABEL_MAX);
-            memcpy(b.arg.str, token.image.start, token.image.len);
-            data(compiled, b);
-            return;
-          } 
+          ast_t *expr = ast->as.decl.expr; 
+          if (expr->kind == A_ARRAY ||
+              (expr->kind == A_FAC && 
+              expr->as.fac.kind == T_STRING)) {
+                compile(expr, state);
+                return;
+              }
+          if (expr->kind == A_FAC) {
+            switch (expr->as.fac.kind) {
+              case T_INT: 
+                datauli(compiled, state);
+                datanum(compiled, &ast->as.decl.type, atoi(expr->as.fac.image.start));
+                return;
+              case T_HEX:
+                datauli(compiled, state);
+                datanum(compiled, &ast->as.decl.type, atoi(expr->as.fac.image.start + 2));
+                return;
+              default:
+            }
+          }
+        }
+
+        bytecode_t b = datauli(compiled, state);
+
+        if (ast->as.decl.expr) {
           compiled->is_init = true;
           compile(ast->as.decl.expr, state);
           code(compiled, (bytecode_t){B_INST, {.inst = RAM_B}});
           b.kind = B_LABEL;
           code(compiled, b);
-          write(compiled, ast->as.decl.type);
+          codewrite(compiled, ast->as.decl.type);
           compiled->is_init = false;
         }
-        for (int i = 0; i < type_size(&ast->as.decl.type); ++i) {
-          data(compiled, (bytecode_t){B_HEX, {.num = 0}});
-        }
+
+        datanum(compiled, &ast->as.decl.type, 0);
       } break;
     case A_DECL:
       state_add_local_symbol(state, ast->as.decl.name, ast->as.decl.type);
@@ -1660,7 +1736,7 @@ void compile(ast_t *ast, state_t *state) {
         code(compiled, (bytecode_t){B_INST, {.inst = POPB}});
         -- state->sp;
       }
-      write(compiled, ast->type);
+      codewrite(compiled, ast->type);
       break;
     case A_FUNCALL:
       {
@@ -1679,6 +1755,38 @@ void compile(ast_t *ast, state_t *state) {
     case A_GROUP:
       compile(ast->as.group, state);
       break;
+    case A_ARRAY:
+      {
+        code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
+        bytecode_t b = datauli(compiled, state);
+        b.kind = B_LABEL;
+        code(compiled, b);
+        int i = 0;
+        for (ast_t *asti = ast; asti; asti = asti->as.astlist.next) {
+          if (asti->as.astlist.ast->kind == A_FAC && 
+              asti->as.astlist.ast->as.fac.kind == T_INT) {
+            int num = atoi(asti->as.astlist.ast->as.fac.image.start);
+
+            datanum(compiled, &ast->as.astlist.ast->type, num);
+            continue; 
+          }
+          datanum(compiled, &ast->as.astlist.ast->type, 0);
+
+          compiled->is_init = true;
+          code(compiled, (bytecode_t){B_INST, {.inst = RAM_B}});
+          b.kind = B_LABEL;
+          code(compiled, b);
+          if (i > 0) {
+            code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
+            code(compiled, (bytecode_t){B_HEX2, {.num = i}});
+            code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
+          }
+          compile(ast->as.astlist.ast, state);
+          codewrite(compiled, ast->as.astlist.ast->type);
+          compiled->is_init = false;
+          ++i;
+        }
+      } break;
   }
 }
 
@@ -1726,6 +1834,11 @@ void optimize_compiled(compiled_t *compiled) {
       compiled->code[i+1] = compiled->code[i+2];
       compiled_copy(compiled, i, 2, 6);
       i = 0;
+    } else if (compiled_is_inst(compiled, i, RAM_A) && compiled->code[i+1].kind == B_HEX2 && compiled->code[i+1].arg.num < 256) {
+      // TODO: does not optimize this
+      compiled->code[i].arg.inst = RAM_AL;
+      compiled->code[i+1].kind = B_HEX;
+      i = 0;
     } else {
       ++i;
     }
@@ -1740,7 +1853,7 @@ void help(int errorcode) {
       " -D [<module>]  stop the execution after a module and print the output\n"
       "                (if no module name or module all then it will execute only the tokenizer)\n"
       " -e <string>    compile the string provided\n"
-      " -o <file>      write output to the file\n"
+      " -o <file>      write output to the file [default is 'out.asm']\n"
       " -O0 | -O       no optimization\n"
       " -O1            optimize the assembly code\n"
       " -O2            optimize pre-compilation\n"
@@ -1756,7 +1869,6 @@ void help(int errorcode) {
   exit(errorcode);
 }
 
-#define STR_INPUT_MAX 128
 typedef enum {
   M_TOK,
   M_PAR,
@@ -1791,15 +1903,24 @@ uint8_t parse_module(char *str) {
   assert(0);
 }
 
-int main(int argc, char **argv) {
-  if (argc == 1) {
-    fprintf(stderr, "ERROR: no input\n"); exit(1);
-  }
+typedef struct {
+  enum {
+    INPUT_FILE,
+    INPUT_STRING,
+  } kind;
+  char *str;
+} input_t;
 
+#define INPUTS_MAX 128
+
+int main(int argc, char **argv) {
+  (void) argc;
   assert(atexit(free_all) == 0);
 
-  char *strinput[STR_INPUT_MAX] = {0};
-  int strinputi = 0;
+  char *output = NULL;
+  input_t inputs[INPUTS_MAX] = {0};
+  int input_num = 0;
+
   assert(OL_COUNT < 8);
   uint8_t opt = 0;
   assert(M_COUNT < 8);
@@ -1833,17 +1954,24 @@ int main(int argc, char **argv) {
           ++ argv;
           break;
         case 'e':
-          assert(strinputi + 1 < STR_INPUT_MAX);
+          assert(input_num + 1 < INPUTS_MAX);
           ++argv;
           if (!*argv) {
             fprintf(stderr, "ERROR: -e expects a string\n");
             help(1);
           }
-          strinput[strinputi ++] = *argv;
+          inputs[input_num ++] = (input_t) {INPUT_STRING, *argv};
           ++argv;
           break;
         case 'o':
-          TODO;
+          ++ argv;
+          if (!*argv) {
+            fprintf(stderr, "ERROR: -o expects a string\n");
+            help(1);
+          }
+          output = *argv;
+          ++ argv;
+          break;
         case 'O':
           opt = atoi(arg+2);
           ++ argv;
@@ -1861,22 +1989,50 @@ int main(int argc, char **argv) {
           help(1);
       }
     } else {
-      TODO;
+      assert(input_num + 1 < INPUTS_MAX);
+      inputs[input_num ++] = (input_t) {INPUT_FILE, *argv};
+      ++ argv;
     }
   }
 
   tokenizer_t tokenizer = {0};
+  compiled_t compiled = {0};
   state_t state;
   ast_t *ast;
-  for (int i = 0; i < strinputi; ++i) {
-    tokenizer_init(&tokenizer, strinput[i], "cmd");
+  for (int i = 0; i < input_num; ++i) {
+    char *buffer = NULL;
+    char *name = NULL;
+    switch (inputs[i].kind) {
+      case INPUT_FILE:
+        {
+          name = inputs[i].str;
+          FILE *file = fopen(inputs[i].str, "r");
+          if (!file) {
+            fprintf(stderr, "error: cannot open file '%s': %s", inputs[i].str, strerror(errno));
+            exit(1);
+          }
+          fseek(file, 0, SEEK_END);
+          int size = ftell(file);
+          fseek(file, 0, SEEK_SET);
+          buffer = alloc(size+1);
+          fread(buffer, 1, size, file);
+          buffer[size] = 0;
+          assert(fclose(file) == 0);
+        } break;
+      case INPUT_STRING:
+        name = "cmd";
+        buffer = inputs[i].str;
+        break;
+    };
+
+    tokenizer_init(&tokenizer, buffer, name);
     if ((debug >> M_TOK) & 1) {
       printf("TOKENS:\n");
       token_t token;
       while ((token = token_next(&tokenizer)).kind != T_NONE) {
         token_dump(token);
       }
-      tokenizer_init(&tokenizer, strinput[i], "cmd");
+      tokenizer_init(&tokenizer, buffer, name);
     }
     if ((exitat >> M_TOK) & 1) { exit(0); }
 
@@ -1914,19 +2070,34 @@ int main(int argc, char **argv) {
     }
 
     state = (state_t){0};
+    state.compiled = &compiled;
     compile(ast, &state);
 
     if ((opt >> OL_POST) & 1) {
-      optimize_compiled(&state.compiled);
+      optimize_compiled(state.compiled);
     }
 
     if ((debug >> M_COM) & 1) {
       printf("ASSEMBLY:\n");
-      code_dump(&state.compiled);
+      code_dump(state.compiled, stdout);
     }
     if ((exitat >> M_COM) & 1) { exit(0); }
+
+    if (inputs[i].kind == INPUT_FILE) {
+      free_ptr(buffer);
+    }
   }
+
+  if (!output) {
+    output = "out.asm";
+  }
+
+  FILE *file = fopen(output, "w");
+  if (!file) {
+    fprintf(stderr, "ERROR: cannot open file '%s': %s", output, strerror(errno));
+    exit(1);
+  }
+  code_dump(state.compiled, file);
 
   return 0;
 }
-

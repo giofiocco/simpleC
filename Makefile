@@ -1,8 +1,8 @@
 CFLAGS=-Wall -Wextra -Werror -std=c99
 
-.PHONY: run test test-record
+.PHONY: test test-record
 
-simpleC: main.c ../defs.h ../defs.c
+simpleC: simpleC.c ../defs.h ../defs.c
 	cc $(CFLAGS) -o $@ $(filter %.c,$^)
 
 test: simpleC
