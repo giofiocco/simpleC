@@ -1,5 +1,7 @@
 when ast_malloc a group return the ast of the expr
 
+postopt remove dead code
+
 tokenizer check if it is bin
 
 tokenizer maybe find the row end when changing the row instead of finding it when printing error

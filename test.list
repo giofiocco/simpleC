@@ -30,3 +30,5 @@
 ./simpleC -D com -O1 -e "int a; int main() { return a; }"
 ./simpleC -D com -O1 -e "int main() { int *b; *b = 1; }"
 ./simpleC -D com -O1 -e "int main() { int a = 0; return a; }"
+./simpleC -D com -e "int main() { {10, 20, 30}; }"
+./simpleC -D com -O1 -e "int main() { {10, 20, 30}; }"

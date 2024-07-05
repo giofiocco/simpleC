@@ -1,4 +1,4 @@
-:i count 32
+:i count 34
 :b shell 22
 ./simpleC -D par -e ""
 :i returncode 0
@@ -10,11 +10,12 @@ NULL
 :b shell 35
 ./simpleC -D com -e "int main() {}"
 :i returncode 0
-:b stdout 56
+:b stdout 57
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RET 
 
 :b stderr 0
@@ -22,11 +23,12 @@ main: RET
 :b shell 48
 ./simpleC -D com -e "int add() {} int main() {}"
 :i returncode 0
-:b stdout 66
+:b stdout 67
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 add: RET 
 main: RET 
 
@@ -35,11 +37,12 @@ main: RET
 :b shell 46
 ./simpleC -D com -e "int main() { return 1; }"
 :i returncode 0
-:b stdout 68
+:b stdout 69
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_AL 0x01 RET 
 
 :b stderr 0
@@ -47,11 +50,12 @@ main: RAM_AL 0x01 RET
 :b shell 45
 ./simpleC -D com -e "void main() { return; }"
 :i returncode 0
-:b stdout 56
+:b stdout 57
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RET 
 
 :b stderr 0
@@ -59,11 +63,12 @@ main: RET
 :b shell 57
 ./simpleC -D com -e "int main() { int a = 0; return a; }"
 :i returncode 0
-:b stdout 110
+:b stdout 111
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_AL 0x00 PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A INCSP RET 
 
 :b stderr 0
@@ -71,11 +76,12 @@ main: RAM_AL 0x00 PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A INCSP RET
 :b shell 47
 ./simpleC -D com -e "int main() { int a = 0; }"
 :i returncode 0
-:b stdout 80
+:b stdout 81
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_AL 0x00 PUSHA INCSP RET 
 
 :b stderr 0
@@ -83,11 +89,12 @@ main: RAM_AL 0x00 PUSHA INCSP RET
 :b shell 54
 ./simpleC -D com -e "int main() { int a = 0; a = 2; }"
 :i returncode 0
-:b stdout 104
+:b stdout 105
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_AL 0x00 PUSHA RAM_AL 0x02 INCSP PUSHA INCSP RET 
 
 :b stderr 0
@@ -95,11 +102,12 @@ main: RAM_AL 0x00 PUSHA RAM_AL 0x02 INCSP PUSHA INCSP RET
 :b shell 52
 ./simpleC -D com -e "int main() { int *b; *b = 1; }"
 :i returncode 0
-:b stdout 119
+:b stdout 120
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B RAM_AL 0x01 A_rB INCSP RET 
 
 :b stderr 0
@@ -107,11 +115,12 @@ main: PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B RAM_AL 0x01 A_rB INCSP RET
 :b shell 55
 ./simpleC -D com -e "int *main() { int *b; return b; }"
 :i returncode 0
-:b stdout 98
+:b stdout 99
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A INCSP RET 
 
 :b stderr 0
@@ -119,11 +128,12 @@ main: PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A INCSP RET
 :b shell 42
 ./simpleC -D com -e "int main() { -2+1; }"
 :i returncode 0
-:b stdout 104
+:b stdout 105
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_AL 0x02 RAM_BL 0x00 SUB A_B RAM_AL 0x01 SUM RET 
 
 :b stderr 0
@@ -139,11 +149,12 @@ GLOBAL(FUNCDECL(INT main NULL BLOCK(BINARYOP(/ BINARYOP(* UNARYOP(- FAC(2) {INT}
 :b shell 55
 ./simpleC -D com -e "int *main() { int a; return &a; }"
 :i returncode 0
-:b stdout 89
+:b stdout 90
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: PUSHA SP_A RAM_BL 0x02 SUM INCSP RET 
 
 :b stderr 0
@@ -151,11 +162,12 @@ main: PUSHA SP_A RAM_BL 0x02 SUM INCSP RET
 :b shell 55
 ./simpleC -D com -e "int main() { int *a; return *a; }"
 :i returncode 0
-:b stdout 107
+:b stdout 108
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B rB_A INCSP RET 
 
 :b stderr 0
@@ -163,11 +175,12 @@ main: PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B rB_A INCSP RET
 :b shell 56
 ./simpleC -D com -e "int main() { char *a; return *a; }"
 :i returncode 0
-:b stdout 108
+:b stdout 109
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B rB_AL INCSP RET 
 
 :b stderr 0
@@ -175,11 +188,12 @@ main: PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B rB_AL INCSP RET
 :b shell 44
 ./simpleC -D com -e "int main() { main(); }"
 :i returncode 0
-:b stdout 68
+:b stdout 69
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: CALLR $main RET 
 
 :b stderr 0
@@ -187,11 +201,12 @@ main: CALLR $main RET
 :b shell 63
 ./simpleC -D com -e "int main(int a, char b) { main(2,0x02); }"
 :i returncode 0
-:b stdout 116
+:b stdout 117
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_AL 0x02 PUSHA RAM_AL 0x02 PUSHA CALLR $main INCSP INCSP RET 
 
 :b stderr 0
@@ -199,11 +214,12 @@ main: RAM_AL 0x02 PUSHA RAM_AL 0x02 PUSHA CALLR $main INCSP INCSP RET
 :b shell 81
 ./simpleC -D com -e "int add(int a) { return a; } int main() { return add(10); }"
 :i returncode 0
-:b stdout 131
+:b stdout 132
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 add: SP_A RAM_BL 0x04 SUM A_B rB_A RET 
 main: RAM_AL 0x0A PUSHA CALLR $add INCSP RET 
 
@@ -220,12 +236,13 @@ GLOBAL(FUNCDECL(INT main NULL BLOCK(BINARYOP(* FAC(2) {INT} GROUP((BINARYOP(+ FA
 :b shell 55
 ./simpleC -D com -e "int main() { char *a = \"asd\"; }"
 :i returncode 0
-:b stdout 97
+:b stdout 98
 ASSEMBLY:
 GLOBAL _start
 _000: "asd" 0x00 
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_A _000 PUSHA INCSP RET 
 
 :b stderr 0
@@ -233,12 +250,13 @@ main: RAM_A _000 PUSHA INCSP RET
 :b shell 66
 ./simpleC -D com -e "int main() { char *a = \"asd\"; *a = 0x10; }"
 :i returncode 0
-:b stdout 149
+:b stdout 150
 ASSEMBLY:
 GLOBAL _start
 _000: "asd" 0x00 
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_A _000 PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B RAM_AL 0x10 AL_rB INCSP RET 
 
 :b stderr 0
@@ -246,12 +264,13 @@ main: RAM_A _000 PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B RAM_AL 0x10 AL_rB INCSP
 :b shell 73
 ./simpleC -D com -e "char main() { char *a = \"asd\"; return *(a + 2); }"
 :i returncode 0
-:b stdout 157
+:b stdout 158
 ASSEMBLY:
 GLOBAL _start
 _000: "asd" 0x00 
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_A _000 PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B RAM_AL 0x02 SUM A_B rB_AL INCSP RET 
 
 :b stderr 0
@@ -259,12 +278,13 @@ main: RAM_A _000 PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B RAM_AL 0x02 SUM A_B rB_
 :b shell 71
 ./simpleC -D com -e "char main() { char *a = \"asd\"; *(a+1) = 0x01; }"
 :i returncode 0
-:b stdout 169
+:b stdout 170
 ASSEMBLY:
 GLOBAL _start
 _000: "asd" 0x00 
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_A _000 PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B RAM_AL 0x01 SUM A_B RAM_AL 0x01 AL_rB INCSP RET 
 
 :b stderr 0
@@ -272,13 +292,13 @@ main: RAM_A _000 PUSHA SP_A RAM_BL 0x02 SUM A_B rB_A A_B RAM_AL 0x01 SUM A_B RAM
 :b shell 47
 ./simpleC -D com -e "int a = 10; int main() {}"
 :i returncode 0
-:b stdout 102
+:b stdout 71
 ASSEMBLY:
 GLOBAL _start
-_000: 0x00 0x00 
-_start:
-	RAM_AL 0x0A RAM_B _000 A_rB 
+_000: 0x000A 
+_start: 
 	JMPR $main
+
 main: RET 
 
 :b stderr 0
@@ -286,12 +306,13 @@ main: RET
 :b shell 42
 ./simpleC -D com -e "int a; int main() {}"
 :i returncode 0
-:b stdout 73
+:b stdout 71
 ASSEMBLY:
 GLOBAL _start
-_000: 0x00 0x00 
-_start:
-		JMPR $main
+_000: 0x0000 
+_start: 
+	JMPR $main
+
 main: RET 
 
 :b stderr 0
@@ -299,12 +320,13 @@ main: RET
 :b shell 53
 ./simpleC -D com -e "int a; int main() { return a; }"
 :i returncode 0
-:b stdout 93
+:b stdout 91
 ASSEMBLY:
 GLOBAL _start
-_000: 0x00 0x00 
-_start:
-		JMPR $main
+_000: 0x0000 
+_start: 
+	JMPR $main
+
 main: RAM_A _000 A_B rB_A RET 
 
 :b stderr 0
@@ -312,12 +334,13 @@ main: RAM_A _000 A_B rB_A RET
 :b shell 50
 ./simpleC -D com -e "int a; int main() { a = 2; }"
 :i returncode 0
-:b stdout 105
+:b stdout 103
 ASSEMBLY:
 GLOBAL _start
-_000: 0x00 0x00 
-_start:
-		JMPR $main
+_000: 0x0000 
+_start: 
+	JMPR $main
+
 main: RAM_A _000 A_B RAM_AL 0x02 A_rB RET 
 
 :b stderr 0
@@ -325,12 +348,13 @@ main: RAM_A _000 A_B RAM_AL 0x02 A_rB RET
 :b shell 55
 ./simpleC -D com -e "int a; int *main() { return &a; }"
 :i returncode 0
-:b stdout 84
+:b stdout 82
 ASSEMBLY:
 GLOBAL _start
-_000: 0x00 0x00 
-_start:
-		JMPR $main
+_000: 0x0000 
+_start: 
+	JMPR $main
+
 main: RAM_A _000 RET 
 
 :b stderr 0
@@ -338,12 +362,13 @@ main: RAM_A _000 RET
 :b shell 54
 ./simpleC -D com -e "char *a = \"asd\"; int main() {}"
 :i returncode 0
-:b stdout 69
+:b stdout 86
 ASSEMBLY:
 GLOBAL _start
-_000: "asd" 
-_start:
-		JMPR $main
+_000: "asd" 0x00 
+_start: 
+	JMPR $main
+RAM_A _000 
 main: RET 
 
 :b stderr 0
@@ -351,12 +376,13 @@ main: RET
 :b shell 57
 ./simpleC -D com -O1 -e "int a; int main() { return a; }"
 :i returncode 0
-:b stdout 89
+:b stdout 87
 ASSEMBLY:
 GLOBAL _start
-_000: 0x00 0x00 
-_start:
-		JMPR $main
+_000: 0x0000 
+_start: 
+	JMPR $main
+
 main: RAM_B _000 rB_A RET 
 
 :b stderr 0
@@ -364,11 +390,12 @@ main: RAM_B _000 rB_A RET
 :b shell 56
 ./simpleC -D com -O1 -e "int main() { int *b; *b = 1; }"
 :i returncode 0
-:b stdout 89
+:b stdout 90
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: PUSHA A_B RAM_AL 0x01 A_rB INCSP RET 
 
 :b stderr 0
@@ -376,12 +403,41 @@ main: PUSHA A_B RAM_AL 0x01 A_rB INCSP RET
 :b shell 61
 ./simpleC -D com -O1 -e "int main() { int a = 0; return a; }"
 :i returncode 0
-:b stdout 80
+:b stdout 81
 ASSEMBLY:
 GLOBAL _start
-_start:
-		JMPR $main
+_start: 
+	JMPR $main
+
 main: RAM_AL 0x00 PUSHA INCSP RET 
+
+:b stderr 0
+
+:b shell 50
+./simpleC -D com -e "int main() { {10, 20, 30}; }"
+:i returncode 0
+:b stdout 96
+ASSEMBLY:
+GLOBAL _start
+_000: 0x000A 0x0014 0x001E 
+_start: 
+	JMPR $main
+
+main: RAM_A _000 RET 
+
+:b stderr 0
+
+:b shell 54
+./simpleC -D com -O1 -e "int main() { {10, 20, 30}; }"
+:i returncode 0
+:b stdout 96
+ASSEMBLY:
+GLOBAL _start
+_000: 0x000A 0x0014 0x001E 
+_start: 
+	JMPR $main
+
+main: RAM_A _000 RET 
 
 :b stderr 0
 
