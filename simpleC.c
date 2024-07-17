@@ -76,6 +76,8 @@ typedef enum {
   T_STRING,
   T_PARO,
   T_PARC,
+  T_SQO,
+  T_SQC,
   T_BRO,
   T_BRC,
   T_RETURN,
@@ -161,6 +163,8 @@ token_t token_next(tokenizer_t *tokenizer) {
   token_kind_t table[128] = {0};
   table['('] = T_PARO;
   table[')'] = T_PARC;
+  table['['] = T_SQO;
+  table[']'] = T_SQC;
   table['{'] = T_BRO;
   table['}'] = T_BRC;
   table[';'] = T_SEMICOLON;
@@ -187,9 +191,9 @@ token_t token_next(tokenizer_t *tokenizer) {
       ++ tokenizer->buffer;
       tokenizer->loc.row_start = tokenizer->buffer;
       return token_next(tokenizer);
-    case '(': case ')': case '{': case '}': case ';':
+    case '(': case ')': case '[': case ']': case '{': case '}': 
     case '+': case '-': case '*': case '/':
-    case '=': case '&': case ',':
+    case '=': case '&': case ',': case ';': 
       assert(table[(int)*tokenizer->buffer]);
       tokenizer->loc.len = 1;
       token = (token_t) {
@@ -288,6 +292,8 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_STRING: return "STRING";
     case T_PARO: return "PARO";
     case T_PARC: return "PARC";
+    case T_SQO: return "SQO";
+    case T_SQC: return "SQC";
     case T_BRO: return "BRO";
     case T_BRC: return "BRC";
     case T_RETURN: return "RETURN";
@@ -341,6 +347,7 @@ typedef struct type_t_ {
     TY_FUNC,
     TY_PTR,
     TY_PARAM,
+    TY_ARRAY,
   } kind;
   union {
     struct {
@@ -352,6 +359,10 @@ typedef struct type_t_ {
       struct type_t_ *type;
       struct type_t_ *next;
     } param;
+    struct {
+      struct type_t_ *type;
+      int len;
+    } array;
   } as;
 } type_t;
 
@@ -390,6 +401,11 @@ type_t type_clone(type_t type) {
         clone.as.param.next = type_malloc(type_clone(*type.as.param.next));
       }
       break;
+    case TY_ARRAY:
+      assert(type.as.array.type);
+      clone.as.array.type = type_malloc(*type.as.array.type);
+      clone.as.array.len = type.as.array.len;
+      break;
   }
 
   return clone;
@@ -404,7 +420,7 @@ char *type_dump_to_string(type_t *type) {
 
   switch (type->kind) {
     case TY_NONE: 
-      // strcpy(string, "NONE"); break;
+      strcpy(string, "NONE"); break;
       assert(0);
     case TY_VOID:
       strcpy(string, "VOID");
@@ -460,6 +476,17 @@ char *type_dump_to_string(type_t *type) {
           free_ptr(str);
         }
       } break;
+    case TY_ARRAY:
+      {
+        strcpy(string, "ARRAY ");
+        assert(type->as.array.type);
+        char *str = type_dump_to_string(type->as.array.type);
+        int len = strlen(str);
+        assert(len < 128 - 6 - 7);
+        strcpy(string + 6, str);
+        free_ptr(str);
+        sprintf(string + 6 + len, "[%d]", type->as.array.len);
+      }
   }
 
   return string;
@@ -492,9 +519,23 @@ bool type_cmp(type_t *a, type_t *b) {
         }
         return type_cmp(a->as.param.type, b->as.param.type) 
           && (a->as.param.next ? type_cmp(a->as.param.next, b->as.param.next) : true);
+      case TY_ARRAY:
+        return type_cmp(a->as.array.type, b->as.array.type)
+          && (a->as.array.len == b->as.array.len);
     }
   }
   return false;
+}
+
+bool type_greaterthan(type_t *a, type_t *b) { // a >= b
+  assert(a);
+  assert(b);
+  if (a->kind == TY_INT && b->kind == TY_CHAR) {
+    return true;
+  } else if (a->kind == TY_ARRAY && b->kind == TY_ARRAY && type_cmp(a->as.array.type, b->as.array.type)) {
+    return a->as.array.len >= b->as.array.len; 
+  }
+  return type_cmp(a, b);
 }
 
 int type_size(type_t *type) {
@@ -514,8 +555,18 @@ int type_size(type_t *type) {
       return 2;
     case TY_PARAM:
       assert(0);
+    case TY_ARRAY:
+      assert(type->as.array.type);
+      return type_size(type->as.array.type) * type->as.array.len;
   }
   assert(0);
+}
+
+void type_expect(location_t loc, type_t *found, type_t *expect) {
+  if (type_cmp(found, expect)) { return; }
+  char *expectstr = type_dump_to_string(expect);
+  char *foundstr = type_dump_to_string(found);
+  eprintf(loc, "expected '%s', found '%s'", expectstr, foundstr);
 }
 
 typedef enum {
@@ -726,6 +777,7 @@ typedef struct {
     B_LABEL,
     B_RELLABEL,
     B_STRING,
+    B_DB,
   } kind;
   struct {
     instruction_t inst;
@@ -756,6 +808,9 @@ void bytecode_dump(bytecode_t b, FILE *stream) {
       break;
     case B_STRING:
       fprintf(stream, "%s ", b.arg.str);
+      break;
+    case B_DB:
+      fprintf(stream, "db %d ", b.arg.num);
       break;
   }
 }
@@ -1040,11 +1095,25 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
   assert(tokenizer);
   type_t type = parse_type(tokenizer);
   token_t name = token_expect(tokenizer, T_SYM);
+  int array_len = -2;
+  if (token_next_if_kind(tokenizer, T_SQO)) {
+    array_len = -1;
+    if (token_peek(tokenizer).kind == T_INT) {
+      array_len = atoi(token_next(tokenizer).image.start);
+    }
+    token_expect(tokenizer, T_SQC);
+  }
   ast_t *expr = NULL;
   if (token_next_if_kind(tokenizer, T_EQUAL)) {
     expr = parse_expr(tokenizer);
   }
   token_expect(tokenizer, T_SEMICOLON);
+  if (array_len == -1) {
+    TODO;
+  } 
+  if (array_len >= 0) {
+    type = (type_t) {TY_ARRAY, {.array = {type_malloc(type), array_len}}};
+  }
   return ast_malloc((ast_t){A_DECL, location_union(name.loc, expr ? expr->forerror : name.loc), {0}, {.decl = {type, name, expr}}});
 }
 
@@ -1224,22 +1293,16 @@ void typecheck_expect(ast_t *ast, state_t *state, type_t type) {
   assert(ast);
   typecheck(ast, state);
 
-  if (type_cmp(&ast->type, &type)) { return; }
-  char *expectstr = type_dump_to_string(&type);
-  char *foundstr = type_dump_to_string(&ast->type);
-  eprintf(ast->forerror, "expected '%s', found '%s'", expectstr, foundstr);
+  type_expect(ast->forerror, &ast->type, &type);
 }
 
 void typecheck_expandable(ast_t *ast, state_t *state, type_t type) {
   assert(ast);
   typecheck(ast, state);
 
-  if (type_cmp(&ast->type, &type)) { return; }
-  if (type.kind == TY_INT && ast->type.kind == TY_CHAR) {
-    return;
-  }
+  if (type_greaterthan(&type, &ast->type)) { return; }
 
-  typecheck_expect(ast, state, type);
+  type_expect(ast->forerror, &ast->type, &type);
 }
 
 void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
@@ -1364,6 +1427,7 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_GLOBDECL:
       if (ast->as.decl.expr) {
         typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
+        ast->as.decl.expr->type = type_clone(ast->as.decl.type);
       }
       state_add_global_symbol(state, ast->as.decl.name, ast->as.decl.type, 0);
       ast->type.kind = TY_VOID;
@@ -1371,6 +1435,7 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_DECL:
       if (ast->as.decl.expr) {
         typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
+        ast->as.decl.expr->type = type_clone(ast->as.decl.type);
       }
       state_add_local_symbol(state, ast->as.decl.name, ast->as.decl.type);
       ast->type.kind = TY_VOID;
@@ -1414,10 +1479,15 @@ void typecheck(ast_t *ast, state_t *state) {
       break;
     case A_ARRAY:
       assert(ast->as.astlist.ast);
-      typecheck(ast->as.astlist.ast, state);
-      ast->type = (type_t){TY_PTR, {.ptr = type_malloc(ast->as.astlist.ast->type)}};
       if (ast->as.astlist.next) {
-        typecheck_expect(ast->as.astlist.next, state, ast->type);
+        typecheck(ast->as.astlist.next, state);
+        typecheck_expandable(ast->as.astlist.ast, state, *ast->as.astlist.next->type.as.array.type);
+        type_t type = type_clone(ast->as.astlist.next->type);
+        type.as.array.len += 1;
+        ast->type = type;
+      } else { 
+        typecheck(ast->as.astlist.ast, state);
+        ast->type = (type_t){TY_ARRAY, {.array = {type_malloc(ast->as.astlist.ast->type), .len = 1}}};
       }
       break;
   }
@@ -1473,7 +1543,8 @@ void codewrite(compiled_t *compiled, type_t type) {
 void datanum(compiled_t *compiled, type_t *type, int num) {
   assert(compiled);
   assert(type);
-  switch (type_size(type)) {
+  int size = type_size(type);
+  switch (size) {
     case 1: 
       data(compiled, (bytecode_t){B_HEX, {.num = num}});
       break;
@@ -1481,7 +1552,8 @@ void datanum(compiled_t *compiled, type_t *type, int num) {
       data(compiled, (bytecode_t){B_HEX2, {.num = num}});
       break;
     default: 
-      assert(0);
+      // TODO: is it ok?
+      data(compiled, (bytecode_t){B_DB, {.num = size}});
   }
 }
 
@@ -1619,10 +1691,10 @@ void compile(ast_t *ast, state_t *state) {
               } else {
                 code(compiled, (bytecode_t){B_INST, {.inst = RAM_AL}});
                 code(compiled, (bytecode_t){B_HEX, {.num = num}});
-
               }
             } break;
           case T_SYM:
+            // TODO: maybe use PEEKAR
             get_addr(state, token);
             code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
             coderead(compiled, ast->type);
@@ -1630,9 +1702,7 @@ void compile(ast_t *ast, state_t *state) {
           case T_STRING:
             {
               code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
-              bytecode_t b = {B_SETLABEL, {0}};
-              sprintf(b.arg.str, "_%03d", state->uli);
-              data(compiled, b);
+              bytecode_t b = datauli(compiled, state);
               b.kind = B_LABEL;
               code(compiled, b);
               b.kind = B_STRING;
@@ -1640,7 +1710,6 @@ void compile(ast_t *ast, state_t *state) {
               memcpy(b.arg.str, token.image.start, token.image.len);
               data(compiled, b);
               data(compiled, (bytecode_t){B_HEX, {.num = 0}});
-              ++ state->uli;
             } break;
           case T_HEX:
             if (token.image.len - 2 == 2) {
@@ -1661,12 +1730,14 @@ void compile(ast_t *ast, state_t *state) {
 
         if (ast->as.decl.expr) {
           ast_t *expr = ast->as.decl.expr; 
-          if (expr->kind == A_ARRAY ||
-              (expr->kind == A_FAC && 
-              expr->as.fac.kind == T_STRING)) {
-                compile(expr, state);
-                return;
-              }
+          if (expr->kind == A_ARRAY) {
+            compile(expr, state);
+            int diff = ast->as.decl.type.as.array.len - expr->type.as.array.len;
+            if (diff > 0) {
+              data(compiled, (bytecode_t){B_DB, {.num = diff*type_size(expr->type.as.array.type)}});
+            }
+            return;
+          }
           if (expr->kind == A_FAC) {
             switch (expr->as.fac.kind) {
               case T_INT: 
@@ -1676,6 +1747,9 @@ void compile(ast_t *ast, state_t *state) {
               case T_HEX:
                 datauli(compiled, state);
                 datanum(compiled, &ast->as.decl.type, atoi(expr->as.fac.image.start + 2));
+                return;
+              case T_STRING:
+                compile(expr, state);
                 return;
               default:
             }
@@ -1696,10 +1770,18 @@ void compile(ast_t *ast, state_t *state) {
 
         datanum(compiled, &ast->as.decl.type, 0);
       } break;
-    case A_DECL:
+    case A_DECL: 
       state_add_local_symbol(state, ast->as.decl.name, ast->as.decl.type);
       if (ast->as.decl.expr) {
         compile(ast->as.decl.expr, state);
+      } else {
+        if (ast->as.decl.type.kind == TY_ARRAY) {
+          bytecode_t b = datauli(compiled, state);
+          data(compiled, (bytecode_t){B_DB, {.num = type_size(&ast->as.decl.type)}});
+          code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
+          b.kind = B_LABEL;
+          code(compiled, b);
+        }
       }
       code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
       break;
@@ -1757,35 +1839,60 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_ARRAY:
       {
-        code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
         bytecode_t b = datauli(compiled, state);
         b.kind = B_LABEL;
-        code(compiled, b);
+
+        ast_t *to_compile[ast->type.as.array.len];
+        int offsets[ast->type.as.array.len];
+        int to_compile_num = 0;
+
         int i = 0;
-        for (ast_t *asti = ast; asti; asti = asti->as.astlist.next) {
-          if (asti->as.astlist.ast->kind == A_FAC && 
-              asti->as.astlist.ast->as.fac.kind == T_INT) {
-            int num = atoi(asti->as.astlist.ast->as.fac.image.start);
-
-            datanum(compiled, &ast->as.astlist.ast->type, num);
-            continue; 
+        for (ast_t *asti = ast; asti; asti = asti->as.astlist.next, i += 1) {
+          if (asti->as.astlist.ast->kind == A_FAC) {
+            switch (asti->as.astlist.ast->as.fac.kind) {
+              case T_INT: 
+                datanum(compiled, ast->type.as.array.type, atoi(asti->as.astlist.ast->as.fac.image.start));
+                continue;
+              case T_HEX: 
+                datanum(compiled, ast->type.as.array.type, strtol(asti->as.astlist.ast->as.fac.image.start, NULL, 16));
+                continue;
+              default:
+            }
           }
-          datanum(compiled, &ast->as.astlist.ast->type, 0);
 
-          compiled->is_init = true;
+          datanum(compiled, ast->type.as.array.type, 0);
+          to_compile[to_compile_num] = asti->as.astlist.ast;
+          offsets[to_compile_num] = i;
+          ++ to_compile_num;
+        }
+
+        int size = type_size(ast->type.as.array.type);
+
+        int diff = ast->type.as.array.len - i;
+        if (diff > 0) {
+          data(compiled, (bytecode_t){B_DB, {.num = diff*size}});
+        }
+
+        compiled->is_init = true;
+        for (int i = 0; i < to_compile_num; ++i) {
+          compile(to_compile[i], state);
+          code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
           code(compiled, (bytecode_t){B_INST, {.inst = RAM_B}});
-          b.kind = B_LABEL;
           code(compiled, b);
           if (i > 0) {
             code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
-            code(compiled, (bytecode_t){B_HEX2, {.num = i}});
+            code(compiled, (bytecode_t){B_HEX2, {.num = offsets[i]*size}});
             code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
+            code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
           }
-          compile(ast->as.astlist.ast, state);
-          codewrite(compiled, ast->as.astlist.ast->type);
-          compiled->is_init = false;
-          ++i;
+          code(compiled, (bytecode_t){B_INST, {.inst = POPA}});
+          codewrite(compiled, *ast->type.as.array.type);
+
         }
+        compiled->is_init = false;
+
+        code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
+        code(compiled, b);
       } break;
   }
 }
@@ -1834,15 +1941,20 @@ void optimize_compiled(compiled_t *compiled) {
       compiled->code[i+1] = compiled->code[i+2];
       compiled_copy(compiled, i, 2, 6);
       i = 0;
-    } else if (compiled_is_inst(compiled, i, RAM_A) && compiled->code[i+1].kind == B_HEX2 && compiled->code[i+1].arg.num < 256) {
+    } else if (compiled_is_inst(compiled, i, RAM_A)) { 
+        // && compiled->code[i+1].kind == B_HEX2) 
+      // bytecode_dump(compiled->code[i+1], stdout); printf(" <-\n");
+
+      // && compiled->code[i+1].arg.num < 256) 
       // TODO: does not optimize this
-      compiled->code[i].arg.inst = RAM_AL;
-      compiled->code[i+1].kind = B_HEX;
-      i = 0;
+      // compiled->code[i].arg.inst = RAM_AL;
+      // compiled->code[i+1].kind = B_HEX;
+      // i = 0;
+      ++i;
     } else {
       ++i;
     }
-  } 
+  }
 }
 
 void help(int errorcode) {

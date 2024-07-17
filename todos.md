@@ -1,8 +1,10 @@
+- maybe globaldecl is decl
+
 when ast_malloc a group return the ast of the expr
 
 postopt remove dead code
 
-tokenizer check if it is bin
+tokenizer check if it is binary
 
 tokenizer maybe find the row end when changing the row instead of finding it when printing error
 

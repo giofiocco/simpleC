@@ -15,7 +15,7 @@ A compiler for a subset of `C`
 - `<block>` &rarr; `{ <code>* }`
 - `<code>` &rarr; `<statement>`
 - `<statement>` &rarr; `return <expr>\?; | <decl> | (<sym> | *<expr>) = <expr>; | <expr>;`
-- `<decl>` &rarr; `<type> <sym> \(= <expr>\)\?`
+- `<decl>` &rarr; `<type> <sym>\([<int>?]\)\? \(= <expr>\)\?`
 - `<expr>` &rarr; `<term> \(+ <term> | - <term>\)\*`
 - `<term>` &rarr; `<unary> \(* <unary> | / <unary>\)\*`
 - `<unary>` &rarr; `+ <fac> | - <fac> | <fac> | &<sym> | *<sym>`

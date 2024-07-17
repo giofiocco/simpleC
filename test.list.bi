@@ -1,4 +1,4 @@
-:i count 34
+:i count 45
 :b shell 22
 ./simpleC -D par -e ""
 :i returncode 0
@@ -427,17 +427,167 @@ main: RAM_A _000 RET
 
 :b stderr 0
 
-:b shell 54
-./simpleC -D com -O1 -e "int main() { {10, 20, 30}; }"
+:b shell 48
+./simpleC -D com -e "int mem[10]; int main() {}"
+:i returncode 0
+:b stdout 70
+ASSEMBLY:
+GLOBAL _start
+_000: db 20 
+_start: 
+	JMPR $main
+
+main: RET 
+
+:b stderr 0
+
+:b shell 59
+./simpleC -D com -e "int mem[3] = {1, 2, 3}; int main() {}"
 :i returncode 0
 :b stdout 96
 ASSEMBLY:
 GLOBAL _start
-_000: 0x000A 0x0014 0x001E 
+_000: 0x0001 0x0002 0x0003 
+_start: 
+	JMPR $main
+RAM_A _000 
+main: RET 
+
+:b stderr 0
+
+:b shell 60
+./simpleC -D com -e "int mem[10] = {1, 2, 3}; int main() {}"
+:i returncode 0
+:b stdout 102
+ASSEMBLY:
+GLOBAL _start
+_000: 0x0001 0x0002 0x0003 db 14 
+_start: 
+	JMPR $main
+RAM_A _000 
+main: RET 
+
+:b stderr 0
+
+:b shell 59
+./simpleC -D com -e "int mem[1] = {1, 2, 3}; int main() {}"
+:i returncode 1
+:b stdout 0
+
+:b stderr 135
+ERROR:cmd:1:14: expected 'ARRAY INT[1]', found 'ARRAY INT[3]'
+  1 | int mem[1] = {1, 2, 3}; int main() {}
+                   ^~~~~~~~~
+
+:b shell 49
+./simpleC -D com -e "int main() { int mem[10]; }"
+:i returncode 0
+:b stdout 93
+ASSEMBLY:
+GLOBAL _start
+_000: db 20 
 _start: 
 	JMPR $main
 
-main: RAM_A _000 RET 
+main: RAM_A _000 PUSHA INCSP RET 
+
+:b stderr 0
+
+:b shell 60
+./simpleC -D com -e "int main() { int mem[3] = {1, 2, 3}; }"
+:i returncode 0
+:b stdout 108
+ASSEMBLY:
+GLOBAL _start
+_000: 0x0001 0x0002 0x0003 
+_start: 
+	JMPR $main
+
+main: RAM_A _000 PUSHA INCSP RET 
+
+:b stderr 0
+
+:b shell 61
+./simpleC -D com -e "int main() { int mem[10] = {1, 2, 3}; }"
+:i returncode 0
+:b stdout 114
+ASSEMBLY:
+GLOBAL _start
+_000: 0x0001 0x0002 0x0003 db 14 
+_start: 
+	JMPR $main
+
+main: RAM_A _000 PUSHA INCSP RET 
+
+:b stderr 0
+
+:b shell 60
+./simpleC -D com -e "int main() { int mem[1] = {1, 2, 3}; }"
+:i returncode 1
+:b stdout 0
+
+:b stderr 149
+ERROR:cmd:1:27: expected 'ARRAY INT[1]', found 'ARRAY INT[3]'
+  1 | int main() { int mem[1] = {1, 2, 3}; }
+                                ^~~~~~~~~
+
+:b shell 63
+./simpleC -D com -e "int main() { int mem[3] = {0x10, 2, 3}; }"
+:i returncode 0
+:b stdout 108
+ASSEMBLY:
+GLOBAL _start
+_000: 0x0010 0x0002 0x0003 
+_start: 
+	JMPR $main
+
+main: RAM_A _000 PUSHA INCSP RET 
+
+:b stderr 0
+
+:b shell 59
+./simpleC -D com -e "int main() { int mem[6] = {1, 2+1}; }"
+:i returncode 0
+:b stdout 165
+ASSEMBLY:
+GLOBAL _start
+_000: 0x0001 0x0000 db 8 
+_start: RAM_AL 0x02 A_B RAM_AL 0x01 SUM PUSHA RAM_B _000 POPA A_rB 
+	JMPR $main
+
+main: RAM_A _000 PUSHA INCSP RET 
+
+:b stderr 0
+
+:b shell 67
+./simpleC -D com -e "int main() { char *mem[6] = {\"a\", \"b\"}; }"
+:i returncode 0
+:b stdout 235
+ASSEMBLY:
+GLOBAL _start
+_000: 0x0000 0x0000 db 8 
+_001: "a" 0x00 
+_002: "b" 0x00 
+_start: RAM_A _001 PUSHA RAM_B _000 POPA A_rB RAM_A _002 PUSHA RAM_B _000 RAM_A 0x0002 SUM A_B POPA A_rB 
+	JMPR $main
+
+main: RAM_A _000 PUSHA INCSP RET 
+
+:b stderr 0
+
+:b shell 71
+./simpleC -D com -O1 -e "int main() { char *mem[6] = {\"a\", \"b\"}; }"
+:i returncode 0
+:b stdout 235
+ASSEMBLY:
+GLOBAL _start
+_000: 0x0000 0x0000 db 8 
+_001: "a" 0x00 
+_002: "b" 0x00 
+_start: RAM_A _001 PUSHA RAM_B _000 POPA A_rB RAM_A _002 PUSHA RAM_B _000 RAM_A 0x0002 SUM A_B POPA A_rB 
+	JMPR $main
+
+main: RAM_A _000 PUSHA INCSP RET 
 
 :b stderr 0
 
