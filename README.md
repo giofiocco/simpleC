@@ -8,6 +8,10 @@ A compiler for a subset of `C`
 - HEX: `0[xX]([0-9a-fA-F]{2} | [0-9a-fA-F]{4})`
 - STRING: `"[^"]*"` 
 
+## Comments
+Single-line comments: `//` (till the end of line)
+Multi-line comments: `/* ... */`
+
 # Grammar
 - `<global>` &rarr; `<funcdecl>\* | <decl>`
 - `<funcdecl>` &rarr; `<type> <sym><paramdef> <block>`

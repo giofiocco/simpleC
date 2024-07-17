@@ -191,8 +191,24 @@ token_t token_next(tokenizer_t *tokenizer) {
       ++ tokenizer->buffer;
       tokenizer->loc.row_start = tokenizer->buffer;
       return token_next(tokenizer);
+    case '/':
+      if (tokenizer->buffer[1] == '/') {
+        while (tokenizer->buffer[0] != '\n') {
+          ++ tokenizer->buffer;
+        }
+        return token_next(tokenizer);
+      } else if (tokenizer->buffer[1] == '*') {
+        while (!(tokenizer->buffer[0] == '*' && tokenizer->buffer[1] == '/')) {
+          ++ tokenizer->buffer;
+          ++ tokenizer->loc.col;
+        }
+        tokenizer->buffer += 2;
+        tokenizer->loc.col += 2;
+        return token_next(tokenizer);
+      }
+      __attribute__((fallthrough));
     case '(': case ')': case '[': case ']': case '{': case '}': 
-    case '+': case '-': case '*': case '/':
+    case '+': case '-': case '*':
     case '=': case '&': case ',': case ';': 
       assert(table[(int)*tokenizer->buffer]);
       tokenizer->loc.len = 1;
@@ -243,7 +259,7 @@ token_t token_next(tokenizer_t *tokenizer) {
       }
       __attribute__((fallthrough));
     default:
-      {
+      { 
         char *image_start = tokenizer->buffer;
         bool is_int = isdigit(*tokenizer->buffer) ? true : false;
         int len = 0;
@@ -1942,7 +1958,7 @@ void optimize_compiled(compiled_t *compiled) {
       compiled_copy(compiled, i, 2, 6);
       i = 0;
     } else if (compiled_is_inst(compiled, i, RAM_A)) { 
-        // && compiled->code[i+1].kind == B_HEX2) 
+      // && compiled->code[i+1].kind == B_HEX2) 
       // bytecode_dump(compiled->code[i+1], stdout); printf(" <-\n");
 
       // && compiled->code[i+1].arg.num < 256) 
