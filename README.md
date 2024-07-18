@@ -23,6 +23,6 @@ Multi-line comments: `/* ... */`
 - `<expr>` &rarr; `<term> \(+ <term> | - <term>\)\*`
 - `<term>` &rarr; `<unary> \(* <unary> | / <unary>\)\*`
 - `<unary>` &rarr; `+ <fac> | - <fac> | <fac> | &<sym> | *<sym>`
-- `<fac>` &rarr; `<int> | <sym> | <string> | <funccall> | (<expr>) | {\(<expr> \(, <expr>\)\*\)\?}`
+- `<fac>` &rarr; `<int> | <sym> | <string> | <funccall> | (<expr>) | {\(<expr> \(, <expr>\)\*\)\?} | <sym>[<expr>]`
 - `<funccall>` &rarr; `<sym>(\(<expr> \(, <expr>\)\*\)\?)`
 - `<type>` &rarr; `<sym>*\?`

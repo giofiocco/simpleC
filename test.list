@@ -43,3 +43,4 @@
 ./simpleC -D com -e "int main() { int mem[6] = {1, 2+1}; }"
 ./simpleC -D com -e "int main() { char *mem[6] = {\"a\", \"b\"}; }"
 ./simpleC -D com -O1 -e "int main() { char *mem[6] = {\"a\", \"b\"}; }"
+./simpleC -D com -O1 -e "int main() { int mem[6]; mem[2]; }"

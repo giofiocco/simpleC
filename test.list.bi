@@ -1,4 +1,4 @@
-:i count 45
+:i count 46
 :b shell 22
 ./simpleC -D par -e ""
 :i returncode 0
@@ -228,9 +228,9 @@ main: RAM_AL 0x0A PUSHA CALLR $add INCSP RET
 :b shell 45
 ./simpleC -D typ -e "int main() { 2*(1+3); }"
 :i returncode 0
-:b stdout 173
+:b stdout 159
 TYPED AST:
-GLOBAL(FUNCDECL(INT main NULL BLOCK(BINARYOP(* FAC(2) {INT} GROUP((BINARYOP(+ FAC(1) {INT} FAC(3) {INT}) {INT}) {INT}) {INT} NULL) {VOID}) {FUNC INT} NULL) {VOID}
+GLOBAL(FUNCDECL(INT main NULL BLOCK(BINARYOP(* FAC(2) {INT} BINARYOP(+ FAC(1) {INT} FAC(3) {INT}) {INT}) {INT} NULL) {VOID}) {FUNC INT} NULL) {VOID}
 :b stderr 0
 
 :b shell 55
@@ -588,6 +588,20 @@ _start: RAM_A _001 PUSHA RAM_B _000 POPA A_rB RAM_A _002 PUSHA RAM_B _000 RAM_A 
 	JMPR $main
 
 main: RAM_A _000 PUSHA INCSP RET 
+
+:b stderr 0
+
+:b shell 60
+./simpleC -D com -O1 -e "int main() { int mem[6]; mem[2]; }"
+:i returncode 0
+:b stdout 150
+ASSEMBLY:
+GLOBAL _start
+_000: db 12 
+_start: 
+	JMPR $main
+
+main: RAM_A _000 PUSHA RAM_AL 0x02 SHL PUSHA SP_A RAM_BL 0x02 SUM POPB SUM rB_A INCSP RET 
 
 :b stderr 0
 

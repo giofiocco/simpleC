@@ -37,7 +37,7 @@ sv_t sv_union(sv_t a, sv_t b) {
   return (sv_t) {a.start, b.start + b.len - a.start};
 }
 
-#define ALLOCED_MAX 2048
+#define ALLOCED_MAX 2048*2048
 void *alloced[ALLOCED_MAX];
 int alloced_num = 0;
 
@@ -600,8 +600,8 @@ typedef enum {
   A_ASSIGN,
   A_FUNCALL,
   A_PARAM,
-  A_GROUP,
   A_ARRAY,
+  A_INDEX,
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -649,8 +649,11 @@ typedef struct ast_t_ {
       token_t name;
       struct ast_t_ *params;
     } funcall;
+    struct {
+      token_t name;
+      struct ast_t_ *num;
+    } index;
     token_t fac;
-    struct ast_t_ *group;
   } as;
 } ast_t;
 
@@ -762,16 +765,17 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.astlist.next, dumptype);
       printf(")");
       break;
-    case A_GROUP:
-      printf("GROUP((");
-      ast_dump(ast->as.group, dumptype);
-      printf(")");
-      break;
     case A_ARRAY:
       printf("ARRAY(");
       ast_dump(ast->as.astlist.ast, dumptype);
       printf(" ");
       ast_dump(ast->as.astlist.next, dumptype);
+      printf(")");
+      break;
+    case A_INDEX:
+      printf("INDEX(" SV_FMT " ",
+          SV_UNPACK(ast->as.index.name.image));
+      ast_dump(ast->as.index.num, dumptype);
       printf(")");
       break;
   }
@@ -1032,7 +1036,7 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     token_next(tokenizer);
     ast_t *expr = parse_expr(tokenizer);
     token_expect(tokenizer, T_PARC);
-    return ast_malloc((ast_t){A_GROUP, token.loc, {0}, {.group = expr}});
+    return expr;
   };
 
   if (token.kind == T_BRO) {
@@ -1045,6 +1049,10 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     if (token_peek(tokenizer).kind == T_PARO) {
       *tokenizer = savetok;
       return parse_funcall(tokenizer);
+    } else if (token_next_if_kind(tokenizer, T_SQO)) {
+      ast_t *expr = parse_expr(tokenizer);
+      token_expect(tokenizer, T_SQC);
+      return ast_malloc((ast_t){A_INDEX, location_union(token.loc, expr->forerror), {0}, {.index = {token, expr}}});
     }
     *tokenizer = savetok;
   }
@@ -1488,11 +1496,6 @@ void typecheck(ast_t *ast, state_t *state) {
       assert(ast->as.astlist.ast);
       ast->type = (type_t){TY_PARAM, {.param = {type_malloc(ast->as.astlist.ast->type), ast->as.astlist.next ? type_malloc(ast->as.astlist.next->type) : NULL}}};
       break;
-    case A_GROUP:
-      assert(ast->as.group);
-      typecheck(ast->as.group, state);
-      ast->type = type_clone(ast->as.group->type);
-      break;
     case A_ARRAY:
       assert(ast->as.astlist.ast);
       if (ast->as.astlist.next) {
@@ -1506,6 +1509,16 @@ void typecheck(ast_t *ast, state_t *state) {
         ast->type = (type_t){TY_ARRAY, {.array = {type_malloc(ast->as.astlist.ast->type), .len = 1}}};
       }
       break;
+    case A_INDEX:
+      {
+        symbol_t *s = state_find_symbol(state, ast->as.index.name);
+        if (s->type.kind != TY_ARRAY) {
+          eprintf(ast->forerror, "expected an ARRAY, found: '%s'", type_dump_to_string(&s->type));
+        }
+        assert(ast->as.index.num);
+        typecheck_expect(ast->as.index.num, state, (type_t){TY_INT, {}});
+        ast->type = type_clone(*s->type.as.array.type);
+      } break;
   }
 }
 
@@ -1568,7 +1581,6 @@ void datanum(compiled_t *compiled, type_t *type, int num) {
       data(compiled, (bytecode_t){B_HEX2, {.num = num}});
       break;
     default: 
-      // TODO: is it ok?
       data(compiled, (bytecode_t){B_DB, {.num = size}});
   }
 }
@@ -1710,7 +1722,6 @@ void compile(ast_t *ast, state_t *state) {
               }
             } break;
           case T_SYM:
-            // TODO: maybe use PEEKAR
             get_addr(state, token);
             code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
             coderead(compiled, ast->type);
@@ -1850,9 +1861,6 @@ void compile(ast_t *ast, state_t *state) {
       code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
       ++ state->sp;
       break;
-    case A_GROUP:
-      compile(ast->as.group, state);
-      break;
     case A_ARRAY:
       {
         bytecode_t b = datauli(compiled, state);
@@ -1910,6 +1918,24 @@ void compile(ast_t *ast, state_t *state) {
         code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
         code(compiled, b);
       } break;
+    case A_INDEX:
+      compile(ast->as.index.num, state);
+      switch (type_size(&ast->type)) {
+        case 1: 
+          break;
+        case 2: 
+          code(compiled, (bytecode_t){B_INST, {.inst = SHL}}); // index * 2
+          break;
+        default:
+          TODO;
+      }
+      code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+
+      get_addr(state, ast->as.index.name);
+      code(compiled, (bytecode_t){B_INST, {.inst = POPB}});
+      code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
+      coderead(compiled, ast->type);
+      break;
   }
 }
 
