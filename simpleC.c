@@ -579,7 +579,7 @@ bool type_greaterthan(type_t *a, type_t *b) { // a >= b
   if (a->kind == TY_INT && b->kind == TY_CHAR) {
     return true;
   } else if (a->kind == TY_ARRAY && b->kind == TY_ARRAY && type_cmp(a->as.array.type, b->as.array.type)) {
-    return a->as.array.len >= b->as.array.len; 
+    return a->as.array.len >= b->as.array.len || a->as.array.len == -1; 
   }
   return type_cmp(a, b);
 }
@@ -1190,10 +1190,7 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
     expr = parse_expr(tokenizer);
   }
   token_expect(tokenizer, T_SEMICOLON);
-  if (array_len == -1) {
-    TODO;
-  } 
-  if (array_len >= 0) {
+  if (array_len >= -1) {
     type = (type_t) {TY_ARRAY, {.array = {type_malloc(type), array_len}}};
   }
   return ast_malloc((ast_t){A_DECL, location_union(name.loc, expr ? expr->forerror : name.loc), {0}, {.decl = {type, name, expr}}});
@@ -1448,8 +1445,8 @@ void typecheck(ast_t *ast, state_t *state) {
         typecheck(ast->as.funcdecl.params, state);
         state_solve_type_alias(state, &ast->as.funcdecl.type);
         ast->type = (type_t){TY_FUNC, {.func = {
-          type_malloc(ast->as.funcdecl.type),
-          ast->as.funcdecl.params ? type_malloc(ast->as.funcdecl.params->type) : NULL
+          &ast->as.funcdecl.type,
+          ast->as.funcdecl.params ? &ast->as.funcdecl.params->type : NULL
         }}};
         state_add_global_symbol(state, ast->as.funcdecl.name, ast->type, 0);
 
@@ -1467,14 +1464,14 @@ void typecheck(ast_t *ast, state_t *state) {
         scope->symbols[scope->symbol_num ++] = (symbol_t) {ast->as.paramdef.name, ast->as.paramdef.type, INFO_LOCAL, {-1-state->param}};
 
         typecheck(ast->as.paramdef.next, state);
-        ast->type = (type_t){TY_PARAM, {.param = {type_malloc(ast->as.paramdef.type), ast->as.paramdef.next ? type_malloc(ast->as.paramdef.next->type) : NULL}}};
+        ast->type = (type_t){TY_PARAM, {.param = {&ast->as.paramdef.type, ast->as.paramdef.next ? &ast->as.paramdef.next->type : NULL}}};
       } break;
     case A_RETURN:
       typecheck(ast->as.return_.expr, state);
       if (ast->as.return_.expr) {
-        ast->type = type_clone(ast->as.return_.expr->type);
+        ast->type = ast->as.return_.expr->type; 
       } else {
-        ast->type.kind = TY_VOID;
+        ast->type = (type_t){TY_VOID, {}};
       }
       break;
     case A_BINARYOP:
@@ -1486,7 +1483,7 @@ void typecheck(ast_t *ast, state_t *state) {
         eprintf(ast->forerror, "expected 'INT' or 'PTR ...' found '%s'", typestr);
       }
       typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, {{0}}});
-      ast->type = type_clone(ast->as.binaryop.lhs->type);
+      ast->type = ast->as.binaryop.lhs->type;
       break;
     case A_UNARYOP:
       assert(ast->as.unaryop.arg);
@@ -1497,7 +1494,7 @@ void typecheck(ast_t *ast, state_t *state) {
           break;
         case T_AND:
           typecheck(ast->as.unaryop.arg, state);
-          ast->type = (type_t){TY_PTR, {.ptr = type_malloc(ast->as.unaryop.arg->type)}};
+          ast->type = (type_t){TY_PTR, {.ptr = &ast->as.unaryop.arg->type}};
           break;
         case T_STAR:
           typecheck(ast->as.unaryop.arg, state);
@@ -1505,7 +1502,7 @@ void typecheck(ast_t *ast, state_t *state) {
             char *type = type_dump_to_string(&ast->as.unaryop.arg->type);
             eprintf(ast->as.unaryop.arg->forerror, "cannot dereference non PTR type: '%s'", type);
           }
-          ast->type = type_clone(*ast->as.unaryop.arg->type.as.ptr);
+          ast->type = *ast->as.unaryop.arg->type.as.ptr;
           break;
         default:
           assert(0);
@@ -1516,9 +1513,9 @@ void typecheck(ast_t *ast, state_t *state) {
         ast->type.kind = TY_INT;
       } else if (ast->as.fac.kind == T_SYM) {
         symbol_t *s = state_find_symbol(state, ast->as.fac);
-        ast->type = type_clone(s->type);
+        ast->type = s->type;
       } else if (ast->as.fac.kind == T_STRING) {
-        ast->type = (type_t){TY_PTR, {.ptr = type_malloc((type_t){TY_CHAR, {{0}}})}};
+        ast->type = (type_t){TY_PTR, {.ptr = type_malloc((type_t){TY_CHAR, {}})}};
       } else if (ast->as.fac.kind == T_HEX) {
         if (ast->as.fac.image.len - 2 == 2) {
           ast->type.kind = TY_CHAR;
@@ -1531,28 +1528,47 @@ void typecheck(ast_t *ast, state_t *state) {
       break;
     case A_GLOBDECL:
       state_solve_type_alias(state, &ast->as.decl.type);
+      if (ast->as.decl.type.kind == TY_ARRAY && 
+          ast->as.decl.type.as.array.len == -1 && 
+          !ast->as.decl.expr) {
+        eprintf(ast->forerror, "array without length uninitialized");
+      }
       if (ast->as.decl.expr) {
         typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
-        ast->as.decl.expr->type = type_clone(ast->as.decl.type);
+        if (ast->as.decl.type.kind == TY_ARRAY && ast->as.decl.type.as.array.len == -1) {
+          ast->as.decl.type.as.array.len = ast->as.decl.expr->type.as.array.len;
+        }
+        ast->as.decl.expr->type = ast->as.decl.type;
       }
       state_add_global_symbol(state, ast->as.decl.name, ast->as.decl.type, 0);
-      ast->type.kind = TY_VOID;
+      ast->type = (type_t){TY_VOID, {}};
       break;
     case A_DECL:
       state_solve_type_alias(state, &ast->as.decl.type);
+      if (ast->as.decl.type.kind == TY_ARRAY && 
+          ast->as.decl.type.as.array.len == -1 && 
+          !ast->as.decl.expr) {
+        eprintf(ast->forerror, "array without length uninitialized");
+      }
       if (ast->as.decl.expr) {
         typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
-        ast->as.decl.expr->type = type_clone(ast->as.decl.type);
+        if (ast->as.decl.type.kind == TY_ARRAY && ast->as.decl.type.as.array.len == -1) {
+          ast->as.decl.type.as.array.len = ast->as.decl.expr->type.as.array.len;
+        }
+        ast->as.decl.expr->type = ast->as.decl.type;
       }
       state_add_local_symbol(state, ast->as.decl.name, ast->as.decl.type);
-      ast->type.kind = TY_VOID;
+      ast->type = (type_t){TY_VOID, {}};
       break;
     case A_ASSIGN:
       assert(ast->as.assign.dest);
       assert(ast->as.assign.expr);
       typecheck(ast->as.assign.dest, state);
+      if (ast->as.assign.dest->type.kind == TY_ARRAY) {
+        eprintf(ast->forerror, "assign to array");
+      }
       typecheck_expect(ast->as.assign.expr, state, ast->as.assign.dest->type);
-      ast->type = type_clone(ast->as.assign.dest->type);
+      ast->type = ast->as.assign.dest->type;
       break;
     case A_FUNCALL:
       {
@@ -1571,25 +1587,25 @@ void typecheck(ast_t *ast, state_t *state) {
           typecheck_expect(ast->as.funcall.params, state, *s->type.as.func.params);
         }
         assert(s->type.as.func.ret);
-        ast->type = type_clone(*s->type.as.func.ret);
+        ast->type = *s->type.as.func.ret;
       } break;
     case A_PARAM:
+      assert(ast->as.astlist.ast);
       typecheck(ast->as.astlist.ast, state);
       typecheck(ast->as.astlist.next, state);
-      assert(ast->as.astlist.ast);
-      ast->type = (type_t){TY_PARAM, {.param = {type_malloc(ast->as.astlist.ast->type), ast->as.astlist.next ? type_malloc(ast->as.astlist.next->type) : NULL}}};
+      ast->type = (type_t){TY_PARAM, {.param = {&ast->as.astlist.ast->type, ast->as.astlist.next ? &ast->as.astlist.next->type : NULL}}};
       break;
     case A_ARRAY:
       assert(ast->as.astlist.ast);
       if (ast->as.astlist.next) {
         typecheck(ast->as.astlist.next, state);
         typecheck_expandable(ast->as.astlist.ast, state, *ast->as.astlist.next->type.as.array.type);
-        type_t type = type_clone(ast->as.astlist.next->type);
+        type_t type = ast->as.astlist.next->type;
         type.as.array.len += 1;
         ast->type = type;
       } else { 
         typecheck(ast->as.astlist.ast, state);
-        ast->type = (type_t){TY_ARRAY, {.array = {type_malloc(ast->as.astlist.ast->type), .len = 1}}};
+        ast->type = (type_t){TY_ARRAY, {.array = {&ast->as.astlist.ast->type, .len = 1}}};
       }
       break;
     case A_INDEX:
@@ -1600,7 +1616,7 @@ void typecheck(ast_t *ast, state_t *state) {
         }
         assert(ast->as.index.num);
         typecheck_expect(ast->as.index.num, state, (type_t){TY_INT, {}});
-        ast->type = type_clone(*s->type.as.array.type);
+        ast->type = *s->type.as.array.type;
       } break;
     case A_TYPEDEF:
       assert(state->alias_num < ALIAS_MAX);
