@@ -1,4 +1,6 @@
+postopt both init and code
 do better pointer math
+astlist -> binary and semplify others
 
 # Tokenizer
 - binary litterals

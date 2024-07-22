@@ -1,10 +1,11 @@
-:i count 46
+:i count 48
 :b shell 22
 ./simpleC -D par -e ""
 :i returncode 0
-:b stdout 9
+:b stdout 10
 AST:
 NULL
+
 :b stderr 0
 
 :b shell 35
@@ -141,9 +142,10 @@ main: RAM_AL 0x02 RAM_BL 0x00 SUB A_B RAM_AL 0x01 SUM RET
 :b shell 44
 ./simpleC -D typ -e "int main() { -2*1/2; }"
 :i returncode 0
-:b stdout 176
+:b stdout 177
 TYPED AST:
 GLOBAL(FUNCDECL(INT main NULL BLOCK(BINARYOP(/ BINARYOP(* UNARYOP(- FAC(2) {INT}) {INT} FAC(1) {INT}) {INT} FAC(2) {INT}) {INT} NULL) {VOID}) {FUNC INT} NULL) {VOID}
+
 :b stderr 0
 
 :b shell 55
@@ -228,9 +230,10 @@ main: RAM_AL 0x0A PUSHA CALLR $add INCSP RET
 :b shell 45
 ./simpleC -D typ -e "int main() { 2*(1+3); }"
 :i returncode 0
-:b stdout 159
+:b stdout 160
 TYPED AST:
 GLOBAL(FUNCDECL(INT main NULL BLOCK(BINARYOP(* FAC(2) {INT} BINARYOP(+ FAC(1) {INT} FAC(3) {INT}) {INT}) {INT} NULL) {VOID}) {FUNC INT} NULL) {VOID}
+
 :b stderr 0
 
 :b shell 55
@@ -602,6 +605,28 @@ _start:
 	JMPR $main
 
 main: RAM_A _000 PUSHA RAM_AL 0x02 SHL PUSHA SP_A RAM_BL 0x02 SUM POPB SUM rB_A INCSP RET 
+
+:b stderr 0
+
+:b shell 67
+./simpleC -D typ -e "typedef int ciao; int main() { ciao a = 10; }"
+:i returncode 0
+:b stdout 180
+TYPED AST:
+GLOBAL(TYPEDEF(INT ciao) {VOID} GLOBAL(FUNCDECL(INT main NULL BLOCK(DECL(ALIAS ciao INT a FAC(10) {ALIAS ciao INT}) {VOID} NULL) {VOID}) {FUNC INT} NULL) {VOID}) {VOID}
+
+:b stderr 0
+
+:b shell 67
+./simpleC -D com -e "typedef int ciao; int main() { ciao a = 10; }"
+:i returncode 0
+:b stdout 81
+ASSEMBLY:
+GLOBAL _start
+_start: 
+	JMPR $main
+
+main: RAM_AL 0x0A PUSHA INCSP RET 
 
 :b stderr 0
 

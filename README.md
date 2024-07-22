@@ -13,7 +13,7 @@ Single-line comments: `//` (till the end of line)
 Multi-line comments: `/* ... */`
 
 # Grammar
-- `<global>` &rarr; `<funcdecl>\* | <decl>`
+- `<global>` &rarr; `<funcdecl>\* | <typedef> | <decl>`
 - `<funcdecl>` &rarr; `<type> <sym><paramdef> <block>`
 - `<paramdef>` &rarr; `(\(<type> <sym> \(, <type> <type>\)\*\)\?)`
 - `<block>` &rarr; `{ <code>* }`
@@ -25,4 +25,6 @@ Multi-line comments: `/* ... */`
 - `<unary>` &rarr; `+ <fac> | - <fac> | <fac> | &<sym> | *<sym>`
 - `<fac>` &rarr; `<int> | <sym> | <string> | <funccall> | (<expr>) | {\(<expr> \(, <expr>\)\*\)\?} | <sym>[<expr>]`
 - `<funccall>` &rarr; `<sym>(\(<expr> \(, <expr>\)\*\)\?)`
-- `<type>` &rarr; `<sym>*\?`
+- `<type>` &rarr; `<sym>*\? | <structdef>`
+- `<typedef>` &rarr; `typedef <type> <sym>;`
+- `<structdef>` &rarr; `struct <sym>\? { \(<type> <sym>\([<int>?]\)\?;\)* }`

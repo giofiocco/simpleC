@@ -2,7 +2,6 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <stdarg.h>
 #include <ctype.h>
 #include <string.h>
@@ -81,6 +80,7 @@ typedef enum {
   T_BRO,
   T_BRC,
   T_RETURN,
+  T_TYPEDEF,
   T_SEMICOLON,
   T_PLUS,
   T_MINUS,
@@ -273,6 +273,7 @@ token_t token_next(tokenizer_t *tokenizer) {
         token = (token_t) {
           is_int ? T_INT : 
             sv_eq(image, sv_from_cstr("return")) ? T_RETURN : 
+            sv_eq(image, sv_from_cstr("typedef")) ? T_TYPEDEF : 
             T_SYM,
             image,
             tokenizer->loc
@@ -313,6 +314,7 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_BRO: return "BRO";
     case T_BRC: return "BRC";
     case T_RETURN: return "RETURN";
+    case T_TYPEDEF: return "TYPEDEF";
     case T_SEMICOLON: return "SEMICOLON";
     case T_PLUS: return "PLUS";
     case T_MINUS: return "MINUS";
@@ -364,6 +366,7 @@ typedef struct type_t_ {
     TY_PTR,
     TY_PARAM,
     TY_ARRAY,
+    TY_ALIAS,
   } kind;
   union {
     struct {
@@ -379,6 +382,10 @@ typedef struct type_t_ {
       struct type_t_ *type;
       int len;
     } array;
+    struct {
+      token_t name;
+      struct type_t_ *type;
+    } alias;
   } as;
 } type_t;
 
@@ -391,13 +398,14 @@ type_t *type_malloc(type_t type) {
 }
 
 type_t type_clone(type_t type) {
-  type_t clone = {type.kind, {{0}}};
+  type_t clone = type;
 
   switch (type.kind) {
     case TY_NONE:
     case TY_VOID:
     case TY_CHAR:
     case TY_INT:
+    case TY_ALIAS:
       break;
     case TY_FUNC:
       assert(type.as.func.ret);
@@ -436,7 +444,7 @@ char *type_dump_to_string(type_t *type) {
 
   switch (type->kind) {
     case TY_NONE: 
-      strcpy(string, "NONE"); break;
+      // strcpy(string, "NONE"); break;
       assert(0);
     case TY_VOID:
       strcpy(string, "VOID");
@@ -502,7 +510,20 @@ char *type_dump_to_string(type_t *type) {
         strcpy(string + 6, str);
         free_ptr(str);
         sprintf(string + 6 + len, "[%d]", type->as.array.len);
+      } break;
+    case TY_ALIAS:
+      sprintf(string, "ALIAS " SV_FMT, SV_UNPACK(type->as.alias.name.image));
+      if (type->as.alias.type) {
+        char *str = type_dump_to_string(type->as.alias.type);
+        int len = strlen(str);
+        assert(len < 128 - 6 - (int)type->as.alias.name.image.len);
+        sprintf(string + 6 + type->as.alias.name.image.len, " %s", str);
+        free_ptr(str);
+      } else {
+        sprintf(string + 6 + type->as.alias.name.image.len, " NULL");
+        assert(5 + 1 < 128 - 6 - (int)type->as.alias.name.image.len);
       }
+      break;
   }
 
   return string;
@@ -511,6 +532,13 @@ char *type_dump_to_string(type_t *type) {
 bool type_cmp(type_t *a, type_t *b) {
   assert(a);
   assert(b);
+  if (a->kind == TY_ALIAS) {
+    assert(a->as.alias.type);
+    return type_cmp(a->as.alias.type, b);
+  } else if (b->kind == TY_ALIAS) {
+    assert(b->as.alias.type);
+    return type_cmp(a, b->as.alias.type);
+  }
   if (a->kind == b->kind) {
     switch (a->kind) {
       case TY_NONE:
@@ -538,6 +566,8 @@ bool type_cmp(type_t *a, type_t *b) {
       case TY_ARRAY:
         return type_cmp(a->as.array.type, b->as.array.type)
           && (a->as.array.len == b->as.array.len);
+      case TY_ALIAS:
+        assert(0);
     }
   }
   return false;
@@ -574,6 +604,9 @@ int type_size(type_t *type) {
     case TY_ARRAY:
       assert(type->as.array.type);
       return type_size(type->as.array.type) * type->as.array.len;
+    case TY_ALIAS:
+      assert(type->as.alias.type);
+      return type_size(type->as.alias.type);
   }
   assert(0);
 }
@@ -602,6 +635,7 @@ typedef enum {
   A_PARAM,
   A_ARRAY,
   A_INDEX,
+  A_TYPEDEF,
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -653,6 +687,10 @@ typedef struct ast_t_ {
       token_t name;
       struct ast_t_ *num;
     } index;
+    struct {
+      type_t type;
+      token_t name;
+    } typedef_;
     token_t fac;
   } as;
 } ast_t;
@@ -679,11 +717,8 @@ void ast_dump(ast_t *ast, bool dumptype) {
       break;
     case A_FUNCDECL:
       {
-        printf("FUNCDECL(");
         char *str = type_dump_to_string(&ast->as.funcdecl.type);
-        printf("%s " SV_FMT " ", 
-            str,
-            SV_UNPACK(ast->as.funcdecl.name.image));
+        printf("FUNCDECL(%s " SV_FMT " ", str, SV_UNPACK(ast->as.funcdecl.name.image));
         free_ptr(str);
         ast_dump(ast->as.funcdecl.params, dumptype);
         printf(" ");
@@ -692,11 +727,8 @@ void ast_dump(ast_t *ast, bool dumptype) {
       } break;
     case A_PARAMDEF:
       {
-        printf("PARAMDEF(");
         char *str = type_dump_to_string(&ast->as.paramdef.type);
-        printf("%s " SV_FMT " ", 
-            str,
-            SV_UNPACK(ast->as.paramdef.name.image));
+        printf("PARAMDEF(%s " SV_FMT " ", str, SV_UNPACK(ast->as.paramdef.name.image));
         free_ptr(str);
         ast_dump(ast->as.paramdef.next, dumptype);
         printf(")");
@@ -736,11 +768,8 @@ void ast_dump(ast_t *ast, bool dumptype) {
       __attribute__((fallthrough));
     case A_DECL:
       {
-        printf("DECL(");
         char *str = type_dump_to_string(&ast->as.decl.type);
-        printf("%s " SV_FMT " ", 
-            str,
-            SV_UNPACK(ast->as.decl.name.image));
+        printf("DECL(%s " SV_FMT " ", str, SV_UNPACK(ast->as.decl.name.image));
         free_ptr(str);
         ast_dump(ast->as.decl.expr, dumptype);
         printf(")");
@@ -778,6 +807,12 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.index.num, dumptype);
       printf(")");
       break;
+    case A_TYPEDEF:
+      {
+        char *str = type_dump_to_string(&ast->as.typedef_.type);
+        printf("TYPEDEF(%s " SV_FMT ")", str, SV_UNPACK(ast->as.typedef_.name.image));
+        free_ptr(str);
+      } break;
   }
   if (dumptype) {
     char *str = type_dump_to_string(&ast->type);
@@ -835,6 +870,7 @@ void bytecode_dump(bytecode_t b, FILE *stream) {
   }
 }
 
+#define ALIAS_MAX 128
 #define SYMBOL_MAX 128
 #define SCOPE_MAX 32
 #define DATA_MAX 128
@@ -869,6 +905,13 @@ typedef struct {
 } compiled_t;
 
 typedef struct {
+  type_t type;
+  token_t name;
+} type_alias_t;
+
+typedef struct {
+  type_alias_t aliases[ALIAS_MAX];
+  int alias_num;
   scope_t scopes[SCOPE_MAX];
   int scope_num;
   int sp;
@@ -933,6 +976,20 @@ void state_add_global_symbol(state_t *state, token_t token, type_t type, int id)
   scope->symbols[scope->symbol_num ++] = (symbol_t) {token, type, INFO_GLOBAL, {.global = id}};
 } 
 
+void state_solve_type_alias(state_t *state, type_t *type) {
+  assert(state);
+  assert(type);
+
+  if (type->kind == TY_ALIAS) {
+    for (int i = 0; i < state->alias_num; ++i) {
+      if (sv_eq(type->as.alias.name.image, state->aliases[i].name.image)) {
+        type->as.alias.type = &state->aliases[i].type;
+        break;
+      }
+    }
+  }
+}
+
 void code_dump(compiled_t *compiled, FILE *stream) {
   assert(compiled);
 
@@ -954,21 +1011,22 @@ void code_dump(compiled_t *compiled, FILE *stream) {
 type_t parse_type(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  type_t type = {0};
   token_t token = token_expect(tokenizer, T_SYM);
 
-  if (sv_eq(token.image, sv_from_cstr("int"))) {
-    type.kind = TY_INT;
-  } else if (sv_eq(token.image, sv_from_cstr("char"))) {
-    type.kind = TY_CHAR;
-  } else if (sv_eq(token.image, sv_from_cstr("void"))) {
+  type_t type = {0};
+  if (sv_eq(sv_from_cstr("void"), token.image)) {
     type.kind = TY_VOID;
+  } else if (sv_eq(sv_from_cstr("char"), token.image)) {
+    type.kind = TY_CHAR;
+  } else if (sv_eq(sv_from_cstr("int"), token.image)) {
+    type.kind = TY_INT;
   } else {
-    eprintf(token.loc, "is not a type");
-  } 
+    type.kind = TY_ALIAS;
+    type.as.alias.name = token;
+  }
 
   if (token_next_if_kind(tokenizer, T_STAR)) {
-    type = (type_t) {TY_PTR, {.ptr = type_malloc(type)}};
+    type = (type_t){TY_PTR, {.ptr = type_malloc(type)}};
   }
 
   return type;
@@ -1274,6 +1332,17 @@ ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
   return ast_malloc((ast_t){A_FUNCDECL, location_union(token.loc, block ? block->forerror : (param ? param->forerror : name.loc)), {0}, {.funcdecl = {type, name, param, block}}});
 } 
 
+ast_t *parse_typedef(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  token_t td = token_expect(tokenizer, T_TYPEDEF);
+  type_t type = parse_type(tokenizer);
+  token_t name = token_expect(tokenizer, T_SYM);
+  token_expect(tokenizer, T_SEMICOLON);
+
+  return ast_malloc((ast_t){A_TYPEDEF, td.loc, {0}, {.typedef_ = {type, name}}});
+}
+
 ast_t *parse_global(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
@@ -1286,9 +1355,16 @@ ast_t *parse_global(tokenizer_t *tokenizer) {
   }
   *tokenizer = savetok;
 
+  catch = true;
+  if (setjmp(catch_buf) == 0) {
+    ast_t *ast = parse_typedef(tokenizer);
+    catch = false;
+    return ast;
+  }
+  *tokenizer = savetok;
+
   ast_t *decl = parse_decl(tokenizer);
   decl->kind = A_GLOBDECL;
-
   return decl;
 }
 
@@ -1347,7 +1423,7 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
     typecheck_funcbody(ast->as.astlist.next, state, ret);
   }
 
-  ast->type.kind = TY_VOID;
+  ast->type = (type_t){TY_VOID, {}};
 }
 
 void typecheck(ast_t *ast, state_t *state) {
@@ -1363,14 +1439,18 @@ void typecheck(ast_t *ast, state_t *state) {
       assert(ast->as.astlist.ast);
       typecheck(ast->as.astlist.ast, state);
       typecheck(ast->as.astlist.next, state);
-      ast->type.kind = TY_VOID;
+      ast->type = (type_t){TY_VOID, {}};
       break;
     case A_FUNCDECL:
       {
         state_push_scope(state);
         state->param = 0;
         typecheck(ast->as.funcdecl.params, state);
-        ast->type = (type_t) {TY_FUNC, {.func = {type_malloc(ast->as.funcdecl.type), ast->as.funcdecl.params ? type_malloc(ast->as.funcdecl.params->type) : NULL}}};
+        state_solve_type_alias(state, &ast->as.funcdecl.type);
+        ast->type = (type_t){TY_FUNC, {.func = {
+          type_malloc(ast->as.funcdecl.type),
+          ast->as.funcdecl.params ? type_malloc(ast->as.funcdecl.params->type) : NULL
+        }}};
         state_add_global_symbol(state, ast->as.funcdecl.name, ast->type, 0);
 
         if (ast->as.funcdecl.block) {
@@ -1383,6 +1463,7 @@ void typecheck(ast_t *ast, state_t *state) {
         scope_t *scope = &state->scopes[state->scope_num-1];
         assert(scope->symbol_num + 1 < SYMBOL_MAX);
         ++state->param;
+        state_solve_type_alias(state, &ast->as.paramdef.type); 
         scope->symbols[scope->symbol_num ++] = (symbol_t) {ast->as.paramdef.name, ast->as.paramdef.type, INFO_LOCAL, {-1-state->param}};
 
         typecheck(ast->as.paramdef.next, state);
@@ -1449,6 +1530,7 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       break;
     case A_GLOBDECL:
+      state_solve_type_alias(state, &ast->as.decl.type);
       if (ast->as.decl.expr) {
         typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
         ast->as.decl.expr->type = type_clone(ast->as.decl.type);
@@ -1457,6 +1539,7 @@ void typecheck(ast_t *ast, state_t *state) {
       ast->type.kind = TY_VOID;
       break;
     case A_DECL:
+      state_solve_type_alias(state, &ast->as.decl.type);
       if (ast->as.decl.expr) {
         typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
         ast->as.decl.expr->type = type_clone(ast->as.decl.type);
@@ -1519,6 +1602,12 @@ void typecheck(ast_t *ast, state_t *state) {
         typecheck_expect(ast->as.index.num, state, (type_t){TY_INT, {}});
         ast->type = type_clone(*s->type.as.array.type);
       } break;
+    case A_TYPEDEF:
+      assert(state->alias_num < ALIAS_MAX);
+      state_solve_type_alias(state, &ast->as.typedef_.type);
+      state->aliases[state->alias_num ++] = (type_alias_t){ast->as.typedef_.type, ast->as.typedef_.name};
+      ast->type = (type_t){TY_VOID, {}};
+      break;
   }
 }
 
@@ -1936,6 +2025,8 @@ void compile(ast_t *ast, state_t *state) {
       code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
       coderead(compiled, ast->type);
       break;
+    case A_TYPEDEF:
+      break;
   }
 }
 
@@ -2194,6 +2285,7 @@ int main(int argc, char **argv) {
     if ((debug >> M_PAR) & 1) {
       printf("AST:\n");
       ast_dump(ast, false);
+      printf("\n");
     }
     if ((exitat >> M_PAR) & 1) { exit(0); }
 
@@ -2202,6 +2294,7 @@ int main(int argc, char **argv) {
     if ((debug >> M_TYP) & 1) {
       printf("TYPED AST:\n");
       ast_dump(ast, true);
+      printf("\n");
     }
     if ((exitat >> M_TYP) & 1) { exit(0); }
 
