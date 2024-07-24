@@ -1,4 +1,4 @@
-:i count 48
+:i count 51
 :b shell 22
 ./simpleC -D par -e ""
 :i returncode 0
@@ -577,6 +577,35 @@ _start: RAM_A _001 PUSHA RAM_B _000 POPA A_rB RAM_A _002 PUSHA RAM_B _000 RAM_A 
 main: RAM_A _000 PUSHA INCSP RET 
 
 :b stderr 0
+
+:b shell 54
+./simpleC -D typ -e "int main() { int a[] = {1, 2}; }"
+:i returncode 0
+:b stdout 188
+TYPED AST:
+GLOBAL(FUNCDECL(INT main NULL BLOCK(DECL(ARRAY INT[2] a ARRAY(FAC(1) {INT} ARRAY(FAC(2) {INT} NULL) {ARRAY INT[1]}) {ARRAY INT[2]}) {VOID} NULL) {VOID}) {FUNC INT} NULL) {VOID}
+
+:b stderr 0
+
+:b shell 66
+./simpleC -D com -e "int main() { int a[] = {1, 2}; a = {2, 1}; }"
+:i returncode 1
+:b stdout 0
+
+:b stderr 132
+ERROR:cmd:1:32: assign to array
+  1 | int main() { int a[] = {1, 2}; a = {2, 1}; }
+                                     ^~~~~~~~~~~
+
+:b shell 45
+./simpleC -D com -e "int main() { int a[]; }"
+:i returncode 1
+:b stdout 0
+
+:b stderr 106
+ERROR:cmd:1:18: array without length uninitialized
+  1 | int main() { int a[]; }
+                       ^
 
 :b shell 71
 ./simpleC -D com -O1 -e "int main() { char *mem[6] = {\"a\", \"b\"}; }"
