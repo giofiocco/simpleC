@@ -1,6 +1,7 @@
 postopt both init and code
 do better pointer math
 astlist -> binary and semplify others
+typedef array
 
 # Tokenizer
 - binary litterals
@@ -8,13 +9,13 @@ astlist -> binary and semplify others
 - maybe find the row end when changing the row instead of finding it when printing error
 
 # Parser
-- maybe code and param ecc return a ast with {NULL, NULL} for the forerror
 
 # Typechecker
 - maybe check if code is if or something with a block and then call typecheck_funcbody on it
 - warn if no return in some function
 
 # Compiler
+- array with expression as length in the stack
 
 # PostOpt
 - remove dead code

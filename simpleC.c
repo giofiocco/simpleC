@@ -420,7 +420,7 @@ char *type_dump_to_string(type_t *type) {
 
   switch (type->kind) {
     case TY_NONE: 
-      strcpy(string, "NONE"); break;
+      // strcpy(string, "NONE"); break;
       assert(0);
     case TY_VOID:
       strcpy(string, "VOID");
@@ -433,111 +433,83 @@ char *type_dump_to_string(type_t *type) {
       break;
     case TY_FUNC:
       {
-        strcpy(string, "FUNC ");
         assert(type->as.func.ret);
         char *str = type_dump_to_string(type->as.func.ret);
-        int len = strlen(str);
-        assert(len < 128 - 5);
-        strcpy(string + 5, str);
-        free_ptr(str);
         if (type->as.func.params) {
-          str = type_dump_to_string(type->as.func.params);
-          int plen = strlen(str);
-          assert(plen < 128 - 5 - len);
-          string[5+len] = ' ';
-          strcpy(string + 5 + 1 + len, str);
-          free_ptr(str);
+          char *str2 = type_dump_to_string(type->as.func.params);
+          snprintf(string, 128, "{FUNC %s %s}", str, str2);
+          free_ptr(str2);
+        } else {
+          snprintf(string, 128, "{FUNC {%s}", str);
         }
+        free_ptr(str);
       } break;
     case TY_PTR:
       {
-        strcpy(string, "PTR ");
         assert(type->as.ptr);
         char *str = type_dump_to_string(type->as.ptr);
-        assert(strlen(str) < 128 - 4);
-        strcpy(string + 4, str);
+        snprintf(string, 128, "{PTR %s}", str);
         free_ptr(str);
       } break;
     case TY_PARAM:
       {
-        strcpy(string, "PARAM ");
         assert(type->as.list.type);
         char *str = type_dump_to_string(type->as.list.type);
-        int len = strlen(str);
-        assert(len < 128 - 6);
-        strcpy(string + 6, str);
-        free_ptr(str);
         if (type->as.list.next) {
-          str = type_dump_to_string(type->as.list.next);
-          int plen = strlen(str);
-          assert(plen < 128 - 6 - len);
-          string[6+len] = ' ';
-          strcpy(string + 6 + 1 + len, str);
-          free_ptr(str);
+          char *str2 = type_dump_to_string(type->as.list.next);
+          snprintf(string, 128, "{PARAM %s %s}", str, str2);
+          free_ptr(str2);
+        } else {
+          snprintf(string, 128, "{PARAM %s}", str);
         }
+        free_ptr(str);
       } break;
     case TY_ARRAY:
       {
-        strcpy(string, "ARRAY ");
         assert(type->as.array.type);
         char *str = type_dump_to_string(type->as.array.type);
-        int len = strlen(str);
-        assert(len < 128 - 6 - 7);
-        strcpy(string + 6, str);
+        snprintf(string, 128, "{ARRAY %s %d}", str, type->as.array.len);
         free_ptr(str);
-        sprintf(string + 6 + len, "[%d]", type->as.array.len);
       } break;
     case TY_ALIAS:
-      sprintf(string, "ALIAS " SV_FMT, SV_UNPACK(type->as.alias.name.image));
       if (type->as.alias.type) {
         char *str = type_dump_to_string(type->as.alias.type);
-        int len = strlen(str);
-        assert(len < 128 - 6 - (int)type->as.alias.name.image.len);
-        sprintf(string + 6 + type->as.alias.name.image.len, " %s", str);
+        snprintf(string, 128, "{ALIAS " SV_FMT " %s%s}", SV_UNPACK(type->as.alias.name.image), str, type->as.alias.is_struct ? " struct" : "");
         free_ptr(str);
       } else {
-        sprintf(string + 6 + type->as.alias.name.image.len, " NULL");
-        assert(5 + 1 < 128 - 6 - (int)type->as.alias.name.image.len);
+        snprintf(string, 128, "{ALIAS " SV_FMT " %s%s}", SV_UNPACK(type->as.alias.name.image), "NULL", type->as.alias.is_struct ? " struct" : "");
       }
       break;
     case TY_FIELDLIST:
       {
-        strcpy(string, "FIELDLIST (");
-        assert(type->as.list.type);
+        assert(type->as.fieldlist.type);
         char *str = type_dump_to_string(type->as.fieldlist.type);
-        int len = strlen(str) + 11;
-        assert(len < 128);
-        strcpy(string + 11, str);
-        free_ptr(str);
-        assert(len + type->as.fieldlist.name.image.len < 128);
-        sprintf(string + len, " " SV_FMT, SV_UNPACK(type->as.fieldlist.name.image));
-        len += type->as.fieldlist.name.image.len + 1;
         if (type->as.fieldlist.next) {
-          str = type_dump_to_string(type->as.fieldlist.next);
-          int plen = strlen(str);
-          assert(plen < 128 - 11 - len);
-          string[6+len] = ' ';
-          strcpy(string + 11 + 1 + len, str);
-          len += plen;
-          free_ptr(str);
+          char *str2 = type_dump_to_string(type->as.fieldlist.next);
+          snprintf(string, 128, "{FIELDLIST %s " SV_FMT " %s}", str, SV_UNPACK(type->as.fieldlist.name.image), str2);
+          free_ptr(str2);
+        } else {
+          snprintf(string, 128, "{FIELDLIST %s " SV_FMT "}", str, SV_UNPACK(type->as.fieldlist.name.image));
         }
-        strcpy(string + 11 + 1 + len, ")");
+        free_ptr(str);
       } break;
     case TY_STRUCT:
-     {
-        strcpy(string, "STRUCT ");
-        int len = 7;
-        if (type->as.struct_.name.kind) {
-          assert(type->as.struct_.name.image.len + 1 + len < 128);
-          sprintf(string + len, SV_FMT " ", SV_UNPACK(type->as.struct_.name.image));
-          len += type->as.struct_.name.image.len + 1;
-        }
-        assert(type->as.struct_.fieldlist);
+      if (type->as.struct_.fieldlist) {
         char *str = type_dump_to_string(type->as.struct_.fieldlist);
-        assert(strlen(str) + len < 128);
-        strcpy(string + len, str);
+        if (type->as.struct_.name.kind == T_NONE) {
+          snprintf(string, 128, "{STRUCT %s}", str);
+        } else {
+          snprintf(string, 128, "{STRUCT " SV_FMT " %s}", SV_UNPACK(type->as.struct_.name.image), str);
+        }
         free_ptr(str);
-      } break;
+      } else {
+        if (type->as.struct_.name.kind == T_NONE) {
+          snprintf(string, 128, "{STRUCT}");
+        } else {
+          snprintf(string, 128, "{STRUCT " SV_FMT "}", SV_UNPACK(type->as.struct_.name.image));
+        }
+      }
+      break;
   }
 
   return string;
@@ -852,7 +824,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
   }
   if (dumptype) {
     char *str = type_dump_to_string(&ast->type);
-    printf(" {%s}", str);
+    printf(" %s", str);
     free_ptr(str);
   }
 }
