@@ -25,6 +25,6 @@ Multi-line comments: `/* ... */`
 - `<unary>` &rarr; `+ <fac> | - <fac> | <fac> | &<sym> | *<sym>`
 - `<fac>` &rarr; `<int> | <sym> | <string> | <funccall> | (<expr>) | {\(<expr> \(, <expr>\)\*\)\?} | <sym>[<expr>]`
 - `<funccall>` &rarr; `<sym>(\(<expr> \(, <expr>\)\*\)\?)`
-- `<type>` &rarr; `<sym>*\? | <structdef>`
-- `<typedef>` &rarr; `typedef <type> <sym>;`
-- `<structdef>` &rarr; `struct <sym>\? { \(<type> <sym>\([<int>?]\)\?;\)* }`
+- `<type>` &rarr; `struct\? <sym> \*\?`
+- `<typedef>` &rarr; `typedef \(<type> | <structdef>\) <sym>;`
+- `<structdef>` &rarr; `struct <sym>\? { \(<type> <sym>;\)* }`
