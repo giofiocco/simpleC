@@ -126,6 +126,8 @@ if __name__ == '__main__':
             print(f"NOTE: You may want to do `{program_name} record {test_list_path}` to update {test_list_path}.bi")
             exit(1)
 
+        changes = False
+        snapshot_i = 0
         for (shell, snapshot) in zip(shells, snapshots):
             print(f"REPLAYING: {shell}")
             snapshot_shell = snapshot['shell'].decode('utf-8')
@@ -158,8 +160,25 @@ if __name__ == '__main__':
                     print(line, end='')
                 failed = True
             if failed:
-                exit(1)
+                print()
+                yn = input("change? [Y/n] ")
+                if yn.upper() in ('Y', 'YES'):
+                    changes = True
+                    snapshots[snapshot_i] = {
+                        'shell': bytes(shell, 'utf-8'),
+                        'returncode': process.returncode,
+                        'stdout': process.stdout,
+                        'stderr': process.stderr
+                        }
+                else:
+                    exit(1)
+            snapshot_i += 1
         print('OK')
+        if changes:
+            for i in range(len(snapshots)):
+                snapshots[i]['shell'] = snapshots[i]['shell'].decode('utf-8')
+
+            dump_snapshots(f'{test_list_path}.bi', snapshots)
     else:
         print(f'ERROR: unknown subcommand {subcommand}');
         exit(1);
