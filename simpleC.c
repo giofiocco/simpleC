@@ -600,9 +600,11 @@ int type_size(type_t *type) {
       assert(type->as.alias.type);
       return type_size(type->as.alias.type);
     case TY_STRUCT:
-      TODO;
+      assert(type->as.struct_.fieldlist);
+      return type_size(type->as.struct_.fieldlist);
     case TY_FIELDLIST:
-      TODO;
+      assert(type->as.fieldlist.type);
+      return type_size(type->as.fieldlist.type) + (type->as.fieldlist.next ? type_size(type->as.fieldlist.next) : 0);
   }
   assert(0);
 }
@@ -1016,7 +1018,9 @@ void state_solve_type_alias(state_t *state, type_t *type) {
     case TY_ALIAS: 
       {
         symbol_t *s = state_find_symbol(state, type->as.alias.name);
-        assert (s->kind == INFO_TYPE_ALIAS); 
+        if (s->kind != INFO_TYPE_ALIAS) {
+          eprintf(type->as.alias.name.loc, "expected to be a type alias");
+        }
         assert(s->type);
         type->as.alias.type = s->type;
       } break;
@@ -1071,12 +1075,27 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
   token_t fname = token_expect(tokenizer, T_SYM);
   token_expect(tokenizer, T_SEMICOLON);
   type_t type = {TY_FIELDLIST, {.fieldlist = {type_malloc(ftype), fname, NULL}}};
+  if (name.kind != T_NONE &&
+      ftype.kind == TY_ALIAS &&
+      ftype.as.alias.is_struct &&
+      sv_eq(ftype.as.alias.name.image, name.image)) {
+    catch = false;
+    eprintf(fname.loc, "uncomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'", SV_UNPACK(name.image), SV_UNPACK(fname.image));
+  }
 
   while (!token_next_if_kind(tokenizer, T_BRC)) {
     ftype = parse_type(tokenizer);
     fname = token_expect(tokenizer, T_SYM);
     token_expect(tokenizer, T_SEMICOLON);
     type = (type_t) {TY_FIELDLIST, {.fieldlist = {type_malloc(ftype), fname, type_malloc(type)}}};
+
+    if (name.kind != T_NONE &&
+        ftype.kind == TY_ALIAS &&
+        ftype.as.alias.is_struct &&
+        sv_eq(ftype.as.alias.name.image, name.image)) {
+      catch = false;
+      eprintf(fname.loc, "uncomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'", SV_UNPACK(name.image), SV_UNPACK(fname.image));
+    }
   }
 
   return (type_t){TY_STRUCT, {.struct_ = {name, type_malloc(type)}}};
@@ -1171,6 +1190,8 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
 
   token_t token = token_peek(tokenizer);
 
+  tokenizer_t savetok = *tokenizer;
+
   if (token.kind == T_PARO) {
     token_next(tokenizer);
     ast_t *expr = parse_expr(tokenizer);
@@ -1182,7 +1203,7 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     return parse_array(tokenizer);
   }
 
-  tokenizer_t savetok = *tokenizer;
+  savetok = *tokenizer;
   if (token.kind == T_SYM) {
     token_next(tokenizer);
     if (token_peek(tokenizer).kind == T_PARO) {
@@ -2006,14 +2027,16 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.decl.expr) {
         compile(ast->as.decl.expr, state);
       } else {
-        if (ast->as.decl.type.kind == TY_ARRAY) {
+        int size = type_size(&ast->as.decl.type);
+        if (size > 2) {
           bytecode_t b = datauli(compiled, state);
-          data(compiled, (bytecode_t){B_DB, {.num = type_size(&ast->as.decl.type)}});
+          data(compiled, (bytecode_t){B_DB, {.num = size}});
           code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
           b.kind = B_LABEL;
           code(compiled, b);
         }
       }
+
       code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
       break;
     case A_ASSIGN:
