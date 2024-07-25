@@ -420,7 +420,7 @@ char *type_dump_to_string(type_t *type) {
 
   switch (type->kind) {
     case TY_NONE: 
-      // strcpy(string, "NONE"); break;
+      strcpy(string, "NONE"); break;
       assert(0);
     case TY_VOID:
       strcpy(string, "VOID");
@@ -437,18 +437,20 @@ char *type_dump_to_string(type_t *type) {
         char *str = type_dump_to_string(type->as.func.ret);
         if (type->as.func.params) {
           char *str2 = type_dump_to_string(type->as.func.params);
-          snprintf(string, 128, "{FUNC %s %s}", str, str2);
+          snprintf(string, 128, "FUNC {%s %s}", str, str2);
           free_ptr(str2);
         } else {
-          snprintf(string, 128, "{FUNC {%s}", str);
+          snprintf(string, 128, "FUNC {%s}", str);
         }
         free_ptr(str);
       } break;
     case TY_PTR:
-      {
-        assert(type->as.ptr);
+      assert(type->as.ptr);
+      if (type->as.ptr->kind == TY_ALIAS){
+        snprintf(string, 128, "PTR " SV_FMT, SV_UNPACK(type->as.ptr->as.alias.name.image));
+      } else {
         char *str = type_dump_to_string(type->as.ptr);
-        snprintf(string, 128, "{PTR %s}", str);
+        snprintf(string, 128, "PTR %s", str);
         free_ptr(str);
       } break;
     case TY_PARAM:
@@ -457,10 +459,10 @@ char *type_dump_to_string(type_t *type) {
         char *str = type_dump_to_string(type->as.list.type);
         if (type->as.list.next) {
           char *str2 = type_dump_to_string(type->as.list.next);
-          snprintf(string, 128, "{PARAM %s %s}", str, str2);
+          snprintf(string, 128, "PARAM {%s %s}", str, str2);
           free_ptr(str2);
         } else {
-          snprintf(string, 128, "{PARAM %s}", str);
+          snprintf(string, 128, "PARAM {%s}", str);
         }
         free_ptr(str);
       } break;
@@ -468,16 +470,16 @@ char *type_dump_to_string(type_t *type) {
       {
         assert(type->as.array.type);
         char *str = type_dump_to_string(type->as.array.type);
-        snprintf(string, 128, "{ARRAY %s %d}", str, type->as.array.len);
+        snprintf(string, 128, "%s[%d]", str, type->as.array.len);
         free_ptr(str);
       } break;
     case TY_ALIAS:
       if (type->as.alias.type) {
         char *str = type_dump_to_string(type->as.alias.type);
-        snprintf(string, 128, "{ALIAS " SV_FMT " %s%s}", SV_UNPACK(type->as.alias.name.image), str, type->as.alias.is_struct ? " struct" : "");
+        snprintf(string, 128, "ALIAS {" SV_FMT " %s%s}", SV_UNPACK(type->as.alias.name.image), str, type->as.alias.is_struct ? " struct" : "");
         free_ptr(str);
       } else {
-        snprintf(string, 128, "{ALIAS " SV_FMT " %s%s}", SV_UNPACK(type->as.alias.name.image), "NULL", type->as.alias.is_struct ? " struct" : "");
+        snprintf(string, 128, "ALIAS {" SV_FMT " %s%s}", SV_UNPACK(type->as.alias.name.image), "NULL", type->as.alias.is_struct ? " struct" : "");
       }
       break;
     case TY_FIELDLIST:
@@ -486,10 +488,10 @@ char *type_dump_to_string(type_t *type) {
         char *str = type_dump_to_string(type->as.fieldlist.type);
         if (type->as.fieldlist.next) {
           char *str2 = type_dump_to_string(type->as.fieldlist.next);
-          snprintf(string, 128, "{FIELDLIST %s " SV_FMT " %s}", str, SV_UNPACK(type->as.fieldlist.name.image), str2);
+          snprintf(string, 128, "FIELDLIST {%s " SV_FMT " %s}", str, SV_UNPACK(type->as.fieldlist.name.image), str2);
           free_ptr(str2);
         } else {
-          snprintf(string, 128, "{FIELDLIST %s " SV_FMT "}", str, SV_UNPACK(type->as.fieldlist.name.image));
+          snprintf(string, 128, "FIELDLIST {%s " SV_FMT "}", str, SV_UNPACK(type->as.fieldlist.name.image));
         }
         free_ptr(str);
       } break;
@@ -497,16 +499,16 @@ char *type_dump_to_string(type_t *type) {
       if (type->as.struct_.fieldlist) {
         char *str = type_dump_to_string(type->as.struct_.fieldlist);
         if (type->as.struct_.name.kind == T_NONE) {
-          snprintf(string, 128, "{STRUCT %s}", str);
+          snprintf(string, 128, "STRUCT {%s}", str);
         } else {
-          snprintf(string, 128, "{STRUCT " SV_FMT " %s}", SV_UNPACK(type->as.struct_.name.image), str);
+          snprintf(string, 128, "STRUCT {" SV_FMT " %s}", SV_UNPACK(type->as.struct_.name.image), str);
         }
         free_ptr(str);
       } else {
         if (type->as.struct_.name.kind == T_NONE) {
-          snprintf(string, 128, "{STRUCT}");
+          snprintf(string, 128, "STRUCT {}");
         } else {
-          snprintf(string, 128, "{STRUCT " SV_FMT "}", SV_UNPACK(type->as.struct_.name.image));
+          snprintf(string, 128, "STRUCT {" SV_FMT "}", SV_UNPACK(type->as.struct_.name.image));
         }
       }
       break;
@@ -630,7 +632,6 @@ typedef enum {
   A_ARRAY,
   A_INDEX,
   A_TYPEDEF,
-  A_STRUCTDEF,
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -686,10 +687,6 @@ typedef struct ast_t_ {
       type_t type;
       token_t name;
     } typedef_;
-    struct {
-      token_t name;
-      struct ast_t_ *fields;
-    } structdef;
     token_t fac;
   } as;
 } ast_t;
@@ -812,15 +809,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
         printf("TYPEDEF(%s " SV_FMT ")", str, SV_UNPACK(ast->as.typedef_.name.image));
         free_ptr(str);
       } break;
-    case A_STRUCTDEF:
-      printf("STRUCTDEF(");
-      if (ast->as.structdef.name.kind) {
-        printf(SV_FMT " ", SV_UNPACK(ast->as.structdef.name.image));
-      } else {
-        printf("anonymous ");
-      }
-      ast_dump(ast->as.structdef.fields, dumptype);
-      break;
   }
   if (dumptype) {
     char *str = type_dump_to_string(&ast->type);
@@ -941,8 +929,7 @@ void state_drop_scope(state_t *state) {
 
 symbol_t *state_find_symbol(state_t *state, token_t token) {
   assert(state);
-  assert(state->scope_num >= 1);
-  for (int j = state->scope_num-1; j >= 0; --j) {
+  for (int j = state->scope_num > 0 ? state->scope_num-1 : 0; j >= 0; --j) {
     scope_t *scope = &state->scopes[j];
     for (int i = 0; i < scope->symbol_num; ++i) {
       if (sv_eq(scope->symbols[i].name.image, token.image)) {
@@ -1727,15 +1714,13 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_TYPEDEF:
       {
         type_t *type = &ast->as.typedef_.type;
-        state_solve_type_alias(state, type);
         if (type->kind == TY_STRUCT && type->as.struct_.name.kind != T_NONE) {
           state_add_type_alias(state, type->as.struct_.name, type);
         }
+        state_solve_type_alias(state, type);
         state_add_type_alias(state, ast->as.typedef_.name, &ast->as.typedef_.type);
         ast->type = (type_t){TY_VOID, {}};
       } break;
-    case A_STRUCTDEF:
-      TODO;
   }
 }
 
@@ -2157,8 +2142,6 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_TYPEDEF:
       break;
-    case A_STRUCTDEF:
-      TODO;
   }
 }
 
