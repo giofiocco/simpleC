@@ -2261,6 +2261,28 @@ void compile(ast_t *ast, state_t *state) {
       TODO;
       break;
     case A_ARRAY: 
+      if (ast->type.as.array.type->kind == TY_CHAR) {
+        if (ast->as.astlist.next) { 
+          if (ast->as.astlist.next->as.astlist.next) {
+          compile(ast->as.astlist.next->as.astlist.next, state);
+          }
+          ast_t *a = ast->as.astlist.ast;
+          ast_t *b = ast->as.astlist.next->as.astlist.ast;
+
+          code(compiled, (bytecode_t){B_INST, {.inst = RAM_AL}});
+          assert(a->kind == A_FAC && a->as.fac.kind == T_HEX);
+          code(compiled, (bytecode_t){B_HEX, {.num = strtol(a->as.fac.image.start, NULL, 16)}});
+          code(compiled, (bytecode_t){B_INST, {.inst = RAM_BL}});
+          assert(b->kind == A_FAC && b->as.fac.kind == T_HEX);
+          code(compiled, (bytecode_t){B_HEX, {.num = strtol(b->as.fac.image.start, NULL, 16)}});
+          code(compiled, (bytecode_t){B_INST, {.inst = B_AH}});
+          code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+          state->sp += 2;
+        } else { // its alreaady the last
+          compile(ast->as.astlist.ast, state);
+        }
+        break;
+      }
       if (ast->as.astlist.next) {
         compile(ast->as.astlist.next, state);
       }

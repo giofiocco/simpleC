@@ -5,11 +5,11 @@ typedef array
 struct with array
 index a ptr
 index as a *(...)
-array of char
 pass struct to function
 return struct from function
 
 # Tokenizer
+- tokenize int char ect as keywords so cannot be used as variable identifier
 - binary litterals
 - escape char in string
 - maybe find the row end when changing the row instead of finding it when printing error
