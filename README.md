@@ -18,11 +18,12 @@ Multi-line comments: `/* ... */`
 - `<paramdef>` &rarr; `(\(<type> <sym> \(, <type> <type>\)\*\)\?)`
 - `<block>` &rarr; `{ <code>* }`
 - `<code>` &rarr; `<statement>`
-- `<statement>` &rarr; `return <expr>\?; | <decl> | (<sym> | *<expr>) = <expr>; | <expr>;`
-- `<decl>` &rarr; `<type> <sym>\([<int>?]\)\? \(= <expr>\)\?`
+- `<statement>` &rarr; `return <expr>\?; | <decl> | (<access> | *<expr>) = <expr>; | <expr>;`
+- `<decl>` &rarr; `<type> <sym>\([<expr>?]\)\? \(= <expr>\)\?`
 - `<expr>` &rarr; `<term> \(+ <term> | - <term>\)\*`
 - `<term>` &rarr; `<unary> \(* <unary> | / <unary>\)\*`
-- `<unary>` &rarr; `+ <fac> | - <fac> | <fac> | &<sym> | *<sym>`
+- `<unary>` &rarr; `+ <access> | - <access> | <access> | &<access> | *<access>`
+- `<access>` &rarr; `<fac> . <sym> | <fac>`
 - `<fac>` &rarr; `<int> | <sym> | <string> | <funccall> | (<expr>) | {\(<expr> \(, <expr>\)\*\)\?} | <sym>[<expr>]`
 - `<funccall>` &rarr; `<sym>(\(<expr> \(, <expr>\)\*\)\?)`
 - `<type>` &rarr; `struct\? <sym> \*\?`

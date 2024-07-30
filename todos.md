@@ -2,6 +2,14 @@ postopt both init and code
 do better pointer math
 astlist -> binary and semplify others
 typedef array
+struct with array
+struct array
+[x] assign array to ptr ...
+index a ptr
+index as a *(...)
+array of char
+pass struct to function
+return struct from function
 
 # Tokenizer
 - binary litterals
