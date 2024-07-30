@@ -3,8 +3,6 @@ do better pointer math
 astlist -> binary and semplify others
 typedef array
 struct with array
-struct array
-[x] assign array to ptr ...
 index a ptr
 index as a *(...)
 array of char
@@ -17,6 +15,7 @@ return struct from function
 - maybe find the row end when changing the row instead of finding it when printing error
 
 # Parser
+- int a,b;
 
 # Typechecker
 - maybe check if code is if or something with a block and then call typecheck_funcbody on it

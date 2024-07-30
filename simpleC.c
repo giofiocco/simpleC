@@ -952,6 +952,7 @@ typedef struct {
     INFO_NONE,
     INFO_LOCAL,
     INFO_GLOBAL,
+    INFO_TYPE,
   } kind;
   union {
     int local;
@@ -1062,8 +1063,8 @@ void state_solve_type_alias(state_t *state, type_t *type) {
     case TY_ALIAS: 
       {
         symbol_t *s = state_find_symbol(state, type->as.alias.name);
-        if (s->type->kind != TY_ALIAS) {
-          eprintf(type->as.alias.name.loc, "expected to be a type alias");
+        if (s->kind != INFO_TYPE) {
+          eprintf(type->as.alias.name.loc, "expected to be a type");
         }
         assert(s->type);
         type->as.alias.type = s->type;
@@ -1842,7 +1843,7 @@ void typecheck(ast_t *ast, state_t *state) {
           state_add_symbol(state, (symbol_t){type->as.struct_.name, type, 0, {}});
         }
         state_solve_type_alias(state, type);
-        state_add_symbol(state, (symbol_t){ast->as.typedef_.name, &ast->as.typedef_.type, 0, {}});
+        state_add_symbol(state, (symbol_t){ast->as.typedef_.name, &ast->as.typedef_.type, INFO_TYPE, {}});
         ast->type = (type_t){TY_VOID, {}};
       } break;
     case A_CAST:
@@ -1872,19 +1873,40 @@ void code(compiled_t *compiled, bytecode_t b) {
 }
 
 // wants in B the addr
-void coderead(compiled_t *compiled, type_t *type) {
-  assert(compiled);
+void coderead(state_t *state, type_t *type) {
+  assert(state);
   assert(type);
+  if (type->kind == TY_ALIAS) { 
+    coderead(state,type->as.alias.type); 
+    return;
+  }
 
-  switch (type_size(type)) {
+  compiled_t *compiled = state->compiled;
+
+  int size = type_size(type); 
+  switch (size) {
     case 1:
       code(compiled, (bytecode_t){B_INST, {.inst = rB_AL}});
+      code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+      state->sp += 2;
       break;
     case 2:
       code(compiled, (bytecode_t){B_INST, {.inst = rB_A}});
+      code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
       break;
     default:
-      assert(0);
+      assert(type->kind == TY_STRUCT);
+      assert(size % 2 == 0);
+      size -= 2;
+      code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
+      code(compiled, (bytecode_t){B_HEX2, {.num = size}});
+      for (; size >= 0; size -= 2) {
+        code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
+        code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
+        code(compiled, (bytecode_t){B_INST, {.inst = rB_A}});
+        code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+        state->sp += 2;
+      }
   }
 }
 
@@ -1980,6 +2002,8 @@ void get_addr(state_t *state, token_t token) {
         sprintf(b.arg.str, "_%03d", s->info.global);
         code(compiled, b);
       } break;
+    case INFO_TYPE:
+      assert(0);
   }
 }
 
@@ -2023,14 +2047,21 @@ void get_addr_ast(state_t *state, ast_t *ast) {
         get_addr(state, ast->as.index.name);
         code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
 
-        int size = type_size(&ast->type);
-        assert(size == 1 || size == 2);
-
         compile(ast->as.index.num, state);
-        if (size == 2) { 
-          code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
-        }
 
+        switch (type_size(&ast->type)) {
+          case 1:
+            break;
+          case 4: 
+          code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
+          __attribute__((fallthrough));
+          case 2:
+          code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
+          break;
+          default:
+          assert(0);
+        }
+        
         code(compiled, (bytecode_t){B_INST, {.inst = POPB}});
         code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
       } break;
@@ -2104,9 +2135,7 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.binaryop.op == T_DOT) {
         get_addr_ast(state, ast);
         code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
-        coderead(compiled, &ast->type);
-        code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
-        state->sp += 2;
+        coderead(state, &ast->type);
       } else {
         compile(ast->as.binaryop.lhs, state);
         compile(ast->as.binaryop.rhs, state);
@@ -2142,6 +2171,8 @@ void compile(ast_t *ast, state_t *state) {
               code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
               code(compiled, (bytecode_t){B_HEX2, {.num = num}});
             }
+            code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+            state->sp += 2;
           } break;
         case T_SYM:
           {
@@ -2155,7 +2186,7 @@ void compile(ast_t *ast, state_t *state) {
             } else {
               get_addr(state, ast->as.fac);
               code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
-              coderead(compiled, &ast->type);
+              coderead(state, &ast->type);
             }
           } break;
         case T_HEX:
@@ -2170,6 +2201,8 @@ void compile(ast_t *ast, state_t *state) {
             } else {
               assert(0);
             }
+            code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+            state->sp += 2;
           } break;
         case T_STRING:
           bytecode_t uli = datauli(compiled, state);
@@ -2180,12 +2213,12 @@ void compile(ast_t *ast, state_t *state) {
           code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
           uli.kind = B_LABEL;
           code(compiled, uli);
+          code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+          state->sp += 2;
           break;
         default:
           assert(0);
       }
-      code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
-      state->sp += 2;
       break;
     case A_DECL: 
       if (ast->as.decl.expr) {
@@ -2234,26 +2267,29 @@ void compile(ast_t *ast, state_t *state) {
       compile(ast->as.astlist.ast, state);
       break;
     case A_INDEX: 
-      get_addr(state, ast->as.index.name);
-      code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
-      state->sp += 2;
-      compile(ast->as.index.num, state);
-      code(compiled, (bytecode_t){B_INST, {.inst = POPA}});
-      switch (type_size(&ast->as.index.num->type)) {
-        case 1: 
-          break;
-        case 2: 
-          code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
-          break;
-        default:
-          TODO;
-      }
-      code(compiled, (bytecode_t){B_INST, {.inst = POPB}});
-      state->sp -= 4;
-      code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
-      code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
-      coderead(compiled, &ast->type);
-      break;
+      {
+        get_addr(state, ast->as.index.name);
+        code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+        state->sp += 2;
+        compile(ast->as.index.num, state);
+        code(compiled, (bytecode_t){B_INST, {.inst = POPA}});
+        switch (type_size(&ast->type)) {
+          case 1: 
+            break;
+          case 4:
+            code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
+            __attribute__((fallthrough));
+          case 2: 
+            code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
+            break;
+          default:
+            TODO;
+        }
+        code(compiled, (bytecode_t){B_INST, {.inst = POPB}});
+        state->sp -= 4;
+        code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
+        coderead(state, &ast->type);
+      } break;
     case A_TYPEDEF: 
       break;
     case A_CAST:
