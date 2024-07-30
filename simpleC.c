@@ -1829,12 +1829,16 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_INDEX:
       {
         symbol_t *s = state_find_symbol(state, ast->as.index.name);
-        if (s->type->kind != TY_ARRAY) {
-          eprintf(ast->forerror, "expected an ARRAY, found: '%s'", type_dump_to_string(s->type));
+        if (s->type->kind == TY_ARRAY) {
+          assert(ast->as.index.num);
+          typecheck_expect(ast->as.index.num, state, (type_t){TY_INT, {}});
+          ast->type = *s->type->as.array.type;
+        } else if (s->type->kind == TY_PTR) {
+          assert(s->type->as.ptr);
+          ast->type = *s->type->as.ptr;
+        } else {
+          eprintf(ast->forerror, "expected an ARRAY or a PTR, found: '%s'", type_dump_to_string(s->type));
         }
-        assert(ast->as.index.num);
-        typecheck_expect(ast->as.index.num, state, (type_t){TY_INT, {}});
-        ast->type = *s->type->as.array.type;
       } break;
     case A_TYPEDEF:
       {
@@ -2053,15 +2057,15 @@ void get_addr_ast(state_t *state, ast_t *ast) {
           case 1:
             break;
           case 4: 
-          code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
-          __attribute__((fallthrough));
+            code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
+            __attribute__((fallthrough));
           case 2:
-          code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
-          break;
+            code(compiled, (bytecode_t){B_INST, {.inst = SHL}});
+            break;
           default:
-          assert(0);
+            assert(0);
         }
-        
+
         code(compiled, (bytecode_t){B_INST, {.inst = POPB}});
         code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
       } break;
@@ -2157,7 +2161,15 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_UNARYOP: 
-      TODO;
+      switch (ast->as.unaryop.op) {
+        case T_STAR:
+          compile(ast->as.unaryop.arg, state);
+          code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
+          coderead(state, &ast->type);
+          break;
+        default:
+          assert(0);
+      }
       break;
     case A_FAC: 
       switch (ast->as.fac.kind) {
@@ -2264,7 +2276,7 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->type.as.array.type->kind == TY_CHAR) {
         if (ast->as.astlist.next) { 
           if (ast->as.astlist.next->as.astlist.next) {
-          compile(ast->as.astlist.next->as.astlist.next, state);
+            compile(ast->as.astlist.next->as.astlist.next, state);
           }
           ast_t *a = ast->as.astlist.ast;
           ast_t *b = ast->as.astlist.next->as.astlist.ast;
@@ -2278,7 +2290,7 @@ void compile(ast_t *ast, state_t *state) {
           code(compiled, (bytecode_t){B_INST, {.inst = B_AH}});
           code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
           state->sp += 2;
-        } else { // its alreaady the last
+        } else { 
           compile(ast->as.astlist.ast, state);
         }
         break;

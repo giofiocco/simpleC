@@ -3,10 +3,10 @@ do better pointer math
 astlist -> binary and semplify others
 typedef array
 struct with array
-index a ptr
 index as a *(...)
 pass struct to function
 return struct from function
+dereference an array
 
 # Tokenizer
 - tokenize int char ect as keywords so cannot be used as variable identifier
