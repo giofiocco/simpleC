@@ -4,9 +4,8 @@ astlist -> binary and semplify others
 typedef array
 struct with array
 index as a *(...)
-pass struct to function
-return struct from function
 dereference an array
+pointer aritmethics with array
 
 # Tokenizer
 - tokenize int char ect as keywords so cannot be used as variable identifier
@@ -16,6 +15,7 @@ dereference an array
 
 # Parser
 - int a,b;
+- <index> -> <expr>[<expr>]
 
 # Typechecker
 - maybe check if code is if or something with a block and then call typecheck_funcbody on it

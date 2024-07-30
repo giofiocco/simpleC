@@ -1904,13 +1904,20 @@ void coderead(state_t *state, type_t *type) {
       size -= 2;
       code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
       code(compiled, (bytecode_t){B_HEX2, {.num = size}});
-      for (; size >= 0; size -= 2) {
-        code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
-        code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
+      code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
+      code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
+      for (; size > 0; size -= 2) {
         code(compiled, (bytecode_t){B_INST, {.inst = rB_A}});
         code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+        code(compiled, (bytecode_t){B_INST, {.inst = RAM_AL}});
+        code(compiled, (bytecode_t){B_HEX, {.num = 2}});
+        code(compiled, (bytecode_t){B_INST, {.inst = SUB}});
+        code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
         state->sp += 2;
       }
+      code(compiled, (bytecode_t){B_INST, {.inst = rB_A}});
+      code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+      state->sp += 2;
   }
 }
 
@@ -2090,11 +2097,18 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.astlist.next, state);
       }
       break;
+    case A_PARAM:
+      if (ast->as.astlist.next) {
+        compile(ast->as.astlist.next, state);
+      }
+      compile(ast->as.astlist.ast, state);
+      break;
     case A_FUNCDECL: 
       {
         state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
         state_push_scope(state);
-        state->param = 0;
+        int ret_size = type_size(&ast->as.funcdecl.type);
+        state->param = 4 + ret_size + ret_size%2;
         if (ast->as.funcdecl.params) {
           compile(ast->as.funcdecl.params, state);
         }
@@ -2102,7 +2116,7 @@ void compile(ast_t *ast, state_t *state) {
         sprintf(b.arg.str, SV_FMT, SV_UNPACK(ast->as.funcdecl.name.image));
         code(compiled, b);
         if (ast->as.funcdecl.block) {
-          compile(ast->as.funcdecl.block, state);
+         compile(ast->as.funcdecl.block, state);
         }
         if (!(compiled->code[compiled->code_num-1].kind == B_INST && 
               compiled->code[compiled->code_num-1].arg.inst == RET)) {
@@ -2112,8 +2126,14 @@ void compile(ast_t *ast, state_t *state) {
         state_drop_scope(state);
       } break;
     case A_PARAMDEF: 
-      TODO;
-      break;
+      {
+        state_add_symbol(state, (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {-state->param}});
+        int size = type_size(&ast->as.paramdef.type);
+        state->param += size + size%2;
+        if (ast->as.paramdef.next) {
+          compile(ast->as.paramdef.next, state);
+        }
+      } break;
     case A_STATEMENT:
       {
         int sp_start = state->sp;
@@ -2123,18 +2143,15 @@ void compile(ast_t *ast, state_t *state) {
         } 
       } break;
     case A_RETURN:
-      {
-        int offset = state->sp + 2;
-        if (ast->as.return_.expr) {
-          offset += type_size(&ast->type);
-          offset += offset % 2;
-        }
-        state_change_sp(state, -offset);
-        if (ast->as.return_.expr) {
-          compile(ast->as.return_.expr, state);
-        }
+      if (ast->as.return_.expr) {
+        int size = type_size(&ast->as.return_.expr->type);
+        state_change_sp(state, -(state->sp + size + size%2 + 2));
+        compile(ast->as.return_.expr, state);
         state_change_sp(state, 2);
-      } break;
+      } else {
+        state_change_sp(state, -state->sp);
+      }
+      break;
     case A_BINARYOP: 
       if (ast->as.binaryop.op == T_DOT) {
         get_addr_ast(state, ast);
@@ -2192,7 +2209,10 @@ void compile(ast_t *ast, state_t *state) {
             assert(s->type);
             if (s->type->kind == TY_ARRAY) {
               assert(0); // TODO error
-            } else if (s->kind == INFO_LOCAL && s->info.local < state->sp && state->sp - s->info.local < 256) {
+            } else if (type_size(s->type) <= 2 && 
+                s->kind == INFO_LOCAL && 
+                s->info.local < state->sp && 
+                state->sp - s->info.local < 256) {
               code(compiled, (bytecode_t){B_INST, {.inst = PEEKAR}});
               code(compiled, (bytecode_t){B_HEX, {.num = state->sp - s->info.local}});
             } else {
@@ -2267,11 +2287,14 @@ void compile(ast_t *ast, state_t *state) {
       codewrite(compiled, &ast->type);
       break;
     case A_FUNCALL: 
-      TODO;
-      break;
-    case A_PARAM: 
-      TODO;
-      break;
+      {
+        compile(ast->as.funcall.params, state);
+        state_change_sp(state, type_size(&ast->type));
+        code(compiled, (bytecode_t){B_INST, {.inst = CALLR}});
+        bytecode_t b = {B_RELLABEL, {0}};
+        sprintf(b.arg.str, SV_FMT, SV_UNPACK(ast->as.funcall.name.image));
+        code(compiled, b);
+      } break;
     case A_ARRAY: 
       if (ast->type.as.array.type->kind == TY_CHAR) {
         if (ast->as.astlist.next) { 
