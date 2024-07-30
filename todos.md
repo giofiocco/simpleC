@@ -8,21 +8,21 @@ dereference an array
 pointer aritmethics with array
 
 # Tokenizer
-- tokenize int char ect as keywords so cannot be used as variable identifier
-- binary litterals
-- escape char in string
-- maybe find the row end when changing the row instead of finding it when printing error
+- [x] tokenize int char ect as keywords so cannot be used as variable identifier
+- [ ] binary litterals
+- [ ] escape char in string
+- [ ] maybe find the row end when changing the row instead of finding it when printing error
 
 # Parser
-- int a,b;
-- <index> -> <expr>[<expr>]
+- [ ] int a,b;
+- [ ] <index> -> <expr>[<expr>]
 
 # Typechecker
-- maybe check if code is if or something with a block and then call typecheck_funcbody on it
-- warn if no return in some function
+- [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it
+- [ ] warn if no return in some function
 
 # Compiler
-- array with expression as length in the stack
+- [ ] array with expression as length in the stack
 
 # PostOpt
-- remove dead code
+- [ ] remove dead code

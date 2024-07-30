@@ -91,6 +91,9 @@ typedef enum {
   T_AND,
   T_COLON,
   T_DOT,
+  T_VOIDKW,
+  T_INTKW,
+  T_CHARKW,
 } token_kind_t;
 
 typedef struct {
@@ -283,6 +286,9 @@ token_t token_next(tokenizer_t *tokenizer) {
             sv_eq(image, sv_from_cstr("return")) ? T_RETURN : 
             sv_eq(image, sv_from_cstr("typedef")) ? T_TYPEDEF : 
             sv_eq(image, sv_from_cstr("struct")) ? T_STRUCT : 
+            sv_eq(image, sv_from_cstr("int")) ? T_INTKW : 
+            sv_eq(image, sv_from_cstr("char")) ? T_CHARKW : 
+            sv_eq(image, sv_from_cstr("void")) ? T_VOIDKW : 
             T_SYM,
             image,
             tokenizer->loc
@@ -337,6 +343,9 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_AND: return "AND";
     case T_COLON: return "COLON";
     case T_DOT: return "DOT";
+    case T_VOIDKW: return "VOIDKW";
+    case T_INTKW: return "INTKW";
+    case T_CHARKW: return "CHARKW";
   }
   assert(0);
 }
@@ -1166,20 +1175,19 @@ type_t parse_type(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   bool is_struct = token_next_if_kind(tokenizer, T_STRUCT);
-
-  token_t token = token_expect(tokenizer, T_SYM);
-
+  
   type_t type = {0};
-  if (sv_eq(sv_from_cstr("void"), token.image)) {
-    type.kind = TY_VOID;
-  } else if (sv_eq(sv_from_cstr("char"), token.image)) {
-    type.kind = TY_CHAR;
-  } else if (sv_eq(sv_from_cstr("int"), token.image)) {
-    type.kind = TY_INT;
+
+  token_t token = token_peek(tokenizer);
+  if (token_next_if_kind(tokenizer, T_VOIDKW)) {
+    type = (type_t){TY_VOID, {}};
+  } else if (token_next_if_kind(tokenizer, T_INTKW)) {
+    type = (type_t){TY_INT, {}};
+  } else if (token_next_if_kind(tokenizer, T_CHARKW)) {
+    type = (type_t){TY_CHAR, {}};
   } else {
-    type.kind = TY_ALIAS;
-    type.as.alias.name = token;
-    type.as.alias.is_struct = is_struct;
+    token = token_expect(tokenizer, T_SYM);
+    type = (type_t){TY_ALIAS, {.alias = {token, NULL, is_struct}}};
   }
 
   if (is_struct && type.kind != TY_ALIAS) {
@@ -2116,7 +2124,7 @@ void compile(ast_t *ast, state_t *state) {
         sprintf(b.arg.str, SV_FMT, SV_UNPACK(ast->as.funcdecl.name.image));
         code(compiled, b);
         if (ast->as.funcdecl.block) {
-         compile(ast->as.funcdecl.block, state);
+          compile(ast->as.funcdecl.block, state);
         }
         if (!(compiled->code[compiled->code_num-1].kind == B_INST && 
               compiled->code[compiled->code_num-1].arg.inst == RET)) {
