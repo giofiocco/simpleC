@@ -2978,17 +2978,20 @@ int main(int argc, char **argv) {
     if ((exitat >> M_TYP) & 1) { exit(0); }
 
     // check if main
-    bool has_main = false;
     scope_t *scope = &state.scopes[0];
+    symbol_t *main_symbol = NULL;
     for (int i = 0; i < scope->symbol_num; ++i) {
       if (sv_eq(scope->symbols[i].name.image, sv_from_cstr("main"))) {
-        // TODO check if return is int
-        has_main = true;
+        main_symbol = &scope->symbols[i];
         break;
       }
     }
-    if (!has_main) {
+    if (!main_symbol) {
       fprintf(stderr, "ERROR: no main function found\n");
+      exit(1);
+    }
+    if (main_symbol->type->kind != TY_FUNC || main_symbol->type->as.func.ret->kind != TY_INT) {
+      fprintf(stderr, "ERROR: expected main to be FUNC with return type INT\n");
       exit(1);
     }
 
