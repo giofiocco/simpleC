@@ -6,9 +6,12 @@ struct with array
 index as a *(...)
 dereference an array
 pointer aritmethics with array
+index -> binary thing
+[x] struct { int; char; int }; ??
+[x] type_size_aligned() -> size + size%2
+point init() ... init().a;
 
 # Tokenizer
-- [x] tokenize int char ect as keywords so cannot be used as variable identifier
 - [ ] binary litterals
 - [ ] escape char in string
 - [ ] maybe find the row end when changing the row instead of finding it when printing error

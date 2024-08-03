@@ -661,9 +661,19 @@ int type_size(type_t *type) {
     case TY_STRUCT: assert(type->as.struct_.fieldlist); return type_size(type->as.struct_.fieldlist);
     case TY_FIELDLIST:
       assert(type->as.fieldlist.type);
-      return type_size(type->as.fieldlist.type) + (type->as.fieldlist.next ? type_size(type->as.fieldlist.next) : 0);
+      if (type->as.fieldlist.type->kind == TY_CHAR && type->as.fieldlist.next &&
+          type->as.fieldlist.next->as.fieldlist.type->kind != TY_CHAR) {
+        return 2 + type_size(type->as.fieldlist.next);
+      } else {
+        return type_size(type->as.fieldlist.type) + (type->as.fieldlist.next ? type_size(type->as.fieldlist.next) : 0);
+      }
   }
   assert(0);
+}
+
+int type_size_aligned(type_t *type) {
+  int size = type_size(type);
+  return size + size % 2;
 }
 
 void type_expect(location_t loc, type_t *found, type_t *expect) {
@@ -2043,8 +2053,12 @@ void get_addr_ast(state_t *state, ast_t *ast) {
         unsigned int offset = 0;
         type_t *f = ast->as.binaryop.lhs->type.as.alias.type->as.struct_.fieldlist;
         while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
-          offset += type_size(f->as.fieldlist.type);
-          offset += offset % 2;
+          if (f->as.fieldlist.type->kind == TY_CHAR && f->as.fieldlist.next &&
+              f->as.fieldlist.next->as.fieldlist.type->kind != TY_CHAR) {
+            offset += 2;
+          } else {
+            offset += type_size(f->as.fieldlist.type);
+          }
           f = f->as.fieldlist.next;
         };
         assert(f);
@@ -2108,8 +2122,7 @@ void compile(ast_t *ast, state_t *state) {
       {
         state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
         state_push_scope(state);
-        int ret_size = type_size(&ast->as.funcdecl.type);
-        state->param = 4 + ret_size + ret_size % 2;
+        state->param = 4 + type_size_aligned(&ast->as.funcdecl.type);
         if (ast->as.funcdecl.params) {
           compile(ast->as.funcdecl.params, state);
         }
@@ -2130,8 +2143,7 @@ void compile(ast_t *ast, state_t *state) {
     case A_PARAMDEF:
       {
         state_add_symbol(state, (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {-state->param}});
-        int size = type_size(&ast->as.paramdef.type);
-        state->param += size + size % 2;
+        state->param += type_size_aligned(&ast->as.paramdef.type);
         if (ast->as.paramdef.next) {
           compile(ast->as.paramdef.next, state);
         }
@@ -2150,9 +2162,8 @@ void compile(ast_t *ast, state_t *state) {
     case A_RETURN:
       if (ast->as.return_.expr) {
         compile(ast->as.return_.expr, state);
-        int size = type_size(&ast->as.return_.expr->type);
-        size += size % 2;
-        int offset = state->sp + size + 2;
+        int size = type_size_aligned(&ast->as.return_.expr->type);
+        int offset = state->sp + 2 + size;
         state_change_sp(state, -offset);
 
         code(compiled, (bytecode_t){B_INST, {.inst = SP_A}});
@@ -2291,9 +2302,7 @@ void compile(ast_t *ast, state_t *state) {
            state->sp -= 2;
            */
       } else {
-        int size = type_size(&ast->as.decl.type);
-        size += size % 2;
-        state_change_sp(state, size);
+        state_change_sp(state, type_size_aligned(&ast->as.decl.type));
       }
       state_add_symbol(state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_LOCAL, {state->sp - 2}});
       break;
@@ -2370,10 +2379,8 @@ void compile(ast_t *ast, state_t *state) {
         code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
         state->sp += 2;
       } else {
-        int tsize = type_size(&ast->as.cast.target);
-        tsize += tsize % 2;
-        int size = type_size(&ast->as.cast.ast->type);
-        size += size % 2;
+        int tsize = type_size_aligned(&ast->as.cast.target);
+        int size = type_size_aligned(&ast->as.cast.ast->type);
         assert(tsize - size >= 0);
         if (tsize - size > 0) {
           code(compiled, (bytecode_t){B_INST, {.inst = RAM_AL}});

@@ -22,9 +22,9 @@ Multi-line comments: `/* ... */`
 - `<decl>` &rarr; `<type> <sym>\([<expr>?]\)\? \(= <expr>\)\?`
 - `<expr>` &rarr; `<term> \(+ <term> | - <term>\)\*`
 - `<term>` &rarr; `<unary> \(* <unary> | / <unary>\)\*`
-- `<unary>` &rarr; `+ <access> | - <access> | <access> | &<access> | *<access>`
+- `<unary>` &rarr; `+ <access> | - <access> | <access> | &<access> | *<access> | <access>[<expr>]`
 - `<access>` &rarr; `<fac> . <sym> | <fac>`
-- `<fac>` &rarr; `<int> | <sym> | <string> | <funccall> | (<expr>) | {\(<expr> \(, <expr>\)\*\)\?} | <sym>[<expr>]`
+- `<fac>` &rarr; `<int> | <sym> | <string> | <funccall> | (<expr>) | {\(<expr> \(, <expr>\)\*\)\?}`
 - `<funccall>` &rarr; `<sym>(\(<expr> \(, <expr>\)\*\)\?)`
 - `<type>` &rarr; `struct\? <sym> \*\?`
 - `<typedef>` &rarr; `typedef \(<type> | <structdef>\) <sym>;`
