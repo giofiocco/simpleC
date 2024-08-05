@@ -7,9 +7,8 @@ index as a *(...)
 dereference an array
 pointer aritmethics with array
 index -> binary thing
-[x] struct { int; char; int }; ??
-[x] type_size_aligned() -> size + size%2
-point init() ... init().a;
+[x] point init() ... init().a;
+parse_type return an ast
 
 # Tokenizer
 - [ ] binary litterals
@@ -19,6 +18,7 @@ point init() ... init().a;
 # Parser
 - [ ] int a,b;
 - [ ] <index> -> <expr>[<expr>]
+- [ ] int **a;
 
 # Typechecker
 - [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it
