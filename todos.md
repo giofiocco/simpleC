@@ -7,8 +7,7 @@ index as a *(...)
 dereference an array
 pointer aritmethics with array
 index -> binary thing
-[x] point init() ... init().a;
-parse_type return an ast
+[x] type_is_kind to check if is kind or alias of that kind
 
 # Tokenizer
 - [ ] binary litterals

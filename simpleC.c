@@ -402,20 +402,22 @@ typedef struct {
   int num;
 } array_len_t;
 
+typedef enum {
+  TY_NONE,
+  TY_VOID,
+  TY_CHAR,
+  TY_INT,
+  TY_FUNC,
+  TY_PTR,
+  TY_PARAM,
+  TY_ARRAY,
+  TY_ALIAS,
+  TY_FIELDLIST,
+  TY_STRUCT,
+} type_kind_t;
+
 typedef struct type_t_ {
-  enum {
-    TY_NONE,
-    TY_VOID,
-    TY_CHAR,
-    TY_INT,
-    TY_FUNC,
-    TY_PTR,
-    TY_PARAM,
-    TY_ARRAY,
-    TY_ALIAS,
-    TY_FIELDLIST,
-    TY_STRUCT,
-  } kind;
+  type_kind_t kind;
   union {
     struct {
       struct type_t_ *type;
@@ -683,6 +685,27 @@ void type_expect(location_t loc, type_t *found, type_t *expect) {
   char *expectstr = type_dump_to_string(expect);
   char *foundstr = type_dump_to_string(found);
   eprintf(loc, "expected '%s', found '%s'", expectstr, foundstr);
+}
+
+bool type_is_kind(type_t *type, type_kind_t kind) {
+  assert(type);
+  assert(kind != TY_ALIAS);
+
+  if (type->kind == TY_ALIAS) {
+    assert(type->as.alias.type);
+    return type_is_kind(type->as.alias.type, kind);
+  }
+
+  return type->kind == kind;
+}
+
+type_t *type_pass_alias(type_t *type) {
+  assert(type);
+  if (type->kind == TY_ALIAS) {
+    assert(type->as.alias.type);
+    return type_pass_alias(type->as.alias.type);
+  }
+  return type;
 }
 
 typedef enum {
@@ -1716,8 +1739,8 @@ void typecheck(ast_t *ast, state_t *state) {
         assert(ast->as.binaryop.rhs->as.fac.kind == T_SYM);
 
         type_t *type = &ast->as.binaryop.lhs->type;
-        if (!(type->kind == TY_ALIAS && type->as.alias.type && type->as.alias.type->kind == TY_STRUCT)) {
-          eprintf(ast->as.binaryop.lhs->forerror, "expected an 'ALIAS STRUCT', found '%s'", type_dump_to_string(type));
+        if (!type_is_kind(type, TY_STRUCT)) {
+          eprintf(ast->as.binaryop.lhs->forerror, "expected a 'STRUCT', found '%s'", type_dump_to_string(type));
         }
 
         type_t *f = type->as.alias.type->as.struct_.fieldlist;
@@ -1781,11 +1804,11 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_GLOBDECL:
     case A_DECL:
       state_solve_type_alias(state, &ast->as.decl.type);
-      if (ast->as.decl.type.kind == TY_ARRAY && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_UNSET &&
+      if (type_is_kind(&ast->as.decl.type, TY_ARRAY) && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_UNSET &&
           ast->as.decl.expr == NULL) {
         eprintf(ast->forerror, "array without length uninitialized");
       }
-      if (ast->as.decl.type.kind == TY_ARRAY && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_EXPR) {
+      if (type_is_kind(&ast->as.decl.type, TY_ARRAY) && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_EXPR) {
         if (ast->as.decl.expr != NULL) {
           eprintf(ast->forerror, "array with variable length cannot be initialized");
         } else {
@@ -1794,7 +1817,7 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       if (ast->as.decl.expr) {
         typecheck_expandable(ast->as.decl.expr, state, ast->as.decl.type);
-        if (ast->as.decl.type.kind == TY_ARRAY && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_UNSET) {
+        if (type_is_kind(&ast->as.decl.type, TY_ARRAY) && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_UNSET) {
           typecheck(ast->as.decl.expr, state);
           ast->as.decl.type = ast->as.decl.expr->type;
         }
@@ -1807,7 +1830,7 @@ void typecheck(ast_t *ast, state_t *state) {
       assert(ast->as.assign.dest);
       assert(ast->as.assign.expr);
       typecheck(ast->as.assign.dest, state);
-      if (ast->as.assign.dest->type.kind == TY_ARRAY) {
+      if (type_is_kind(&ast->as.assign.dest->type, TY_ARRAY)) {
         eprintf(ast->forerror, "assign to array");
       }
       typecheck_expect(ast->as.assign.expr, state, ast->as.assign.dest->type);
@@ -1858,11 +1881,11 @@ void typecheck(ast_t *ast, state_t *state) {
       {
         typecheck(ast->as.index.expr, state);
         type_t *type = &ast->as.index.expr->type;
-        if (type->kind == TY_ARRAY) {
+        if (type_is_kind(type, TY_ARRAY)) {
           assert(ast->as.index.num);
           typecheck_expect(ast->as.index.num, state, (type_t){TY_INT, {}});
           ast->type = *type->as.array.type;
-        } else if (type->kind == TY_PTR) {
+        } else if (type_is_kind(type, TY_PTR)) {
           assert(type->as.ptr);
           ast->type = *type->as.ptr;
         } else {
@@ -1884,28 +1907,25 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_CAST:
       state_solve_type_alias(state, &ast->as.cast.target);
 
-      if (ast->as.cast.target.kind == TY_ALIAS) {
-        type_t *target = ast->as.cast.target.as.alias.type;
-        assert(target);
-        if (target->kind == TY_STRUCT && ast->as.cast.ast->kind == A_ARRAY) {
-          type_t *f = target->as.struct_.fieldlist;
-          ast_t *expr = ast->as.cast.ast;
+      if (type_is_kind(&ast->as.cast.target, TY_STRUCT) && ast->as.cast.ast->kind == A_ARRAY) {
+        type_t *target = type_pass_alias(&ast->as.cast.target);
+        type_t *f = target->as.struct_.fieldlist;
+        ast_t *expr = ast->as.cast.ast;
 
-          while (f && expr) {
-            typecheck_expect(expr->as.astlist.ast, state, *f->as.fieldlist.type);
-            expr->type = *target;
-            expr->type.as.struct_.fieldlist = f;
+        while (f && expr) {
+          typecheck_expect(expr->as.astlist.ast, state, *f->as.fieldlist.type);
+          expr->type = *target;
+          expr->type.as.struct_.fieldlist = f;
 
-            expr = expr->as.astlist.next;
-            f = f->as.fieldlist.next;
-          }
+          expr = expr->as.astlist.next;
+          f = f->as.fieldlist.next;
+        }
 
-          if (f != NULL) {
-            eprintf(ast->forerror, "too few fields");
-          }
-          if (expr != NULL) {
-            eprintf(ast->forerror, "too many fields");
-          }
+        if (f != NULL) {
+          eprintf(ast->forerror, "too few fields");
+        }
+        if (expr != NULL) {
+          eprintf(ast->forerror, "too many fields");
         }
       } else {
         typecheck_expandable(ast->as.cast.ast, state, ast->as.cast.target);
@@ -2083,8 +2103,8 @@ void get_addr_ast(state_t *state, ast_t *ast) {
         unsigned int offset = 0;
         type_t *f = ast->as.binaryop.lhs->type.as.alias.type->as.struct_.fieldlist;
         while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
-          if (f->as.fieldlist.type->kind == TY_CHAR && f->as.fieldlist.next &&
-              f->as.fieldlist.next->as.fieldlist.type->kind != TY_CHAR) {
+          if (type_is_kind(f->as.fieldlist.type, TY_CHAR) && f->as.fieldlist.next &&
+              type_is_kind(f->as.fieldlist.next->as.fieldlist.type, TY_CHAR)) {
             offset += 2;
           } else {
             offset += type_size(f->as.fieldlist.type);
@@ -2278,7 +2298,7 @@ void compile(ast_t *ast, state_t *state) {
           {
             symbol_t *s = state_find_symbol(state, ast->as.fac);
             assert(s->type);
-            if (s->type->kind == TY_ARRAY) {
+            if (type_is_kind(s->type, TY_ARRAY)) {
               assert(0);  // TODO error
             } else if (type_size(s->type) <= 2 && s->kind == INFO_LOCAL && s->info.local < state->sp &&
                        state->sp - s->info.local < 256) {
@@ -2308,16 +2328,18 @@ void compile(ast_t *ast, state_t *state) {
           }
           break;
         case T_STRING:
-          bytecode_t uli = datauli(compiled, state);
-          bytecode_t b = {B_STRING, {}};
-          sprintf(b.arg.str, SV_FMT, SV_UNPACK(ast->as.fac.image));
-          data(compiled, b);
-          data(compiled, (bytecode_t){B_HEX, {.num = 0}});
-          code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
-          uli.kind = B_LABEL;
-          code(compiled, uli);
-          code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
-          state->sp += 2;
+          {
+            bytecode_t uli = datauli(compiled, state);
+            bytecode_t b = {B_STRING, {}};
+            sprintf(b.arg.str, SV_FMT, SV_UNPACK(ast->as.fac.image));
+            data(compiled, b);
+            data(compiled, (bytecode_t){B_HEX, {.num = 0}});
+            code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
+            uli.kind = B_LABEL;
+            code(compiled, uli);
+            code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+            state->sp += 2;
+          }
           break;
         default: assert(0);
       }
@@ -2325,7 +2347,7 @@ void compile(ast_t *ast, state_t *state) {
     case A_DECL:
       if (ast->as.decl.expr) {
         compile(ast->as.decl.expr, state);
-      } else if (ast->as.decl.type.kind == TY_ARRAY && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_EXPR) {
+      } else if (type_is_kind(&ast->as.decl.type, TY_ARRAY) && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_EXPR) {
         TODO;
         /*
            compile(ast->as.decl.array_len, state);
@@ -2365,7 +2387,7 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_ARRAY:
-      if (ast->type.as.array.type->kind == TY_CHAR) {
+      if (type_is_kind(ast->type.as.array.type, TY_CHAR)) {
         if (ast->as.astlist.next) {
           if (ast->as.astlist.next->as.astlist.next) {
             compile(ast->as.astlist.next->as.astlist.next, state);
@@ -2411,12 +2433,21 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_TYPEDEF: break;
     case A_CAST:
-      if (ast->as.cast.target.kind == TY_PTR && ast->as.cast.ast->type.kind == TY_ARRAY) {
+      if (type_is_kind(&ast->as.cast.target, TY_PTR) && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
         get_addr_ast(state, ast->as.cast.ast);
         code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
         state->sp += 2;
-      } else if (ast->as.cast.target.kind == TY_STRUCT && ast->as.cast.ast->kind == A_ARRAY) {
-        exit(101);
+      } else if (type_is_kind(&ast->as.cast.target, TY_STRUCT) && ast->as.cast.ast->kind == A_ARRAY) {
+        ast_t *asts[128] = {0};
+        int ast_num = 0;
+        ast_t *asti = ast->as.cast.ast;
+        while (asti) {
+          asts[ast_num++] = asti->as.astlist.ast;
+          asti = asti->as.astlist.next;
+        }
+        for (--ast_num; ast_num >= 0; --ast_num) {
+          compile(asts[ast_num], state);
+        }
       } else {
         int tsize = type_size_aligned(&ast->as.cast.target);
         int size = type_size_aligned(&ast->as.cast.ast->type);
