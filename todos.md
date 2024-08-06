@@ -7,7 +7,6 @@ index as a *(...)
 dereference an array
 pointer aritmethics with array
 index -> binary thing
-[x] type_is_kind to check if is kind or alias of that kind
 
 # Tokenizer
 - [ ] binary litterals
@@ -18,6 +17,7 @@ index -> binary thing
 - [ ] int a,b;
 - [ ] <index> -> <expr>[<expr>]
 - [ ] int **a;
+- [ ] cast 
 
 # Typechecker
 - [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it

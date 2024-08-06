@@ -978,6 +978,7 @@ typedef struct {
     INFO_LOCAL,
     INFO_GLOBAL,
     INFO_TYPE,
+    INFO_TYPEINCOMPLETE,
   } kind;
   union {
     int local;
@@ -1086,7 +1087,10 @@ void state_solve_type_alias(state_t *state, type_t *type) {
     case TY_ALIAS:
       {
         symbol_t *s = state_find_symbol(state, type->as.alias.name);
-        if (s->kind != INFO_TYPE) {
+        if (s->kind == INFO_TYPEINCOMPLETE && !type->as.alias.is_struct) {
+          eprintf(type->as.alias.name.loc, "must use 'struct " SV_FMT "'", SV_UNPACK(type->as.alias.name.image));
+        }
+        if (s->kind != INFO_TYPE && s->kind != INFO_TYPEINCOMPLETE) {
           eprintf(type->as.alias.name.loc, "expected to be a type");
         }
         assert(s->type);
@@ -1155,7 +1159,7 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
 
   if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct &&
       sv_eq(ftype.as.alias.name.image, name.image)) {
-    eprintf(fname.loc, "uncomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'", SV_UNPACK(name.image),
+    eprintf(fname.loc, "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'", SV_UNPACK(name.image),
             SV_UNPACK(fname.image));
   }
 
@@ -1176,7 +1180,7 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
 
     if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct &&
         sv_eq(ftype.as.alias.name.image, name.image)) {
-      eprintf(fname.loc, "uncomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'", SV_UNPACK(name.image),
+      eprintf(fname.loc, "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'", SV_UNPACK(name.image),
               SV_UNPACK(fname.image));
     }
   }
@@ -1897,7 +1901,7 @@ void typecheck(ast_t *ast, state_t *state) {
       {
         type_t *type = &ast->as.typedef_.type;
         if (type->kind == TY_STRUCT && type->as.struct_.name.kind != T_NONE) {
-          state_add_symbol(state, (symbol_t){type->as.struct_.name, type, 0, {}});
+          state_add_symbol(state, (symbol_t){type->as.struct_.name, type, INFO_TYPEINCOMPLETE, {}});
         }
         state_solve_type_alias(state, type);
         state_add_symbol(state, (symbol_t){ast->as.typedef_.name, &ast->as.typedef_.type, INFO_TYPE, {}});
@@ -2082,7 +2086,8 @@ void get_addr(state_t *state, token_t token) {
         code(compiled, b);
       }
       break;
-    case INFO_TYPE: assert(0);
+    case INFO_TYPE:           assert(0);
+    case INFO_TYPEINCOMPLETE: assert(0);
   }
 }
 
