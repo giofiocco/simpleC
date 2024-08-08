@@ -7,10 +7,11 @@ index as a *(...)
 dereference an array
 pointer aritmethics with array
 index -> binary thing
+parse with location_t start = tokenizer->loc;
 
 # Tokenizer
 - [ ] binary litterals
-- [ ] chars
+- [x] chars
 - [ ] escape char in string
 - [ ] maybe find the row end when changing the row instead of finding it when printing error
 
@@ -18,7 +19,6 @@ index -> binary thing
 - [ ] int a,b;
 - [ ] <index> -> <expr>[<expr>]
 - [ ] int **a;
-- [ ] cast 
 
 # Typechecker
 - [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it

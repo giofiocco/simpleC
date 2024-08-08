@@ -7,6 +7,7 @@ A compiler for a subset of `C`
 - INT: `[0-9]+`
 - HEX: `0[xX]([0-9a-fA-F]{2} | [0-9a-fA-F]{4})`
 - STRING: `"[^"]*"` 
+- CHAR `'.'`
 
 ## Comments
 Single-line comments: `//` (till the end of line)
@@ -24,7 +25,7 @@ Multi-line comments: `/* ... */`
 - `<term>` &rarr; `<unary> \(* <unary> | / <unary>\)\*`
 - `<unary>` &rarr; `+ <access> | - <access> | <access> | &<access> | *<access> | <access>[<expr>]`
 - `<access>` &rarr; `<fac> . <sym> | <fac>`
-- `<fac>` &rarr; `<int> | <sym> | <string> | <funccall> | (<expr>) | (<type>) <fac> {\(<expr> \(, <expr>\)\*\)\?}`
+- `<fac>` &rarr; `<int> | <sym> | <string> | <char> | <funccall> | (<expr>) | (<type>) <fac> {\(<expr> \(, <expr>\)\*\)\?}`
 - `<funccall>` &rarr; `<sym>(\(<expr> \(, <expr>\)\*\)\?)`
 - `<type>` &rarr; `struct\? <sym> \*\?`
 - `<typedef>` &rarr; `typedef \(<type> | <structdef>\) <sym>;`

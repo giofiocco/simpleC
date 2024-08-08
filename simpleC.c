@@ -98,6 +98,7 @@ typedef enum {
   T_VOIDKW,
   T_INTKW,
   T_CHARKW,
+  T_CHAR,
 } token_kind_t;
 
 typedef struct {
@@ -130,7 +131,11 @@ void tokenizer_init(tokenizer_t *tokenizer, char *buffer, char *filename) {
   assert(tokenizer);
   tokenizer->buffer = buffer;
   tokenizer->loc = (location_t){
-    filename, buffer, 1, 1, 0,
+    filename,
+    buffer,
+    1,
+    1,
+    0,
   };
 }
 
@@ -141,11 +146,17 @@ void print_location(location_t location) {
   }
   int row_len = row_end - location.row_start;
   fprintf(stderr, "%*d | %*.*s\n", location.row < 1000 ? 3 : 5, location.row, row_len, row_len, location.row_start);
-  fprintf(stderr, "%s   %*.*s%c%*.*s\n", location.row < 1000 ? "   " : "     ", location.col - 1, location.col - 1,
+  fprintf(stderr,
+          "%s   %*.*s%c%*.*s\n",
+          location.row < 1000 ? "   " : "     ",
+          location.col - 1,
+          location.col - 1,
           "                                                                    "
           "                                                                    "
           "                                                                ",
-          '^', location.len - 1, location.len - 1,
+          '^',
+          location.len - 1,
+          location.len - 1,
           "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
           "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
           "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
@@ -266,6 +277,17 @@ token_t token_next(tokenizer_t *tokenizer) {
         tokenizer->loc.col += str.len;
       }
       break;
+    case '\'':
+      token = (token_t){
+        T_CHAR,
+        {tokenizer->buffer, 3},
+        tokenizer->loc,
+      };
+      if (tokenizer->buffer[2] != '\'') {
+        eprintf(tokenizer->loc, "CHAR can have only one char");
+      }
+      tokenizer->buffer += 3;
+      break;
     case '0':
       if (*(tokenizer->buffer + 1) == 'x' || *(tokenizer->buffer + 1) == 'X') {
         char *image_start = tokenizer->buffer;
@@ -281,7 +303,7 @@ token_t token_next(tokenizer_t *tokenizer) {
           tokenizer->loc
         };
         if (token.image.len - 2 != 2 && token.image.len - 2 != 4) {
-          eprintf(token.loc, "HEX can be 1 or 2 bytes\n");
+          eprintf(token.loc, "HEX can be 1 or 2 bytes");
         }
         tokenizer->loc.col += token.image.len;
         break;
@@ -310,7 +332,8 @@ token_t token_next(tokenizer_t *tokenizer) {
                             : sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW
                             : sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW
                                                                     : T_SYM,
-                            image, tokenizer->loc};
+                            image,
+                            tokenizer->loc};
           if (!is_int && isdigit(image_start[0])) {
             eprintf(token.loc, "SYM cannot start with digit");
           }
@@ -364,12 +387,16 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_VOIDKW:    return "VOIDKW";
     case T_INTKW:     return "INTKW";
     case T_CHARKW:    return "CHARKW";
+    case T_CHAR:      return "CHAR";
   }
   assert(0);
 }
 
 void token_dump(token_t token) {
-  printf("%s '" SV_FMT "' @ %d:%d\n", token_kind_to_string(token.kind), SV_UNPACK(token.image), token.loc.row,
+  printf("%s '" SV_FMT "' @ %d:%d\n",
+         token_kind_to_string(token.kind),
+         SV_UNPACK(token.image),
+         token.loc.row,
          token.loc.col);
 }
 
@@ -531,8 +558,12 @@ char *type_dump_to_string(type_t *type) {
       }
       break;
     case TY_ALIAS:
-      snprintf(string, 128, "ALIAS {" SV_FMT " %s%s}", SV_UNPACK(type->as.alias.name.image),
-               type->as.alias.type ? "..." : "NULL", type->as.alias.is_struct ? " struct" : "");
+      snprintf(string,
+               128,
+               "ALIAS {" SV_FMT " %s%s}",
+               SV_UNPACK(type->as.alias.name.image),
+               type->as.alias.type ? "..." : "NULL",
+               type->as.alias.is_struct ? " struct" : "");
       break;
     case TY_FIELDLIST:
       {
@@ -1046,8 +1077,11 @@ void state_add_symbol(state_t *state, symbol_t symbol) {
   catch = true;
   if (setjmp(catch_buf) == 0) {
     symbol_t *s = state_find_symbol(state, symbol.name);
-    eprintf(symbol.name.loc, "redefinition of symbol '" SV_FMT "', defined at %d:%d", SV_UNPACK(symbol.name.image),
-            s->name.loc.row, s->name.loc.col);
+    eprintf(symbol.name.loc,
+            "redefinition of symbol '" SV_FMT "', defined at %d:%d",
+            SV_UNPACK(symbol.name.image),
+            s->name.loc.row,
+            s->name.loc.col);
     catch = false;
   }
 
@@ -1156,7 +1190,9 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
 
   if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct &&
       sv_eq(ftype.as.alias.name.image, name.image)) {
-    eprintf(fname.loc, "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'", SV_UNPACK(name.image),
+    eprintf(fname.loc,
+            "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'",
+            SV_UNPACK(name.image),
             SV_UNPACK(fname.image));
   }
 
@@ -1177,7 +1213,9 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
 
     if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct &&
         sv_eq(ftype.as.alias.name.image, name.image)) {
-      eprintf(fname.loc, "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'", SV_UNPACK(name.image),
+      eprintf(fname.loc,
+              "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'",
+              SV_UNPACK(name.image),
               SV_UNPACK(fname.image));
     }
   }
@@ -1310,7 +1348,8 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     *tokenizer = savetok;
   }
 
-  if (token.kind != T_INT && token.kind != T_SYM && token.kind != T_STRING && token.kind != T_HEX) {
+  if (token.kind != T_INT && token.kind != T_SYM && token.kind != T_STRING && token.kind != T_HEX &&
+      token.kind != T_CHAR) {
     eprintf(token.loc, "unvalid token for fac: '%s'", token_kind_to_string(token.kind));
   }
   token_next(tokenizer);
@@ -1771,21 +1810,24 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       break;
     case A_FAC:
-      if (ast->as.fac.kind == T_INT) {
-        ast->type.kind = TY_INT;
-      } else if (ast->as.fac.kind == T_SYM) {
-        symbol_t *s = state_find_symbol(state, ast->as.fac);
-        ast->type = *s->type;
-      } else if (ast->as.fac.kind == T_STRING) {
-        ast->type = (type_t){TY_PTR, {.ptr = type_malloc((type_t){TY_CHAR, {}})}};
-      } else if (ast->as.fac.kind == T_HEX) {
-        if (ast->as.fac.image.len - 2 == 2) {
-          ast->type.kind = TY_CHAR;
-        } else {
-          ast->type.kind = TY_INT;
-        }
-      } else {
-        assert(0);
+      switch (ast->as.fac.kind) {
+        case T_INT: ast->type = (type_t){TY_INT, {}}; break;
+        case T_SYM:
+          {
+            symbol_t *s = state_find_symbol(state, ast->as.fac);
+            ast->type = *s->type;
+          }
+          break;
+        case T_STRING: ast->type = (type_t){TY_PTR, {.ptr = type_malloc((type_t){TY_CHAR, {}})}}; break;
+        case T_HEX:
+          if (ast->as.fac.image.len - 2 == 2) {
+            ast->type = (type_t){TY_CHAR, {}};
+          } else {
+            ast->type = (type_t){TY_INT, {}};
+          }
+          break;
+        case T_CHAR: ast->type = (type_t){TY_CHAR, {}}; break;
+        default:     assert(0);
       }
       break;
     case A_GLOBDECL:
@@ -2361,6 +2403,12 @@ void compile(ast_t *ast, state_t *state) {
             code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
             state->sp += 2;
           }
+          break;
+        case T_CHAR:
+          code(compiled, (bytecode_t){B_INST, {.inst = RAM_AL}});
+          code(compiled, (bytecode_t){B_HEX, {.num = ast->as.fac.image.start[1]}});
+          code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+          state->sp += 2;
           break;
         default: assert(0);
       }
