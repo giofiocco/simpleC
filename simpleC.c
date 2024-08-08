@@ -751,9 +751,6 @@ typedef struct ast_t_ {
       struct ast_t_ *next;
     } paramdef;
     struct {
-      struct ast_t_ *expr;
-    } return_;
-    struct {
       token_kind_t op;
       struct ast_t_ *lhs;
       struct ast_t_ *rhs;
@@ -849,7 +846,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
       break;
     case A_RETURN:
       printf("RETURN(");
-      ast_dump(ast->as.return_.expr, dumptype);
+      ast_dump(ast->as.ast, dumptype);
       printf(")");
       break;
     case A_BINARYOP:
@@ -860,7 +857,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
       printf(")");
       break;
     case A_UNARYOP:
-      printf("UNARYOP(%s", token_kind_to_string(ast->as.unaryop.op));
+      printf("UNARYOP(%s ", token_kind_to_string(ast->as.unaryop.op));
       ast_dump(ast->as.unaryop.arg, dumptype);
       printf(")");
       break;
@@ -1155,7 +1152,7 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
 
   fields[field_num++] = fname.image;
 
-  catch = false;
+  catch = false;  // TODO: maybe remove
 
   if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct &&
       sv_eq(ftype.as.alias.name.image, name.image)) {
@@ -1282,12 +1279,22 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
 
   tokenizer_t savetok = *tokenizer;
 
-  if (token.kind == T_PARO) {
-    token_next(tokenizer);
-    ast_t *expr = parse_expr(tokenizer);
+  if (token_next_if_kind(tokenizer, T_PARO)) {
+    savetok = *tokenizer;
+    catch = true;
+    if (setjmp(catch_buf) == 0) {
+      ast_t *expr = parse_expr(tokenizer);
+      catch = false;
+      token_expect(tokenizer, T_PARC);
+      return expr;
+    }
+    *tokenizer = savetok;
+
+    type_t type = parse_type(tokenizer);
     token_expect(tokenizer, T_PARC);
-    return expr;
-  };
+    ast_t *fac = parse_fac(tokenizer);
+    return ast_malloc((ast_t){A_CAST, location_union(token.loc, fac->forerror), {0}, {.cast = {type, fac}}});
+  }
 
   if (token.kind == T_BRO) {
     return parse_array(tokenizer);
@@ -1389,7 +1396,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
 
 ast_t *parse_decl(tokenizer_t *tokenizer) {
   assert(tokenizer);
-  token_t start = token_peek(tokenizer);
+  location_t start = tokenizer->loc;
   type_t type = parse_type(tokenizer);
   token_t name = token_expect(tokenizer, T_SYM);
   ast_t *array_len_expr = NULL;
@@ -1419,7 +1426,7 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
     expr = ast_malloc((ast_t){A_CAST, expr->forerror, {0}, {.cast = {type, expr}}});
   }
   return ast_malloc((ast_t){A_DECL,
-                            location_union(start.loc, expr ? expr->forerror : name.loc),
+                            location_union(start, expr ? expr->forerror : name.loc),
                             {0},
                             {.decl = {type, name, expr, array_len_expr}}});
 }
@@ -1427,17 +1434,15 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
 ast_t *parse_statement(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  token_t token = token_peek(tokenizer);
+  location_t start = tokenizer->loc;
 
-  if (token.kind == T_RETURN) {
-    token_next(tokenizer);
+  if (token_next_if_kind(tokenizer, T_RETURN)) {
     ast_t *expr = NULL;
-    if (!token_next_if_kind(tokenizer, T_SEMICOLON)) {
+    if (token_peek(tokenizer).kind != T_SEMICOLON) {
       expr = parse_expr(tokenizer);
-      token_expect(tokenizer, T_SEMICOLON);
     }
-    // TODO: better forerror
-    return ast_malloc((ast_t){A_RETURN, token.loc, {0}, {.return_ = {expr}}});
+    token_expect(tokenizer, T_SEMICOLON);
+    return ast_malloc((ast_t){A_RETURN, location_union(start, expr ? expr->forerror : start), {0}, {.ast = expr}});
   }
 
   tokenizer_t savetok = *tokenizer;
@@ -1449,37 +1454,15 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
   }
   *tokenizer = savetok;
 
-  savetok = *tokenizer;
-  catch = true;
-  if (setjmp(catch_buf) == 0) {
-    token_t token = token_peek(tokenizer);
-    ast_t *dest = NULL;
-    if (token.kind == T_STAR) {
-      dest = parse_expr(tokenizer);
-    } else {
-      dest = parse_access(tokenizer);
-    }
-    assert(dest);
-    token_expect(tokenizer, T_EQUAL);
-    ast_t *expr = parse_expr(tokenizer);
-    token = token_expect(tokenizer, T_SEMICOLON);
-    ast_t *ast =
-      ast_malloc((ast_t){A_ASSIGN, location_union(dest->forerror, token.loc), {0}, {.assign = {dest, expr}}});
-    catch = false;
-    return ast;
-  }
-  *tokenizer = savetok;
-
-  catch = true;
-  if (setjmp(catch_buf) == 0) {
-    ast_t *ast = parse_expr(tokenizer);
+  ast_t *a = parse_expr(tokenizer);
+  if (token_next_if_kind(tokenizer, T_EQUAL)) {
+    ast_t *b = parse_expr(tokenizer);
     token_expect(tokenizer, T_SEMICOLON);
-    catch = false;
-    return ast_malloc((ast_t){A_STATEMENT, ast->forerror, {0}, {.ast = ast}});
+    return ast_malloc((ast_t){A_ASSIGN, location_union(a->forerror, b->forerror), {0}, {.assign = {a, b}}});
   }
+  token_expect(tokenizer, T_SEMICOLON);
 
-  eprintf(token.loc, "expected a statement");
-  assert(0);
+  return a;
 }
 
 ast_t *parse_code(tokenizer_t *tokenizer) {
@@ -1727,9 +1710,9 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       break;
     case A_RETURN:
-      typecheck(ast->as.return_.expr, state);
-      if (ast->as.return_.expr) {
-        ast->type = ast->as.return_.expr->type;
+      typecheck(ast->as.ast, state);
+      if (ast->as.ast) {
+        ast->type = ast->as.ast->type;
       } else {
         ast->type = (type_t){TY_VOID, {}};
       }
@@ -1911,13 +1894,27 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_CAST:
       state_solve_type_alias(state, &ast->as.cast.target);
 
+      /*
+       * CAST INT TO CHAR
+       *
+      if (type_is_kind(&ast->as.cast.target, TY_CHAR)) {
+        typecheck(ast->as.cast.ast, state);
+        if (!type_is_kind(&ast->as.cast.ast->type, TY_INT)) {
+          typecheck_expandable(ast->as.cast.ast, state, ast->as.cast.target);
+        }
+      } else*/
       if (type_is_kind(&ast->as.cast.target, TY_STRUCT) && ast->as.cast.ast->kind == A_ARRAY) {
         type_t *target = type_pass_alias(&ast->as.cast.target);
         type_t *f = target->as.struct_.fieldlist;
         ast_t *expr = ast->as.cast.ast;
 
         while (f && expr) {
-          typecheck_expect(expr->as.astlist.ast, state, *f->as.fieldlist.type);
+          if (type_is_kind(f->as.fieldlist.type, TY_PTR) && expr->as.astlist.ast->kind == A_FAC &&
+              expr->as.astlist.ast->as.fac.kind == T_INT && atoi(expr->as.astlist.ast->as.fac.image.start) == 0) {
+            expr->as.astlist.ast->type = *f->as.fieldlist.type;
+          } else {
+            typecheck_expect(expr->as.astlist.ast, state, *f->as.fieldlist.type);
+          }
           expr->type = *target;
           expr->type.as.struct_.fieldlist = f;
 
@@ -2101,32 +2098,47 @@ void get_addr_ast(state_t *state, ast_t *ast) {
 
   switch (ast->kind) {
     case A_FAC: get_addr(state, ast->as.fac); break;
+    case A_UNARYOP:
+      assert(ast->as.unaryop.op == T_STAR);
+      get_addr_ast(state, ast->as.unaryop.arg);
+      code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
+      code(compiled, (bytecode_t){B_INST, {.inst = rB_A}});
+      break;
     case A_BINARYOP:
-      {
-        assert(ast->as.binaryop.op == T_DOT);
-        get_addr_ast(state, ast->as.binaryop.lhs);
-        unsigned int offset = 0;
-        type_t *f = ast->as.binaryop.lhs->type.as.alias.type->as.struct_.fieldlist;
-        while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
-          if (type_is_kind(f->as.fieldlist.type, TY_CHAR) && f->as.fieldlist.next &&
-              type_is_kind(f->as.fieldlist.next->as.fieldlist.type, TY_CHAR)) {
-            offset += 2;
-          } else {
-            offset += type_size(f->as.fieldlist.type);
+      switch (ast->as.binaryop.op) {
+        case T_DOT:
+          {
+            get_addr_ast(state, ast->as.binaryop.lhs);
+            unsigned int offset = 0;
+            type_t *f = ast->as.binaryop.lhs->type.as.alias.type->as.struct_.fieldlist;
+            while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
+              if (type_is_kind(f->as.fieldlist.type, TY_CHAR) && f->as.fieldlist.next &&
+                  type_is_kind(f->as.fieldlist.next->as.fieldlist.type, TY_CHAR)) {
+                offset += 2;
+              } else {
+                offset += type_size(f->as.fieldlist.type);
+              }
+              f = f->as.fieldlist.next;
+            };
+            assert(f);
+
+            assert(offset < 256);
+
+            if (offset == 1) {
+              code(compiled, (bytecode_t){B_INST, {.inst = INCA}});
+            } else if (offset > 1) {
+              code(compiled, (bytecode_t){B_INST, {.inst = RAM_BL}});
+              code(compiled, (bytecode_t){B_HEX, {.num = offset}});
+              code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
+            }
           }
-          f = f->as.fieldlist.next;
-        };
-        assert(f);
-
-        assert(offset < 256);
-
-        if (offset == 1) {
-          code(compiled, (bytecode_t){B_INST, {.inst = INCA}});
-        } else if (offset > 1) {
-          code(compiled, (bytecode_t){B_INST, {.inst = RAM_BL}});
-          code(compiled, (bytecode_t){B_HEX, {.num = offset}});
-          code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
-        }
+          break;
+        case T_PLUS:
+        case T_MINUS:
+          // TODO: check
+          compile(ast, state);
+          break;
+        default: assert(0); break;
       }
       break;
     case A_INDEX:
@@ -2155,7 +2167,11 @@ void get_addr_ast(state_t *state, ast_t *ast) {
       code(compiled, (bytecode_t){B_HEX, {.num = 2}});
       code(compiled, (bytecode_t){B_INST, {.inst = SUM}});
       break;
-    default: assert(0);
+    default:
+      printf("TODO: %s at %d of ", __FUNCTION__, __LINE__);
+      ast_dump(ast, false);
+      printf("\n");
+      exit(1);
   }
 }
 
@@ -2222,9 +2238,9 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_RETURN:
-      if (ast->as.return_.expr) {
-        compile(ast->as.return_.expr, state);
-        int size = type_size_aligned(&ast->as.return_.expr->type);
+      if (ast->as.ast) {
+        compile(ast->as.ast, state);
+        int size = type_size_aligned(&ast->as.ast->type);
         int offset = state->sp + 2 + size;
         state_change_sp(state, -offset);
 
