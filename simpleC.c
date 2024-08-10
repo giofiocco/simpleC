@@ -93,12 +93,13 @@ typedef enum {
   T_SLASH,
   T_EQUAL,
   T_AND,
-  T_COLON,
+  T_COMMA,
   T_DOT,
   T_VOIDKW,
   T_INTKW,
   T_CHARKW,
   T_CHAR,
+  T_ENUM,
 } token_kind_t;
 
 typedef struct {
@@ -205,7 +206,7 @@ token_t token_next(tokenizer_t *tokenizer) {
   table['/'] = T_SLASH;
   table['='] = T_EQUAL;
   table['&'] = T_AND;
-  table[','] = T_COLON;
+  table[','] = T_COMMA;
   table['.'] = T_DOT;
 
   token_t token = {0};
@@ -328,6 +329,7 @@ token_t token_next(tokenizer_t *tokenizer) {
                             : sv_eq(image, sv_from_cstr("return"))  ? T_RETURN
                             : sv_eq(image, sv_from_cstr("typedef")) ? T_TYPEDEF
                             : sv_eq(image, sv_from_cstr("struct"))  ? T_STRUCT
+                            : sv_eq(image, sv_from_cstr("enum"))    ? T_ENUM
                             : sv_eq(image, sv_from_cstr("int"))     ? T_INTKW
                             : sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW
                             : sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW
@@ -382,12 +384,13 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_SLASH:     return "SLASH";
     case T_EQUAL:     return "EQUAL";
     case T_AND:       return "AND";
-    case T_COLON:     return "COLON";
+    case T_COMMA:     return "COLON";
     case T_DOT:       return "DOT";
     case T_VOIDKW:    return "VOIDKW";
     case T_INTKW:     return "INTKW";
     case T_CHARKW:    return "CHARKW";
     case T_CHAR:      return "CHAR";
+    case T_ENUM:      return "ENUM";
   }
   assert(0);
 }
@@ -441,6 +444,7 @@ typedef enum {
   TY_ALIAS,
   TY_FIELDLIST,
   TY_STRUCT,
+  TY_ENUM,
 } type_kind_t;
 
 typedef struct type_t_ {
@@ -472,6 +476,10 @@ typedef struct type_t_ {
       token_t name;
       struct type_t_ *next;
     } fieldlist;
+    struct {
+      token_t name;
+      struct type_t_ *next;
+    } enum_;
     struct type_t_ *ptr;
   } as;
 } type_t;
@@ -596,6 +604,15 @@ char *type_dump_to_string(type_t *type) {
         }
       }
       break;
+    case TY_ENUM:
+      if (type->as.enum_.next) {
+        char *str = type_dump_to_string(type->as.enum_.next);
+        snprintf(string, 128, "ENUM {" SV_FMT " %s}", SV_UNPACK(type->as.enum_.name.image), str);
+        free_ptr(str);
+      } else {
+        snprintf(string, 128, "ENUM {" SV_FMT "}", SV_UNPACK(type->as.enum_.name.image));
+      }
+      break;
   }
 
   return string;
@@ -652,6 +669,8 @@ bool type_cmp(type_t *a, type_t *b) {
         return type_cmp(a->as.fieldlist.type, b->as.fieldlist.type) &&
                sv_eq(a->as.fieldlist.name.image, b->as.fieldlist.name.image) &&
                type_cmp(a->as.fieldlist.next, b->as.fieldlist.next);
+      case TY_ENUM:
+        return sv_eq(a->as.enum_.name.image, b->as.enum_.name.image) && type_cmp(a->as.enum_.next, b->as.enum_.next);
     }
   }
   return false;
@@ -660,6 +679,14 @@ bool type_cmp(type_t *a, type_t *b) {
 bool type_greaterthan(type_t *a, type_t *b) {  // a >= b
   assert(a);
   assert(b);
+
+  if (a->kind == TY_ALIAS) {
+    assert(a->as.alias.type);
+    return type_cmp(a->as.alias.type, b);
+  } else if (b->kind == TY_ALIAS) {
+    assert(b->as.alias.type);
+    return type_cmp(a, b->as.alias.type);
+  }
 
   if (a->kind == TY_INT && b->kind == TY_CHAR) {
     return true;
@@ -672,6 +699,8 @@ bool type_greaterthan(type_t *a, type_t *b) {  // a >= b
     }
   } else if (a->kind == TY_PTR && b->kind == TY_ARRAY) {
     return type_cmp(a->as.ptr, b->as.array.type);
+  } else if (a->kind == TY_INT && b->kind == TY_ENUM) {
+    return true;
   }
   return type_cmp(a, b);
 }
@@ -700,6 +729,7 @@ int type_size(type_t *type) {
       } else {
         return type_size(type->as.fieldlist.type) + (type->as.fieldlist.next ? type_size(type->as.fieldlist.next) : 0);
       }
+    case TY_ENUM: return 2;
   }
   assert(0);
 }
@@ -1007,10 +1037,12 @@ typedef struct {
     INFO_GLOBAL,
     INFO_TYPE,
     INFO_TYPEINCOMPLETE,
+    INFO_CONSTANT,
   } kind;
   union {
     int local;
     int global;
+    int num;
   } info;
 } symbol_t;
 
@@ -1140,6 +1172,7 @@ void state_solve_type_alias(state_t *state, type_t *type) {
         state_solve_type_alias(state, type->as.fieldlist.next);
       }
       break;
+    case TY_ENUM: break;
   }
 }
 
@@ -1161,7 +1194,36 @@ void code_dump(compiled_t *compiled, FILE *stream) {
   fprintf(stream, "\n");
 }
 
-type_t parse_type(tokenizer_t *tokenizer);
+type_t parse_type(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  bool is_struct = token_next_if_kind(tokenizer, T_STRUCT);
+
+  type_t type = {0};
+
+  token_t token = token_peek(tokenizer);
+  if (token_next_if_kind(tokenizer, T_VOIDKW)) {
+    type = (type_t){TY_VOID, {}};
+  } else if (token_next_if_kind(tokenizer, T_INTKW)) {
+    type = (type_t){TY_INT, {}};
+  } else if (token_next_if_kind(tokenizer, T_CHARKW)) {
+    type = (type_t){TY_CHAR, {}};
+  } else {
+    token = token_expect(tokenizer, T_SYM);
+    type = (type_t){TY_ALIAS, {.alias = {token, NULL, is_struct}}};
+  }
+
+  if (is_struct && type.kind != TY_ALIAS) {
+    eprintf(token.loc, "invalid struct type");  // TODO better error
+  }
+
+  if (token_next_if_kind(tokenizer, T_STAR)) {
+    type = (type_t){TY_PTR, {.ptr = type_malloc(type)}};
+  }
+
+  return type;
+}
+
 type_t parse_structdef(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
@@ -1223,31 +1285,35 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
   return (type_t){TY_STRUCT, {.struct_ = {name, type_malloc(type)}}};
 }
 
-type_t parse_type(tokenizer_t *tokenizer) {
+type_t parse_enumdef(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  bool is_struct = token_next_if_kind(tokenizer, T_STRUCT);
+  token_expect(tokenizer, T_ENUM);
+  token_expect(tokenizer, T_BRO);
 
-  type_t type = {0};
+  token_t name = token_expect(tokenizer, T_SYM);
+  token_expect(tokenizer, T_COMMA);
 
-  token_t token = token_peek(tokenizer);
-  if (token_next_if_kind(tokenizer, T_VOIDKW)) {
-    type = (type_t){TY_VOID, {}};
-  } else if (token_next_if_kind(tokenizer, T_INTKW)) {
-    type = (type_t){TY_INT, {}};
-  } else if (token_next_if_kind(tokenizer, T_CHARKW)) {
-    type = (type_t){TY_CHAR, {}};
-  } else {
-    token = token_expect(tokenizer, T_SYM);
-    type = (type_t){TY_ALIAS, {.alias = {token, NULL, is_struct}}};
-  }
+  type_t type = {TY_ENUM, {.enum_ = {name, NULL}}};
+  type_t *typei = &type;
 
-  if (is_struct && type.kind != TY_ALIAS) {
-    eprintf(token.loc, "invalid struct type");  // TODO better error
-  }
+  token_t names[128] = {name};
+  int i = 1;
 
-  if (token_next_if_kind(tokenizer, T_STAR)) {
-    type = (type_t){TY_PTR, {.ptr = type_malloc(type)}};
+  while (!token_next_if_kind(tokenizer, T_BRC)) {
+    token_t name = token_expect(tokenizer, T_SYM);
+    token_expect(tokenizer, T_COMMA);
+
+    for (int j = 0; j < i; ++j) {
+      if (sv_eq(name.image, names[j].image)) {
+        eprintf(name.loc, "redefinition of enumerator");
+      }
+    }
+
+    names[i++] = name;
+
+    typei->as.enum_.next = type_malloc((type_t){TY_ENUM, {.enum_ = {name, NULL}}});
+    typei = typei->as.enum_.next;
   }
 
   return type;
@@ -1266,7 +1332,7 @@ ast_t *parse_param(tokenizer_t *tokenizer) {
   ast_t *ast = ast_malloc((ast_t){A_PARAM, expr->forerror, {0}, {.astlist = {expr, NULL}}});
   ast_t *asti = ast;
 
-  while (token_next_if_kind(tokenizer, T_COLON)) {
+  while (token_next_if_kind(tokenizer, T_COMMA)) {
     expr = parse_expr(tokenizer);
     asti->as.astlist.next = ast_malloc((ast_t){A_PARAM, expr->forerror, {0}, {.astlist = {expr, NULL}}});
     asti = asti->as.astlist.next;
@@ -1300,7 +1366,7 @@ ast_t *parse_array(tokenizer_t *tokenizer) {
   ast_t *expr = parse_expr(tokenizer);
   ast_t *ast = ast_malloc((ast_t){A_ARRAY, expr->forerror, {0}, {.astlist = {expr, NULL}}});
   ast_t *asti = ast;
-  while (token_next_if_kind(tokenizer, T_COLON)) {
+  while (token_next_if_kind(tokenizer, T_COMMA)) {
     expr = parse_expr(tokenizer);
     asti->as.astlist.next = ast_malloc((ast_t){A_ARRAY, expr->forerror, {0}, {.astlist = {expr, NULL}}});
     asti = asti->as.astlist.next;
@@ -1551,7 +1617,7 @@ ast_t *parse_paramdef(tokenizer_t *tokenizer) {
     ast_malloc((ast_t){A_PARAMDEF, location_union(par.loc, name.loc), {0}, {.paramdef = {type, name, NULL}}});
   ast_t *asti = ast;
 
-  while (token_next_if_kind(tokenizer, T_COLON)) {
+  while (token_next_if_kind(tokenizer, T_COMMA)) {
     type = parse_type(tokenizer);
     name = token_expect(tokenizer, T_SYM);
     asti->as.paramdef.next =
@@ -1593,7 +1659,18 @@ ast_t *parse_typedef(tokenizer_t *tokenizer) {
   if (setjmp(catch_buf) == 0) {
     type = parse_structdef(tokenizer);
     catch = false;
-  } else {
+  }
+
+  if (type.kind == TY_NONE) {
+    *tokenizer = savetok;
+    catch = true;
+    if (setjmp(catch_buf) == 0) {
+      type = parse_enumdef(tokenizer);
+      catch = false;
+    }
+  }
+
+  if (type.kind == TY_NONE) {
     *tokenizer = savetok;
     type = parse_type(tokenizer);
   }
@@ -1862,6 +1939,9 @@ void typecheck(ast_t *ast, state_t *state) {
       if (type_is_kind(&ast->as.assign.dest->type, TY_ARRAY)) {
         eprintf(ast->forerror, "assign to array");
       }
+      if (type_is_kind(&ast->as.assign.dest->type, TY_ENUM)) {
+        eprintf(ast->forerror, "assign to enumerator");
+      }
       typecheck_expect(ast->as.assign.expr, state, ast->as.assign.dest->type);
       ast->type = ast->as.assign.dest->type;
       break;
@@ -1896,8 +1976,11 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_ARRAY:
       assert(ast->as.astlist.ast);
       if (ast->as.astlist.next) {
+        typecheck(ast->as.astlist.ast, state);
         typecheck(ast->as.astlist.next, state);
-        typecheck_expandable(ast->as.astlist.ast, state, *ast->as.astlist.next->type.as.array.type);
+        assert(type_is_kind(&ast->as.astlist.next->type, TY_ARRAY));
+        type_cmp(&ast->as.astlist.ast->type, ast->as.astlist.next->type.as.array.type);
+
         type_t type = ast->as.astlist.next->type;
         type.as.array.len.num += 1;
         ast->type = type;
@@ -1927,6 +2010,11 @@ void typecheck(ast_t *ast, state_t *state) {
         type_t *type = &ast->as.typedef_.type;
         if (type->kind == TY_STRUCT && type->as.struct_.name.kind != T_NONE) {
           state_add_symbol(state, (symbol_t){type->as.struct_.name, type, INFO_TYPEINCOMPLETE, {}});
+        }
+        if (type->kind == TY_ENUM) {
+          for (type_t *typei = type; typei; typei = typei->as.enum_.next) {
+            state_add_symbol(state, (symbol_t){typei->as.enum_.name, type, 0, {}});
+          }
         }
         state_solve_type_alias(state, type);
         state_add_symbol(state, (symbol_t){ast->as.typedef_.name, &ast->as.typedef_.type, INFO_TYPE, {}});
@@ -2125,8 +2213,7 @@ void get_addr(state_t *state, token_t token) {
         code(compiled, b);
       }
       break;
-    case INFO_TYPE:           assert(0);
-    case INFO_TYPEINCOMPLETE: assert(0);
+    default: assert(0);
   }
 }
 
@@ -2361,12 +2448,19 @@ void compile(ast_t *ast, state_t *state) {
           {
             symbol_t *s = state_find_symbol(state, ast->as.fac);
             assert(s->type);
-            if (type_is_kind(s->type, TY_ARRAY)) {
+            if (s->kind == INFO_CONSTANT) {
+              code(compiled, (bytecode_t){B_INST, {.inst = RAM_A}});
+              code(compiled, (bytecode_t){B_HEX2, {.num = s->info.num}});
+              code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+              state->sp += 2;
+            } else if (type_is_kind(s->type, TY_ARRAY)) {
               assert(0);  // TODO error
             } else if (type_size(s->type) <= 2 && s->kind == INFO_LOCAL && s->info.local < state->sp &&
                        state->sp - s->info.local < 256) {
               code(compiled, (bytecode_t){B_INST, {.inst = PEEKAR}});
               code(compiled, (bytecode_t){B_HEX, {.num = state->sp - s->info.local}});
+              code(compiled, (bytecode_t){B_INST, {.inst = PUSHA}});
+              state->sp += 2;
             } else {
               get_addr(state, ast->as.fac);
               code(compiled, (bytecode_t){B_INST, {.inst = A_B}});
@@ -2500,7 +2594,17 @@ void compile(ast_t *ast, state_t *state) {
         coderead(state, &ast->type);
       }
       break;
-    case A_TYPEDEF: break;
+    case A_TYPEDEF:
+      if (ast->as.typedef_.type.kind == TY_ENUM) {
+        int i = 0;
+        for (type_t *typei = &ast->as.typedef_.type; typei; typei = typei->as.enum_.next) {
+          state_add_symbol(
+            state,
+            (symbol_t){typei->as.enum_.name, type_malloc((type_t){TY_INT, {}}), INFO_CONSTANT, {.num = i}});
+          i++;
+        }
+      }
+      break;
     case A_CAST:
       if (type_is_kind(&ast->as.cast.target, TY_PTR) && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
         get_addr_ast(state, ast->as.cast.ast);

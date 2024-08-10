@@ -11,7 +11,6 @@ parse with location_t start = tokenizer->loc;
 
 # Tokenizer
 - [ ] binary litterals
-- [x] chars
 - [ ] escape char in string
 - [ ] maybe find the row end when changing the row instead of finding it when printing error
 
@@ -23,10 +22,16 @@ parse with location_t start = tokenizer->loc;
 # Typechecker
 - [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it
 - [ ] warn if no return in some function
-- [ ] use 0 as NULL
 
 # Compiler
 - [ ] array with expression as length in the stack
 
 # PostOpt
 - [ ] remove dead code
+
+# Roadmap
+- [x] enum
+- [ ] inline asm
+- [ ] macros
+- [ ] include  
+- [ ] union
