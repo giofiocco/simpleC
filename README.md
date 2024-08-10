@@ -19,7 +19,7 @@ Multi-line comments: `/* ... */`
 - `<paramdef>` &rarr; `(\(<type> <sym> \(, <type> <type>\)\*\)\?)`
 - `<block>` &rarr; `{ <code>* }`
 - `<code>` &rarr; `<statement>`
-- `<statement>` &rarr; `return <expr>\?; | <decl>; | <expr> \(= <expr>\)?;`
+- `<statement>` &rarr; `return <expr>\?; | <decl>; | <expr> \(= <expr>\)?; | <asm>`
 - `<decl>` &rarr; `<type> <sym>\([<expr>?]\)\? \(= <expr>\)\?`
 - `<expr>` &rarr; `<term> \(+ <term> | - <term>\)\*`
 - `<term>` &rarr; `<unary> \(* <unary> | / <unary>\)\*`
@@ -31,3 +31,4 @@ Multi-line comments: `/* ... */`
 - `<typedef>` &rarr; `typedef \(<type> | <structdef> | <enumdef>\) <sym>;`
 - `<structdef>` &rarr; `struct <sym>\? { \(<type> <sym>;\)* }`
 - `<enumdef>` &rarr; `enum { \(<sym>,\)* }`
+- `<asm>` &rarr; `__asm__ ( <string> )`

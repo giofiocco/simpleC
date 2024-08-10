@@ -30,8 +30,7 @@ parse with location_t start = tokenizer->loc;
 - [ ] remove dead code
 
 # Roadmap
-- [x] enum
-- [ ] inline asm
+- [x] inline asm
 - [ ] macros
 - [ ] include  
 - [ ] union
