@@ -1,8 +1,10 @@
+all: simpleC
+
 CFLAGS=-Wall -Wextra -Werror -std=c99
 
 .PHONY: test test-record
 
-simpleC: simpleC.c ../defs.h ../defs.c
+simpleC: simpleC.c 
 	cc $(CFLAGS) -o $@ $(filter %.c,$^)
 
 test: simpleC
@@ -10,4 +12,3 @@ test: simpleC
 
 test-record: simpleC
 	./rere.py record test.list
-

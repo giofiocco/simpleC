@@ -1,0 +1,9 @@
+[submodule "jaris"]
+	path = jaris
+	url = https://github.com/giofiocco/jaris.git
+[submodule "mystb"]
+	path = mystb
+	url = https://github.com/giofiocco/mystb.git
+[submodule "argparse"]
+	path = argparse
+	url = https://github.com/cofyc/argparse.git
