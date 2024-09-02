@@ -1516,7 +1516,7 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
   type_t type = parse_type(tokenizer);
   token_t name = token_expect(tokenizer, T_SYM);
   ast_t *array_len_expr = NULL;
-  array_len_t array_len = {ARRAY_LEN_NOTARRAY};
+  array_len_t array_len = {ARRAY_LEN_NOTARRAY, 0};
   if (token_next_if_kind(tokenizer, T_SQO)) {
     if (token_next_if_kind(tokenizer, T_SQC)) {
       array_len = (array_len_t){ARRAY_LEN_UNSET, 0};
@@ -2848,11 +2848,12 @@ bool compiled_is_inst(compiled_t *compiled, int i, instruction_t inst) {
   if (i >= compiled->code_num) {
     return false;
   }
-  if (compiled->code[i].kind != BINST || compiled->code[i].kind != BINSTHEX || compiled->code[i].kind != BINSTHEX2 ||
-      compiled->code[i].kind != BINSTLABEL || compiled->code[i].kind != BINSTRELLABEL) {
-    return false;
+  if ((compiled->code[i].kind == BINST || compiled->code[i].kind == BINSTHEX || compiled->code[i].kind == BINSTHEX2 ||
+       compiled->code[i].kind == BINSTLABEL || compiled->code[i].kind == BINSTRELLABEL) &&
+      compiled->code[i].inst == inst) {
+    return true;
   }
-  return true;
+  return false;
 }
 
 void compiled_copy(compiled_t *compiled, int i, int a, int n) {
