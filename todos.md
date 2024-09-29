@@ -1,4 +1,4 @@
-add errors.h
+compile asm
 
 postopt both init and code
 do better pointer math

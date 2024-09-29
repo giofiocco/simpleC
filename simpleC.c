@@ -9,6 +9,7 @@
 #include <string.h>
 
 #define SV_IMPLEMENTATION
+#include "jaris/files.h"
 #include "jaris/instructions.h"
 
 #define TODO assert(0 && "TODO")
@@ -1077,13 +1078,29 @@ typedef struct {
   int sp;
   int param;
   int uli;  // unique label id
-  compiled_t *compiled;
+  compiled_t compiled;
 } state_t;
 
 void state_init(state_t *state) {
   assert(state);
   *state = (state_t){0};
   ++state->scope_num;
+}
+
+void data(compiled_t *, bytecode_t);
+void code(compiled_t *, bytecode_t);
+void state_init_with_compiled(state_t *state) {
+  state_init(state);
+  compiled_t *compiled = &state->compiled;
+  data(compiled, bytecode_with_string(BEXTERN, 0, "exit"));
+  data(compiled, bytecode_with_string(BGLOBAL, 0, "_start"));
+  compiled->is_init = true;
+  code(compiled, bytecode_with_string(BSETLABEL, 0, "_start"));
+  code(compiled, (bytecode_t){BINST, DECSP, {}});
+  code(compiled, bytecode_with_string(BINSTRELLABEL, CALLR, "main"));
+  code(compiled, (bytecode_t){BINST, POPA, {}});
+  code(compiled, bytecode_with_string(BINSTLABEL, CALL, "exit"));
+  compiled->is_init = false;
 }
 
 void state_push_scope(state_t *state) {
@@ -2137,7 +2154,7 @@ void coderead(state_t *state, type_t *type) {
     return;
   }
 
-  compiled_t *compiled = state->compiled;
+  compiled_t *compiled = &state->compiled;
 
   int size = type_size(type);
   switch (size) {
@@ -2217,6 +2234,7 @@ bytecode_t datauli(compiled_t *compiled, state_t *state) {
 void state_change_sp(state_t *state, int delta) {
   assert(state);
   assert(delta % 2 == 0);
+  compiled_t *compiled = &state->compiled;
   state->sp += delta;
   if (delta == 0) {
     return;
@@ -2224,17 +2242,17 @@ void state_change_sp(state_t *state, int delta) {
   if (abs(delta) <= 6) {
     for (int i = 0; i < abs(delta) / 2; ++i) {
       if (delta < 0) {
-        code(state->compiled, (bytecode_t){BINST, INCSP, {}});
+        code(compiled, (bytecode_t){BINST, INCSP, {}});
       } else {
-        code(state->compiled, (bytecode_t){BINST, DECSP, {}});
+        code(compiled, (bytecode_t){BINST, DECSP, {}});
       }
     }
   } else {
-    code(state->compiled, (bytecode_t){BINST, SP_A, {}});
-    code(state->compiled, (bytecode_t){BINST, A_B, {}});
-    code(state->compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = abs(delta)}});
-    code(state->compiled, (bytecode_t){BINST, delta > 0 ? SUB : SUM, {}});
-    code(state->compiled, (bytecode_t){BINST, A_SP, {}});
+    code(compiled, (bytecode_t){BINST, SP_A, {}});
+    code(compiled, (bytecode_t){BINST, A_B, {}});
+    code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = abs(delta)}});
+    code(compiled, (bytecode_t){BINST, delta > 0 ? SUB : SUM, {}});
+    code(compiled, (bytecode_t){BINST, A_SP, {}});
   }
 }
 
@@ -2243,7 +2261,7 @@ void get_addr(state_t *state, token_t token) {
   assert(state);
   assert(token.kind == T_SYM);
 
-  compiled_t *compiled = state->compiled;
+  compiled_t *compiled = &state->compiled;
   symbol_t *s = state_find_symbol(state, token);
   switch (s->kind) {
     case INFO_NONE:
@@ -2275,7 +2293,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
   assert(state);
   assert(ast);
 
-  compiled_t *compiled = state->compiled;
+  compiled_t *compiled = &state->compiled;
 
   switch (ast->kind) {
     case A_FAC:
@@ -2368,7 +2386,7 @@ void compile(ast_t *ast, state_t *state) {
   assert(state);
   assert(ast);
 
-  compiled_t *compiled = state->compiled;
+  compiled_t *compiled = &state->compiled;
 
   switch (ast->kind) {
     case A_NONE:
@@ -3057,7 +3075,6 @@ int main(int argc, char **argv) {
   }
 
   tokenizer_t tokenizer = {0};
-  compiled_t compiled = {0};
   state_t state;
   state_init(&state);
   ast_t *ast;
@@ -3144,17 +3161,16 @@ int main(int argc, char **argv) {
       TODO;
     }
 
-    state_init(&state);
-    state.compiled = &compiled;
+    state_init_with_compiled(&state);
     compile(ast, &state);
 
     if ((opt >> OL_POST) & 1) {
-      optimize_compiled(state.compiled);
+      optimize_compiled(&state.compiled);
     }
 
     if ((debug >> M_COM) & 1) {
       printf("ASSEMBLY:\n");
-      code_dump(state.compiled);
+      code_dump(&state.compiled);
     }
     if ((exitat >> M_COM) & 1) {
       exit(0);
@@ -3166,16 +3182,22 @@ int main(int argc, char **argv) {
   }
 
   if (!output) {
-    output = "out.asm";
+    output = "out.o";
   }
 
-  TODO;
-
-  FILE *file = fopen(output, "w");
-  if (!file) {
-    fprintf(stderr, "ERROR: cannot open file '%s': %s", output, strerror(errno));
-    exit(1);
+  obj_state_t objs = {0};
+  for (int i = 0; i < state.compiled.data_num; ++i) {
+    obj_compile_bytecode(&objs, state.compiled.data[i]);
   }
+  for (int i = 0; i < state.compiled.init_num; ++i) {
+    obj_compile_bytecode(&objs, state.compiled.init[i]);
+  }
+  for (int i = 0; i < state.compiled.code_num; ++i) {
+    obj_compile_bytecode(&objs, state.compiled.code[i]);
+  }
+  obj_state_check_obj(&objs);
+
+  obj_encode_file(&objs.obj, output);
 
   return 0;
 }
