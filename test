@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+
+# expects to be run after setting
+# prog: the program of simpleC
+# stdout: the expected stdout
+# params: params to pass to simpleC call 
+# exitcode: the expected exit code 
+
+set -e
+
+stdoutfile=$(mktemp)
+expectedstdoutfile=$(mktemp)
+echo "$stdout" > $expectedstdoutfile
+
+echo TEST $1 running...
+./simpleC $params -e "$prog" > $stdoutfile
+if [ "$(cat $stdoutfile)" != "$stdout" ]; then
+  echo ERROR: expected stdout
+  git diff $stdoutfile $expectedstdoutfile 
+  exit 1
+fi
+if [ $? != $exitcode ]; then
+  echo ERROR: expected exitcode $exitcode, found: $?
+  exit 1
+fi
+echo OK

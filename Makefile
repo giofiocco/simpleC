@@ -1,17 +1,17 @@
-all: simpleC
+all: simpleC test-file
 
 CFLAGS=-Wall -Wextra -Werror -std=c99
 
-.PHONY: test test-record clean
+.PHONY: test clean
 
 simpleC: simpleC.c 
 	cc $(CFLAGS) -o $@ $(filter %.c,$^) jaris/instructions.c jaris/files.c
 
-test: simpleC
-	./rere.py replay test.list
+test-file: test-file.c
+	cc $(CFLAGS) -o $@ $<
 
-test-record: simpleC
-	./rere.py record test.list
+test:
+	find tests -type f | while read f; do sh $$f; done
 
 clean:
-	rm simpleC 
+	rm simpleC test-file
