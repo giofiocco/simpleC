@@ -56,7 +56,7 @@ EOF
 export params="-D com"
 export exitcode=0
 
-./simpleC $params -e "$prog"
+#./simpleC $params -e "$prog"
 
-#./test $0
+./test $0
 

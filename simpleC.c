@@ -1241,7 +1241,7 @@ type_t parse_type(tokenizer_t *tokenizer) {
   }
 
   if (is_struct && type.kind != TY_ALIAS) {
-    eprintf(token.loc, "invalid struct type");  // TODO better error
+    eprintf(token.loc, "invalid struct type");  // TODO: better error
   }
 
   if (token_next_if_kind(tokenizer, T_STAR)) {
@@ -2521,12 +2521,14 @@ void compile(ast_t *ast, state_t *state) {
               code(compiled, (bytecode_t){BINST, PUSHA, {}});
               state->sp += 2;
             } else if (type_is_kind(s->type, TY_ARRAY)) {
-              assert(0);  // TODO error
-            } else if (type_size(s->type) <= 2 && s->kind == INFO_LOCAL && s->info.local < state->sp &&
-                       state->sp - s->info.local < 256) {
-              code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = state->sp - s->info.local}});
-              code(compiled, (bytecode_t){BINST, PUSHA, {}});
-              state->sp += 2;
+              assert(0);  // TODO: error
+            } else if (s->kind == INFO_LOCAL && s->info.local < state->sp &&
+                       state->sp - s->info.local - type_size(s->type) < 256) {
+              for (int i = 0; i < type_size_aligned(s->type); i += 2) {
+                code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = state->sp - s->info.local + i}});
+                code(compiled, (bytecode_t){BINST, PUSHA, {}});
+                state->sp += 2;
+              }
             } else {
               get_addr(state, ast->as.fac);
               code(compiled, (bytecode_t){BINST, A_B, {}});

@@ -15,6 +15,7 @@ parse with location_t start = tokenizer->loc;
 
 # Tokenizer
 
+- [ ] as int in the token
 - [ ] binary litterals
 - [ ] escape char in string
 - [ ] maybe find the row end when changing the row instead of finding it when printing error

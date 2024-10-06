@@ -1,12 +1,15 @@
 #!/bin/env sh
 
 export prog=$(cat << EOF
-int add(int a) {
-  return a;
-}
+typedef struct {
+  int x;
+  int y;
+} point;
 
 int main() {
-  add(4);
+  point a;
+  point b;
+  a;
 }
 EOF
 )
@@ -19,19 +22,19 @@ INST         DECSP
 INSTRELLABEL CALLR main
 INST         POPA
 INSTLABEL    CALL exit
-SETLABEL     add
+SETLABEL     main
+INST         DECSP
+INST         DECSP
+INST         DECSP
+INST         DECSP
 INSTHEX      PEEKAR 0x06
 INST         PUSHA
-INST         POPA
-INSTHEX      PUSHAR 0x04
-INST         RET
-SETLABEL     main
-INSTHEX      RAM_AL 0x04
+INSTHEX      PEEKAR 0x0A
 INST         PUSHA
-INST         DECSP
-INSTRELLABEL CALLR add
-INST         INCSP
-INST         INCSP
+INST         SP_A
+INSTHEX2     RAM_B 0x000C
+INST         SUM
+INST         A_SP
 INST         RET
 EOF
 )
@@ -41,4 +44,3 @@ export exitcode=0
 #./simpleC $params -e "$prog"
 
 ./test $0
-
