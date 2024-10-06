@@ -94,6 +94,7 @@ typedef struct {
   token_kind_t kind;
   sv_t image;
   location_t loc;
+  int asint;
 } token_t;
 
 typedef struct {
@@ -236,7 +237,8 @@ token_t token_next(tokenizer_t *tokenizer) {
       token = (token_t){
         table[(int)*tokenizer->buffer],
         {tokenizer->buffer, 1},
-        tokenizer->loc
+        tokenizer->loc,
+        0
       };
       ++tokenizer->buffer;
       ++tokenizer->loc.col;
@@ -250,7 +252,7 @@ token_t token_next(tokenizer_t *tokenizer) {
         ++tokenizer->buffer;
         sv_t str = {start, tokenizer->buffer - start};
         tokenizer->loc.len = str.len;
-        token = (token_t){T_STRING, str, tokenizer->loc};
+        token = (token_t){T_STRING, str, tokenizer->loc, 0};
         tokenizer->loc.col += str.len;
       }
       break;
@@ -259,6 +261,7 @@ token_t token_next(tokenizer_t *tokenizer) {
         T_CHAR,
         {tokenizer->buffer, 3},
         tokenizer->loc,
+        *(tokenizer->buffer + 1)
       };
       if (tokenizer->buffer[2] != '\'') {
         eprintf(tokenizer->loc, "CHAR can have only one char");
@@ -277,7 +280,8 @@ token_t token_next(tokenizer_t *tokenizer) {
         token = (token_t){
           T_HEX,
           {image_start, tokenizer->loc.len},
-          tokenizer->loc
+          tokenizer->loc,
+          strtol(image_start + 2, NULL, 16)
         };
         if (token.image.len - 2 != 2 && token.image.len - 2 != 4) {
           eprintf(token.loc, "HEX can be 1 or 2 bytes");
@@ -299,6 +303,10 @@ token_t token_next(tokenizer_t *tokenizer) {
             ++len;
             ++tokenizer->buffer;
           } while (isalpha(*tokenizer->buffer) || isdigit(*tokenizer->buffer) || *tokenizer->buffer == '_');
+          int asint = 0;
+          if (is_int) {
+            asint = atoi(image_start);
+          }
           sv_t image = {image_start, len};
           tokenizer->loc.len = len;
           token = (token_t){is_int                                  ? T_INT
@@ -312,7 +320,8 @@ token_t token_next(tokenizer_t *tokenizer) {
                             : sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM
                                                                     : T_SYM,
                             image,
-                            tokenizer->loc};
+                            tokenizer->loc,
+                            asint};
           if (!is_int && isdigit(image_start[0])) {
             eprintf(token.loc, "SYM cannot start with digit");
           }
@@ -2501,16 +2510,13 @@ void compile(ast_t *ast, state_t *state) {
     case A_FAC:
       switch (ast->as.fac.kind) {
         case T_INT:
-          {
-            int num = atoi(ast->as.fac.image.start);
-            if (num < 256) {
-              code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = num}});
-            } else {
-              code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = num}});
-            }
-            code(compiled, (bytecode_t){BINST, PUSHA, {}});
-            state->sp += 2;
+          if (ast->as.fac.asint < 256) {
+            code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = ast->as.fac.asint}});
+          } else {
+            code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = ast->as.fac.asint}});
           }
+          code(compiled, (bytecode_t){BINST, PUSHA, {}});
+          state->sp += 2;
           break;
         case T_SYM:
           {
@@ -2538,13 +2544,10 @@ void compile(ast_t *ast, state_t *state) {
           break;
         case T_HEX:
           {
-            int num = strtol(ast->as.fac.image.start, NULL, 16);
-            if (ast->as.fac.image.len == 4) {
-              code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = num}});
-            } else if (ast->as.fac.image.len == 6) {
-              code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = num}});
+            if (ast->as.fac.asint < 256) {
+              code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = ast->as.fac.asint}});
             } else {
-              assert(0);
+              code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = ast->as.fac.asint}});
             }
             code(compiled, (bytecode_t){BINST, PUSHA, {}});
             state->sp += 2;
@@ -2625,6 +2628,7 @@ void compile(ast_t *ast, state_t *state) {
           ast_t *a = ast->as.astlist.ast;
           ast_t *b = ast->as.astlist.next->as.astlist.ast;
 
+          // TODO: use asint
           assert(a->kind == A_FAC && a->as.fac.kind == T_HEX);
           code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = strtol(a->as.fac.image.start, NULL, 16)}});
           code(compiled, (bytecode_t){BINSTHEX, RAM_BL, {.num = strtol(b->as.fac.image.start, NULL, 16)}});
