@@ -1105,10 +1105,6 @@ void state_init_with_compiled(state_t *state) {
   data(compiled, bytecode_with_string(BGLOBAL, 0, "_start"));
   compiled->is_init = true;
   code(compiled, bytecode_with_string(BSETLABEL, 0, "_start"));
-  code(compiled, (bytecode_t){BINST, DECSP, {}});
-  code(compiled, bytecode_with_string(BINSTRELLABEL, CALLR, "main"));
-  code(compiled, (bytecode_t){BINST, POPA, {}});
-  code(compiled, bytecode_with_string(BINSTLABEL, CALL, "exit"));
   compiled->is_init = false;
 }
 
@@ -1760,6 +1756,7 @@ ast_t *parse_global(tokenizer_t *tokenizer) {
   *tokenizer = savetok;
 
   ast_t *decl = parse_decl(tokenizer);
+  token_expect(tokenizer, T_SEMICOLON);
   decl->kind = A_GLOBDECL;
   return decl;
 }
@@ -2230,14 +2227,18 @@ void datanum(compiled_t *compiled, type_t *type, int num) {
   }
 }
 
-bytecode_t datauli(compiled_t *compiled, state_t *state) {
+bytecode_t bytecode_uli(bytecode_kind_t kind, instruction_t inst, int uli) {
+  bytecode_t b = {kind, inst, {}};
+  sprintf(b.arg.string, "_%03d", uli);
+  return b;
+}
+
+int datauli(compiled_t *compiled, state_t *state) {
   assert(compiled);
   assert(state);
-  bytecode_t b = {BSETLABEL, 0, {}};
-  sprintf(b.arg.string, "_%03d", state->uli);
-  ++state->uli;
-  data(compiled, b);
-  return b;
+  int uli = state->uli++;
+  data(compiled, bytecode_uli(BSETLABEL, 0, uli));
+  return uli;
 }
 
 void state_change_sp(state_t *state, int delta) {
@@ -2290,15 +2291,18 @@ void get_addr(state_t *state, token_t token) {
       }
       break;
     case INFO_GLOBAL:
-      {
-        bytecode_t b = {BINSTLABEL, RAM_A, {}};
-        sprintf(b.arg.string, "_%03d", s->info.global);
-        code(compiled, b);
-      }
+      code(compiled, bytecode_uli(BINSTLABEL, RAM_A, s->info.global));
       break;
     default:
       assert(0);
   }
+}
+
+bytecode_t bytecode_with_sv(bytecode_kind_t kind, instruction_t inst, sv_t sv) {
+  char label[sv.len + 1];
+  memset(label, 0, sv.len + 1);
+  sprintf(label, SV_FMT, SV_UNPACK(sv));
+  return bytecode_with_string(kind, inst, label);
 }
 
 void compile(ast_t *ast, state_t *state);
@@ -2396,6 +2400,70 @@ void get_addr_ast(state_t *state, ast_t *ast) {
   }
 }
 
+void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
+  assert(ast);
+  assert(state);
+  compiled_t *compiled = &state->compiled;
+
+  switch (ast->kind) {
+    case A_CAST:
+      {
+        compile_data(ast->as.cast.ast, state, uli, 0);
+        int delta = type_size_aligned(&ast->as.cast.target) - type_size_aligned(&ast->as.cast.ast->type);
+        if (delta > 0) {
+          data(compiled, (bytecode_t){BDB, 0, {.num = delta}});
+        }
+      }
+      return;
+    case A_ARRAY:
+      compile_data(ast->as.astlist.ast, state, uli, offset);
+      if (ast->as.astlist.next) {
+        compile_data(ast->as.astlist.next, state, uli, offset + type_size(&ast->as.astlist.ast->type));
+      }
+      return;
+    case A_FAC:
+      switch (ast->as.fac.kind) {
+        case T_INT:
+        case T_HEX:
+          data(compiled, (bytecode_t){type_size(&ast->type) == 2 ? BHEX2 : BHEX, 0, {.num = ast->as.fac.asint}});
+          break;
+        case T_STRING:
+          data(compiled, bytecode_with_sv(BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
+          data(compiled, (bytecode_t){BHEX, 0, {.num = 0}});
+          break;
+        default:
+          break;
+      }
+      return;
+    default:
+      break;
+  }
+
+  int size = type_size_aligned(&ast->type);
+  assert(size >= 2);
+  data(compiled, (bytecode_t){BDB, 0, {.num = size}});
+  compiled->is_init = true;
+  compile(ast, state);
+  code(compiled, bytecode_uli(BINSTLABEL, RAM_B, uli));
+  assert(offset >= 0);
+  if (offset != 0) {
+    code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = offset}});
+    code(compiled, (bytecode_t){BINST, SUM, {}});
+    code(compiled, (bytecode_t){BINST, A_B, {}});
+  }
+  code(compiled, (bytecode_t){BINST, POPA, {}});
+  code(compiled, (bytecode_t){BINST, A_rB, {}});
+  for (int i = 0; i < size - 2; i += 2) {
+    code(compiled, (bytecode_t){BINST, B_A, {}});
+    code(compiled, (bytecode_t){BINST, INCA, {}});
+    code(compiled, (bytecode_t){BINST, INCA, {}});
+    code(compiled, (bytecode_t){BINST, A_B, {}});
+    code(compiled, (bytecode_t){BINST, POPA, {}});
+    code(compiled, (bytecode_t){BINST, A_rB, {}});
+  }
+  compiled->is_init = false;
+}
+
 void compile(ast_t *ast, state_t *state) {
   assert(state);
   assert(ast);
@@ -2426,10 +2494,11 @@ void compile(ast_t *ast, state_t *state) {
         if (ast->as.funcdecl.params) {
           compile(ast->as.funcdecl.params, state);
         }
-        bytecode_t b = {BSETLABEL, 0, {}};
-        sprintf(b.arg.string, SV_FMT, SV_UNPACK(ast->as.funcdecl.name.image));
-        code(compiled, b);
+
+        code(compiled, bytecode_with_sv(BSETLABEL, 0, ast->as.funcdecl.name.image));
+
         if (ast->as.funcdecl.block) {
+          state->sp = 0;
           compile(ast->as.funcdecl.block, state);
         }
         if (!(compiled->code[compiled->code_num - 1].kind == BINST &&
@@ -2500,7 +2569,7 @@ void compile(ast_t *ast, state_t *state) {
       switch (ast->as.unaryop.op) {
         case T_STAR:
           compile(ast->as.unaryop.arg, state);
-          code(compiled, (bytecode_t){BINST, A_B, {}});
+          code(compiled, (bytecode_t){BINST, POPB, {}});
           coderead(state, &ast->type);
           break;
         default:
@@ -2555,14 +2624,11 @@ void compile(ast_t *ast, state_t *state) {
           break;
         case T_STRING:
           {
-            bytecode_t uli = datauli(compiled, state);
-            bytecode_t b = {BSTRING, 0, {}};
-            sprintf(b.arg.string, SV_FMT, SV_UNPACK(ast->as.fac.image));
-            data(compiled, b);
+            int uli = datauli(compiled, state);
+            data(compiled,
+                 bytecode_with_sv(BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
             data(compiled, (bytecode_t){BHEX, 0, {.num = 0}});
-            b = (bytecode_t){BINSTLABEL, RAM_A, {}};
-            strcpy(b.arg.string, uli.arg.string);
-            data(compiled, b);
+            code(compiled, bytecode_uli(BINSTLABEL, RAM_A, uli));
             code(compiled, (bytecode_t){BINST, PUSHA, {}});
             state->sp += 2;
           }
@@ -2598,7 +2664,15 @@ void compile(ast_t *ast, state_t *state) {
       state_add_symbol(state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_LOCAL, {state->sp - 2}});
       break;
     case A_GLOBDECL:
-      TODO;
+      {
+        int uli = datauli(compiled, state);
+        if (ast->as.decl.expr) {
+          compile_data(ast->as.decl.expr, state, uli, 0);
+        } else {
+          data(compiled, (bytecode_t){BDB, 0, {.num = type_size(&ast->as.decl.type)}});
+        }
+        state_add_symbol(state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_GLOBAL, {uli}});
+      }
       break;
     case A_ASSIGN:
       compile(ast->as.assign.expr, state);
@@ -2609,15 +2683,11 @@ void compile(ast_t *ast, state_t *state) {
       codewrite(compiled, &ast->type);
       break;
     case A_FUNCALL:
-      {
-        if (ast->as.funcall.params) {
-          compile(ast->as.funcall.params, state);
-        }
-        state_change_sp(state, type_size_aligned(&ast->type));
-        bytecode_t b = {BINSTRELLABEL, CALLR, {}};
-        sprintf(b.arg.string, SV_FMT, SV_UNPACK(ast->as.funcall.name.image));
-        code(compiled, b);
+      if (ast->as.funcall.params) {
+        compile(ast->as.funcall.params, state);
       }
+      state_change_sp(state, type_size_aligned(&ast->type));
+      code(compiled, bytecode_with_sv(BINSTRELLABEL, CALLR, ast->as.funcall.name.image));
       break;
     case A_ARRAY:
       if (type_is_kind(ast->type.as.array.type, TY_CHAR)) {
@@ -2646,27 +2716,25 @@ void compile(ast_t *ast, state_t *state) {
       compile(ast->as.astlist.ast, state);
       break;
     case A_INDEX:
-      {
-        compile(ast->as.index.expr, state);
-        compile(ast->as.index.num, state);
-        code(compiled, (bytecode_t){BINST, POPA, {}});
-        switch (type_size(&ast->type)) {
-          case 1:
-            break;
-          case 4:
-            code(compiled, (bytecode_t){BINST, SHL, {}});
-            __attribute__((fallthrough));
-          case 2:
-            code(compiled, (bytecode_t){BINST, SHL, {}});
-            break;
-          default:
-            TODO;
-        }
-        code(compiled, (bytecode_t){BINST, POPB, {}});
-        state->sp -= 4;
-        code(compiled, (bytecode_t){BINST, SUM, {}});
-        coderead(state, &ast->type);
+      compile(ast->as.index.expr, state);
+      compile(ast->as.index.num, state);
+      code(compiled, (bytecode_t){BINST, POPA, {}});
+      switch (type_size(&ast->type)) {
+        case 1:
+          break;
+        case 4:
+          code(compiled, (bytecode_t){BINST, SHL, {}});
+          __attribute__((fallthrough));
+        case 2:
+          code(compiled, (bytecode_t){BINST, SHL, {}});
+          break;
+        default:
+          TODO;
       }
+      code(compiled, (bytecode_t){BINST, POPB, {}});
+      state->sp -= 4;
+      code(compiled, (bytecode_t){BINST, SUM, {}});
+      coderead(state, &ast->type);
       break;
     case A_TYPEDEF:
       if (ast->as.typedef_.type.kind == TY_ENUM) {
@@ -3156,6 +3224,12 @@ int main(int argc, char **argv) {
 
     state_init_with_compiled(&state);
     compile(ast, &state);
+    state.compiled.is_init = true;
+    code(&state.compiled, (bytecode_t){BINST, DECSP, {}});
+    code(&state.compiled, bytecode_with_string(BINSTRELLABEL, CALLR, "main"));
+    code(&state.compiled, (bytecode_t){BINST, POPA, {}});
+    code(&state.compiled, bytecode_with_string(BINSTLABEL, CALL, "exit"));
+    state.compiled.is_init = false;
 
     if ((opt >> OL_POST) & 1) {
       optimize_compiled(&state.compiled);

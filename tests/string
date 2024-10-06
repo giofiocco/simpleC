@@ -1,17 +1,9 @@
 #!/bin/env sh
 
 export prog=$(cat << EOF
-typedef struct {
-  int x;
-  int y;
-} point;
-
-point add() {
-  point c;
-  return c;
-}
-
 int main() {
+  char *str = "asdf";
+  *str;
 }
 EOF
 )
@@ -19,26 +11,25 @@ export stdout=$(cat << EOF
 ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
+SETLABEL     _000
+STRING       asdf
+HEX          0x00
 SETLABEL     _start
 INST         DECSP
 INSTRELLABEL CALLR main
 INST         POPA
 INSTLABEL    CALL exit
-SETLABEL     add
-INST         DECSP
-INST         DECSP
+SETLABEL     main
+INSTLABEL    RAM_A _000
+INST         PUSHA
 INSTHEX      PEEKAR 0x02
 INST         PUSHA
-INSTHEX      PEEKAR 0x06
+INST         POPB
+INST         rB_AL
 INST         PUSHA
-INST         POPA
-INSTHEX      PUSHAR 0x0A
-INST         POPA
-INSTHEX      PUSHAR 0x0A
 INST         INCSP
 INST         INCSP
-INST         RET
-SETLABEL     main
+INST         INCSP
 INST         RET
 EOF
 )
@@ -48,4 +39,3 @@ export exitcode=0
 #./simpleC $params -e "$prog"
 
 ./test $0
-

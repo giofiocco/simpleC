@@ -1,0 +1,57 @@
+#!/bin/env sh
+
+export prog=$(cat << EOF
+int a = 10;
+char b = 0x20;
+int c[5] = {5, 2+1};
+char *str = "asdf";
+
+int main() {}
+EOF
+)
+export stdout=$(cat << EOF
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _000
+HEX2         0x0A
+SETLABEL     _001
+HEX          0x20
+SETLABEL     _002
+HEX2         0x05
+DB           2
+DB           6
+SETLABEL     _003
+STRING       asdf
+HEX          0x00
+SETLABEL     _start
+INSTHEX      RAM_AL 0x02
+INST         PUSHA
+INSTHEX      RAM_AL 0x01
+INST         PUSHA
+INST         POPB
+INST         POPA
+INST         SUM
+INST         PUSHA
+INSTLABEL    RAM_B _002
+INSTHEX2     RAM_A 0x0002
+INST         SUM
+INST         A_B
+INST         POPA
+INST         A_rB
+INST         DECSP
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INST         INCSP
+INST         RET
+EOF
+)
+export params="-D com"
+export exitcode=0
+
+#./simpleC $params -e "$prog"
+
+./test $0
+

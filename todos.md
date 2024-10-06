@@ -1,5 +1,3 @@
-compile with PUSHAR
-
 compile asm
 
 postopt both init and code
@@ -7,21 +5,26 @@ do better pointer math
 astlist -> binary and semplify others
 typedef array
 struct with array
-index as a \*(...)
+maybe index as a \*(...)
 dereference an array
 pointer aritmethics with array
 index -> binary thing
 parse with location_t start = tokenizer->loc;
 
+# Wierd output
+
+- `char a[2] = {0x23, 0x10 + 0x01};`
+
 # Tokenizer
 
-- [ ] as int in the token
 - [ ] binary litterals
 - [ ] escape char in string
 - [ ] maybe find the row end when changing the row instead of finding it when printing error
 
 # Parser
 
+- [ ] cast a string in globdecl?
+- [ ] is cast necessary?
 - [ ] int a,b;
 - [ ] <index> -> <expr>[<expr>]
 - [ ] int \*\*a;
