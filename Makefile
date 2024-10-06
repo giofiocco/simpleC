@@ -1,4 +1,4 @@
-all: simpleC test-file
+all: simpleC 
 
 CFLAGS=-Wall -Wextra -Werror -std=c99
 
@@ -6,9 +6,6 @@ CFLAGS=-Wall -Wextra -Werror -std=c99
 
 simpleC: simpleC.c 
 	cc $(CFLAGS) -o $@ $(filter %.c,$^) jaris/instructions.c jaris/files.c
-
-test-file: test-file.c
-	cc $(CFLAGS) -o $@ $<
 
 test:
 	find tests -type f | while read f; do sh $$f; done

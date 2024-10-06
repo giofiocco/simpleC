@@ -1,3 +1,5 @@
+compile with PUSHAR
+
 compile asm
 
 postopt both init and code
@@ -31,10 +33,12 @@ parse with location_t start = tokenizer->loc;
 # Compiler
 
 - [ ] array with expression as length in the stack
+- [ ] return array
 
 # PostOpt
 
 - [ ] remove dead code
+- [ ] A_SP SP_A -> A_SP
 
 # Roadmap
 

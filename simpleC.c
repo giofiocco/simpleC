@@ -2249,9 +2249,14 @@ void state_change_sp(state_t *state, int delta) {
     }
   } else {
     code(compiled, (bytecode_t){BINST, SP_A, {}});
-    code(compiled, (bytecode_t){BINST, A_B, {}});
-    code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = abs(delta)}});
-    code(compiled, (bytecode_t){BINST, delta > 0 ? SUB : SUM, {}});
+    if (delta < 0) {
+      code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = -delta}});
+      code(compiled, (bytecode_t){BINST, SUM, {}});
+    } else {
+      code(compiled, (bytecode_t){BINST, A_B, {}});
+      code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = delta}});
+      code(compiled, (bytecode_t){BINST, SUB, {}});
+    }
     code(compiled, (bytecode_t){BINST, A_SP, {}});
   }
 }
@@ -2448,31 +2453,13 @@ void compile(ast_t *ast, state_t *state) {
     case A_RETURN:
       if (ast->as.ast) {
         compile(ast->as.ast, state);
+
         int size = type_size_aligned(&ast->as.ast->type);
-        int offset = state->sp + 2 + size;
-        state_change_sp(state, -offset);
-
-        code(compiled, (bytecode_t){BINST, SP_A, {}});
-        code(compiled, (bytecode_t){BINST, A_B, {}});
-        code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = offset - size}});
-
-        for (; size > 2; size -= 2) {
-          code(compiled, (bytecode_t){BINST, SUB, {}});
-          code(compiled, (bytecode_t){BINST, A_B, {}});
-          code(compiled, (bytecode_t){BINST, rB_A, {}});
-          code(compiled, (bytecode_t){BINST, PUSHA, {}});
-          state->sp += 2;
-          code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
+        for (int i = 0; i < size; i += 2) {
+          code(compiled, (bytecode_t){BINST, POPA, {}});
+          code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = state->sp + 2}});
         }
-        code(compiled, (bytecode_t){BINST, SUB, {}});
-        code(compiled, (bytecode_t){BINST, A_B, {}});
-        code(compiled, (bytecode_t){BINST, rB_A, {}});
-        code(compiled, (bytecode_t){BINST, PUSHA, {}});
-        state->sp += 2;
-
-        state_change_sp(state, 2);
-      } else {
-        state_change_sp(state, -state->sp);
+        state->sp -= size;
       }
       break;
     case A_BINARYOP:
