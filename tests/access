@@ -1,0 +1,54 @@
+#!/bin/env sh
+
+echo TEST $0 running...
+
+export prog=$(cat << EOF
+typedef struct {
+  int a;
+  char b;
+  char c;
+} point;
+
+int main() {
+  point a;
+  point b;
+  a.c;
+}
+EOF
+)
+export stdout=$(cat << EOF
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INST         DECSP
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INST         DECSP
+INST         DECSP
+INST         DECSP
+INST         DECSP
+INST         SP_A
+INST         A_B
+INSTHEX2     RAM_A 0x0006
+INST         SUM
+INSTHEX      RAM_BL 0x03
+INST         SUM
+INST         A_B
+INST         rB_AL
+INST         PUSHA
+INST         SP_A
+INSTHEX2     RAM_B 0x000A
+INST         SUM
+INST         A_SP
+INST         RET
+EOF
+)
+export params="-D com"
+export exitcode=0
+
+#./simpleC $params -e "$prog"
+
+./test $0

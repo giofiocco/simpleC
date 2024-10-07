@@ -1,5 +1,6 @@
 compile asm
 
+array of struct
 typedef array
 struct with array
 
@@ -13,7 +14,7 @@ struct with array
 # Parser
 
 - [ ] code block
-- [ ] is cast necessary?
+- [ ] is cast necessary in decl?
 - [ ] int a,b;
 - [ ] <index> -> <expr>[<expr>]
 - [ ] int \*\*a;
@@ -28,7 +29,6 @@ struct with array
 
 - [ ] compile_data array of str or ptr
 - [ ] array with expression as length in the stack
-- [x] return array
 
 # PostOpt
 

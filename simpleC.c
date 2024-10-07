@@ -2319,7 +2319,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
             type_t *f = ast->as.binaryop.lhs->type.as.alias.type->as.struct_.fieldlist;
             while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
               if (type_is_kind(f->as.fieldlist.type, TY_CHAR) && f->as.fieldlist.next &&
-                  type_is_kind(f->as.fieldlist.next->as.fieldlist.type, TY_CHAR)) {
+                  !type_is_kind(f->as.fieldlist.next->as.fieldlist.type, TY_CHAR)) {
                 offset += 2;
               } else {
                 offset += type_size(f->as.fieldlist.type);
@@ -2341,7 +2341,8 @@ void get_addr_ast(state_t *state, ast_t *ast) {
         case T_PLUS:
         case T_MINUS:
           // TODO: check
-          compile(ast, state);
+          // compile(ast, state);
+          TODO;
           break;
         default:
           assert(0);
