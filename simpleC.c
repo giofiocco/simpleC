@@ -2713,7 +2713,12 @@ void compile(ast_t *ast, state_t *state) {
       } else {
         int tsize = type_size_aligned(&ast->as.cast.target);
         int size = type_size_aligned(&ast->as.cast.ast->type);
-        assert(tsize - size >= 0);
+        if (tsize - size < 0) {
+          eprintf(ast->forerror,
+                  "cannot cast '%s' to smaller size type '%s' ",
+                  type_dump_to_string(&ast->as.cast.ast->type),
+                  type_dump_to_string(&ast->as.cast.target));
+        }
         if (tsize - size > 0) {
           code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 0}});
         }
