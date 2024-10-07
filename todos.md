@@ -3,12 +3,9 @@ compile asm
 typedef array
 struct with array
 
-# Wierd output
-
-- `char a[2] = {0x23, 0x10 + 0x01};`
-
 # Tokenizer
 
+- [ ] location.row_start -> sv_t location.line with the len of the line
 - [ ] binary litterals
 - [ ] escape char in string
 - [ ] maybe find the row end when changing the row instead of finding it when printing error
@@ -25,12 +22,13 @@ struct with array
 
 - [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it
 - [ ] warn if no return in some function
+- [ ] operations between char
 
 # Compiler
 
 - [ ] compile_data array of str or ptr
 - [ ] array with expression as length in the stack
-- [ ] return array
+- [x] return array
 
 # PostOpt
 

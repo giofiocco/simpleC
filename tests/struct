@@ -1,5 +1,7 @@
 #!/bin/env sh
 
+echo TEST $0 running...
+
 export prog=$(cat << EOF
 typedef struct {
   int x;
@@ -31,7 +33,7 @@ EOF
 export params="-D com"
 export exitcode=0
 
-# ./simpleC $params -e "$prog"
+#./simpleC $params -e "$prog"
 
 ./test $0
 

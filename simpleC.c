@@ -86,7 +86,15 @@ typedef struct {
 
 location_t location_union(location_t a, location_t b) {
   location_t c = a;
-  c.len = b.col + b.len - a.col;
+  if (a.row != b.row) {
+    char *row_end = c.row_start;
+    while (*row_end != '\n') {
+      ++row_end;
+    }
+    c.len = row_end - c.row_start;
+  } else {
+    c.len = b.col + b.len - a.col;
+  }
   return c;
 }
 
@@ -2483,7 +2491,10 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_RETURN:
-      if (ast->as.ast) {
+      if (ast->as.ast && type_is_kind(&ast->as.ast->type, TY_ARRAY)) {
+        state_change_sp(state, -(state->sp + 2 + 2));
+        compile(ast->as.ast, state);
+      } else if (ast->as.ast) {
         compile(ast->as.ast, state);
 
         int size = type_size_aligned(&ast->as.ast->type);

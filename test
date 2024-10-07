@@ -12,7 +12,6 @@ stdoutfile=$(mktemp)
 expectedstdoutfile=$(mktemp)
 echo "$stdout" > $expectedstdoutfile
 
-echo TEST $1 running...
 ./simpleC $params -e "$prog" > $stdoutfile
 if [ "$(cat $stdoutfile)" != "$stdout" ]; then
   echo ERROR: expected stdout
