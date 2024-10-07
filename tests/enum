@@ -1,0 +1,37 @@
+#!/bin/env sh
+
+echo TEST $0 running...
+
+export prog=$(cat << EOF
+typedef enum {
+  A,
+  B,
+} t;
+
+int main() {
+  int a = B;
+}
+EOF
+)
+export stdout=$(cat << EOF
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INST         DECSP
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INSTHEX2     RAM_A 0x0001
+INST         PUSHA
+INST         INCSP
+INST         RET
+EOF
+)
+export params="-D com"
+export exitcode=0
+
+#./simpleC $params -e "$prog"
+
+./test $0
