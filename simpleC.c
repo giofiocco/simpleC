@@ -829,7 +829,6 @@ typedef enum {
   A_FUNCALL,
   A_PARAM,
   A_ARRAY,
-  A_INDEX,
   A_TYPEDEF,
   A_CAST,
   A_ASM,
@@ -878,10 +877,6 @@ typedef struct ast_t_ {
       token_t name;
       struct ast_t_ *params;
     } funcall;
-    struct {
-      struct ast_t_ *expr;
-      struct ast_t_ *num;
-    } index;
     struct {
       type_t type;
       token_t name;
@@ -1006,13 +1001,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.astlist.ast, dumptype);
       printf(" ");
       ast_dump(ast->as.astlist.next, dumptype);
-      printf(")");
-      break;
-    case A_INDEX:
-      printf("INDEX(");
-      ast_dump(ast->as.index.expr, dumptype);
-      printf(" ");
-      ast_dump(ast->as.index.num, dumptype);
       printf(")");
       break;
     case A_TYPEDEF:
@@ -1495,7 +1483,14 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
   if (token_next_if_kind(tokenizer, T_SQO)) {
     ast_t *expr = parse_expr(tokenizer);
     token_t sqc = token_expect(tokenizer, T_SQC);
-    ast = ast_malloc((ast_t){A_INDEX, location_union(ast->forerror, sqc.loc), {}, {.index = {ast, expr}}});
+    ast = ast_malloc((ast_t){
+      A_UNARYOP,
+      location_union(ast->forerror, sqc.loc),
+      {},
+      {.unaryop = {
+         T_STAR,
+         ast_malloc(
+           (ast_t){A_BINARYOP, location_union(ast->forerror, sqc.loc), {}, {.binaryop = {T_PLUS, ast, expr}}})}}});
   }
 
   return ast;
@@ -1890,34 +1885,47 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       break;
     case A_BINARYOP:
-      assert(ast->as.binaryop.lhs);
-      assert(ast->as.binaryop.rhs);
-      typecheck(ast->as.binaryop.lhs, state);
-      if (ast->as.binaryop.op == T_DOT) {
-        assert(ast->as.binaryop.rhs->kind == A_FAC);
-        assert(ast->as.binaryop.rhs->as.fac.kind == T_SYM);
-
+      {
+        assert(ast->as.binaryop.lhs);
+        assert(ast->as.binaryop.rhs);
+        typecheck(ast->as.binaryop.lhs, state);
         type_t *type = &ast->as.binaryop.lhs->type;
-        if (!type_is_kind(type, TY_STRUCT)) {
-          eprintf(ast->as.binaryop.lhs->forerror, "expected a 'STRUCT', found '%s'", type_dump_to_string(type));
-        }
 
-        type_t *f = type->as.alias.type->as.struct_.fieldlist;
-        while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
-          f = f->as.fieldlist.next;
-        };
-        if (!f) {
-          eprintf(ast->as.binaryop.rhs->forerror, "member not found in '%s'", type_dump_to_string(type->as.alias.type));
-        }
+        if (ast->as.binaryop.op == T_DOT) {
+          assert(ast->as.binaryop.rhs->kind == A_FAC);
+          assert(ast->as.binaryop.rhs->as.fac.kind == T_SYM);
 
-        ast->type = *f->as.fieldlist.type;
-      } else {
-        if (ast->as.binaryop.lhs->type.kind != TY_INT && ast->as.binaryop.lhs->type.kind != TY_PTR) {
-          char *typestr = type_dump_to_string(&ast->as.binaryop.lhs->type);
-          eprintf(ast->forerror, "expected 'INT' or 'PTR ...' found '%s'", typestr);
+          if (!type_is_kind(type, TY_STRUCT)) {
+            eprintf(ast->as.binaryop.lhs->forerror, "expected a 'STRUCT', found '%s'", type_dump_to_string(type));
+          }
+
+          type_t *f = type->as.alias.type->as.struct_.fieldlist;
+          while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
+            f = f->as.fieldlist.next;
+          };
+          if (!f) {
+            eprintf(ast->as.binaryop.rhs->forerror,
+                    "member not found in '%s'",
+                    type_dump_to_string(type->as.alias.type));
+          }
+
+          ast->type = *f->as.fieldlist.type;
+        } else if (ast->as.binaryop.op == T_PLUS || ast->as.binaryop.op == T_MINUS) {
+          typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, {{0}}});
+          if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR)) {
+            ast->type = *type;
+          } else if (type->kind == TY_ARRAY) {
+            ast->type = (type_t){TY_PTR, {.ptr = type->as.array.type}};
+          } else {
+            eprintf(ast->forerror,
+                    "invalid operation '%s' between '%s' and '%s'",
+                    token_kind_to_string(ast->as.binaryop.op),
+                    type_dump_to_string(&ast->as.binaryop.lhs->type),
+                    type_dump_to_string(&ast->as.binaryop.rhs->type));
+          }
+        } else {
+          TODO;
         }
-        typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, {{0}}});
-        ast->type = ast->as.binaryop.lhs->type;
       }
       break;
     case A_UNARYOP:
@@ -1933,11 +1941,14 @@ void typecheck(ast_t *ast, state_t *state) {
           break;
         case T_STAR:
           typecheck(ast->as.unaryop.arg, state);
-          if (ast->as.unaryop.arg->type.kind != TY_PTR) {
+          if (type_is_kind(&ast->as.unaryop.arg->type, TY_PTR)) {
+            ast->type = *ast->as.unaryop.arg->type.as.ptr;
+          } else if (type_is_kind(&ast->as.unaryop.arg->type, TY_ARRAY)) {
+            ast->type = *ast->as.unaryop.arg->type.as.array.type;
+          } else {
             char *type = type_dump_to_string(&ast->as.unaryop.arg->type);
             eprintf(ast->as.unaryop.arg->forerror, "cannot dereference non PTR type: '%s'", type);
           }
-          ast->type = *ast->as.unaryop.arg->type.as.ptr;
           break;
         default:
           assert(0);
@@ -2051,22 +2062,6 @@ void typecheck(ast_t *ast, state_t *state) {
       } else {
         typecheck(ast->as.astlist.ast, state);
         ast->type = (type_t){TY_ARRAY, {.array = {&ast->as.astlist.ast->type, .len = {ARRAY_LEN_NUM, 1}}}};
-      }
-      break;
-    case A_INDEX:
-      {
-        typecheck(ast->as.index.expr, state);
-        type_t *type = &ast->as.index.expr->type;
-        if (type_is_kind(type, TY_ARRAY)) {
-          assert(ast->as.index.num);
-          typecheck_expect(ast->as.index.num, state, (type_t){TY_INT, {}});
-          ast->type = *type->as.array.type;
-        } else if (type_is_kind(type, TY_PTR)) {
-          assert(type->as.ptr);
-          ast->type = *type->as.ptr;
-        } else {
-          eprintf(ast->forerror, "expected an ARRAY or a PTR, found: '%s'", type_dump_to_string(type));
-        }
       }
       break;
     case A_TYPEDEF:
@@ -2361,31 +2356,6 @@ void get_addr_ast(state_t *state, ast_t *ast) {
           break;
       }
       break;
-    case A_INDEX:
-      {
-        assert(0);
-        get_addr_ast(state, ast->as.index.expr);
-        code(compiled, (bytecode_t){BINST, PUSHA, {}});
-
-        compile(ast->as.index.num, state);
-
-        switch (type_size(&ast->type)) {
-          case 1:
-            break;
-          case 4:
-            code(compiled, (bytecode_t){BINST, SHL, {}});
-            __attribute__((fallthrough));
-          case 2:
-            code(compiled, (bytecode_t){BINST, SHL, {}});
-            break;
-          default:
-            assert(0);
-        }
-
-        code(compiled, (bytecode_t){BINST, POPB, {}});
-        code(compiled, (bytecode_t){BINST, SUM, {}});
-      }
-      break;
     case A_FUNCALL:
       compile(ast, state);
       code(compiled, (bytecode_t){BINST, SP_A, {}});
@@ -2548,7 +2518,19 @@ void compile(ast_t *ast, state_t *state) {
       } else {
         compile(ast->as.binaryop.lhs, state);
         compile(ast->as.binaryop.rhs, state);
-        code(compiled, (bytecode_t){BINST, POPB, {}});
+        if (ast->as.binaryop.op == T_PLUS && type_is_kind(&ast->type, TY_PTR)) {
+          code(compiled, (bytecode_t){BINST, POPA, {}});
+          int size = type_size(ast->type.as.ptr);
+          assert(size == 1 || size % 2 == 0);
+          if (size >= 2) {
+            for (int i = 0; i < size; i += 2) {
+              code(compiled, (bytecode_t){BINST, SHL, {}});
+            }
+          }
+          code(compiled, (bytecode_t){BINST, A_B, {}});
+        } else {
+          code(compiled, (bytecode_t){BINST, POPB, {}});
+        }
         code(compiled, (bytecode_t){BINST, POPA, {}});
         state->sp -= 4;
         switch (ast->as.binaryop.op) {
@@ -2596,7 +2578,9 @@ void compile(ast_t *ast, state_t *state) {
               code(compiled, (bytecode_t){BINST, PUSHA, {}});
               state->sp += 2;
             } else if (type_is_kind(s->type, TY_ARRAY)) {
-              assert(0);  // TODO: error
+              get_addr(state, ast->as.fac);
+              code(compiled, (bytecode_t){BINST, PUSHA, {}});
+              state->sp += 2;
             } else if (s->kind == INFO_LOCAL && s->info.local < state->sp &&
                        state->sp - s->info.local - type_size(s->type) < 256) {
               for (int i = 0; i < type_size_aligned(s->type); i += 2) {
@@ -2715,27 +2699,6 @@ void compile(ast_t *ast, state_t *state) {
       }
       compile(ast->as.astlist.ast, state);
       break;
-    case A_INDEX:
-      compile(ast->as.index.expr, state);
-      compile(ast->as.index.num, state);
-      code(compiled, (bytecode_t){BINST, POPA, {}});
-      switch (type_size(&ast->type)) {
-        case 1:
-          break;
-        case 4:
-          code(compiled, (bytecode_t){BINST, SHL, {}});
-          __attribute__((fallthrough));
-        case 2:
-          code(compiled, (bytecode_t){BINST, SHL, {}});
-          break;
-        default:
-          TODO;
-      }
-      code(compiled, (bytecode_t){BINST, POPB, {}});
-      state->sp -= 4;
-      code(compiled, (bytecode_t){BINST, SUM, {}});
-      coderead(state, &ast->type);
-      break;
     case A_TYPEDEF:
       if (ast->as.typedef_.type.kind == TY_ENUM) {
         int i = 0;
@@ -2782,144 +2745,6 @@ void compile(ast_t *ast, state_t *state) {
       break;
   }
 }
-
-/*
- * void compile(ast_t *ast, state_t *state) {
- * ...
-      case A_BINARYOP:
-   assert(ast->as.binaryop.lhs);
-   assert(ast->as.binaryop.rhs);
-   if (ast->as.binaryop.op.kind == T_DOT) {
-   get_addr_ast(state, ast);
-   code(compiled, (bytecode_t){BINST, A_B, {}});
-   coderead(compiled, &ast->type);
-   } else {
-   compile(ast->as.binaryop.lhs, state);
-   code(compiled, (bytecode_t){BINST, A_B, {}});
-   compile(ast->as.binaryop.rhs, state);
-switch (ast->as.binaryop.op.kind) {
-  case T_PLUS: code(compiled, (bytecode_t){BINST, SUM, {}}); break;
-  case T_MINUS: code(compiled, (bytecode_t){BINST, SUB, {}}); break;
-  case T_STAR: TODO;
-  case T_SLASH: TODO;
-  default: assert(0);
-}
-}
-break;
-case A_UNARYOP:
-assert(ast->as.unaryop.arg);
-switch (ast->as.unaryop.op.kind) {
-  case T_MINUS:
-    compile(ast->as.unaryop.arg, state);
-    code(compiled, (bytecode_t){BINST, RAM_BL, {}});
-    code(compiled, (bytecode_t){B_HEX, {.num = 0}});
-    code(compiled, (bytecode_t){BINST, SUB, {}});
-    break;
-  case T_AND:
-    get_addr_ast(state, ast->as.unaryop.arg);
-    break;
-  case T_STAR:
-    compile(ast->as.unaryop.arg, state);
-    assert(ast->as.unaryop.arg->type.kind == TY_PTR);
-    code(compiled, (bytecode_t){BINST, A_B, {}});
-    coderead(compiled, &ast->type);
-    break;
-  default:
-    assert(0);
-}
-break;
-case A_GLOBDECL:
-{
-  state_add_global_symbol(state, ast->as.decl.name, &ast->as.decl.type,
-      state->uli);
-
-  if (ast->as.decl.expr) {
-    switch (ast->as.decl.expr->kind) {
-      default:
-        ast_dump(ast->as.decl.expr, true);
-        exit(6);
-    }
-  } else {
-    int size = type_size(&ast->as.decl.type);
-    size += size%2;
-    datauli(compiled, state);
-    data(compiled, (bytecode_t){B_DB, {.num = size}});
-  }
-
-  if (ast->as.decl.expr) {
-    ast_t *expr = ast->as.decl.expr;
-    if (expr->kind == A_ARRAY) {
-      compile(expr, state);
-      int diff = ast->as.decl.type.as.array.len - expr->type.as.array.len;
-      if (diff > 0) {
-        data(compiled, (bytecode_t){B_DB, {.num =
-            diff*type_size(expr->type.as.array.type)}});
-      }
-      return;
-    }
-    if (expr->kind == A_FAC) {
-      switch (expr->as.fac.kind) {
-        case T_INT:
-          datauli(compiled, state);
-          datanum(compiled, &ast->as.decl.type, atoi(expr->as.fac.image.start));
-          return;
-        case T_HEX:
-          datauli(compiled, state);
-          datanum(compiled, &ast->as.decl.type, atoi(expr->as.fac.image.start +
-                2)); return; case T_STRING: compile(expr, state); return; default:
-      }
-    }
-  }
-
-  bytecode_t b = datauli(compiled, state);
-
-  if (ast->as.decl.expr) {
-    compiled->is_init = true;
-    compile(ast->as.decl.expr, state);
-    code(compiled, (bytecode_t){BINST, RAM_B, {}});
-    b.kind = B_LABEL;
-    code(compiled, b);
-    codewrite(compiled, &ast->as.decl.type);
-    compiled->is_init = false;
-  }
-
-  datanum(compiled, &ast->as.decl.type, 0);
-} break;
-case A_DECL:
-state_add_local_symbol(state, ast->as.decl.name, &ast->as.decl.type);
-if (ast->as.decl.expr) {
-  compile(ast->as.decl.expr, state);
-  code(compiled, (bytecode_t){BINST, PUSHA, {}});
-} else {
-  int size = type_size(&ast->as.decl.type);
-  size += size%2;
-  if (size > 2) {
-    code(compiled, (bytecode_t){BINST, SP_A, {}});
-    code(compiled, (bytecode_t){BINST, A_B, {}});
-    code(compiled, (bytecode_t){BINST, RAM_A, {}});
-    code(compiled, (bytecode_t){B_HEX2, {.num = size}});
-    code(compiled, (bytecode_t){BINST, A_SP, {}});
-  } else {
-    code(compiled, (bytecode_t){BINST, DECSP, {}});
-  }
-}
-break;
-case A_ASSIGN:
-get_addr_ast(state, ast->as.assign.dest);
-
-if (ast->as.assign.expr->kind == A_FAC) {
-  code(compiled, (bytecode_t){BINST, A_B, {}});
-  compile(ast->as.assign.expr, state);
-} else {
-  code(compiled, (bytecode_t){BINST, PUSHA, {}});
-  ++ state->sp;
-  compile(ast->as.assign.expr, state);
-  code(compiled, (bytecode_t){BINST, POPB, {}});
-  -- state->sp;
-}
-codewrite(compiled, &ast->type);
-break;
-*/
 
 bool compiled_is_inst(compiled_t *compiled, int i, instruction_t inst) {
   assert(compiled);

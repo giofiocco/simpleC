@@ -1,14 +1,20 @@
+## do better pointer math:
+
+- [x] in typecheck array + int ~> ptr
+- [x] in compile binaryop if the type is ptr shl the number
+- [x] dereference an array
+- [x] pointer aritmethics with array
+
+---
+
+code block
+
 compile asm
 
 postopt both init and code
-do better pointer math
 astlist -> binary and semplify others
 typedef array
 struct with array
-maybe index as a \*(...)
-dereference an array
-pointer aritmethics with array
-index -> binary thing
 parse with location_t start = tokenizer->loc;
 
 # Wierd output
@@ -36,6 +42,7 @@ parse with location_t start = tokenizer->loc;
 
 # Compiler
 
+- [ ] compile_data array of str or ptr
 - [ ] array with expression as length in the stack
 - [ ] return array
 
@@ -46,7 +53,7 @@ parse with location_t start = tokenizer->loc;
 
 # Roadmap
 
-- [x] inline asm
+- [ ] inline asm
 - [ ] macros
 - [ ] include
 - [ ] union

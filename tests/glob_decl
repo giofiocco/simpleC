@@ -14,11 +14,11 @@ ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
 SETLABEL     _000
-HEX2         0x0A
+HEX2         0x000A
 SETLABEL     _001
 HEX          0x20
 SETLABEL     _002
-HEX2         0x05
+HEX2         0x0005
 DB           2
 DB           6
 SETLABEL     _003
