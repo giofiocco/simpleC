@@ -1,21 +1,7 @@
-## do better pointer math:
-
-- [x] in typecheck array + int ~> ptr
-- [x] in compile binaryop if the type is ptr shl the number
-- [x] dereference an array
-- [x] pointer aritmethics with array
-
----
-
-code block
-
 compile asm
 
-postopt both init and code
-astlist -> binary and semplify others
 typedef array
 struct with array
-parse with location_t start = tokenizer->loc;
 
 # Wierd output
 
@@ -29,7 +15,7 @@ parse with location_t start = tokenizer->loc;
 
 # Parser
 
-- [ ] cast a string in globdecl?
+- [ ] code block
 - [ ] is cast necessary?
 - [ ] int a,b;
 - [ ] <index> -> <expr>[<expr>]
@@ -48,6 +34,7 @@ parse with location_t start = tokenizer->loc;
 
 # PostOpt
 
+- [ ] both init and code
 - [ ] remove dead code
 - [ ] A_SP SP_A -> A_SP
 

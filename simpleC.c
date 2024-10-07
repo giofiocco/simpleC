@@ -1268,8 +1268,6 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
 
   fields[field_num++] = fname.image;
 
-  catch = false;  // TODO: maybe remove
-
   if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct &&
       sv_eq(ftype.as.alias.name.image, name.image)) {
     eprintf(fname.loc,
@@ -1703,25 +1701,15 @@ ast_t *parse_typedef(tokenizer_t *tokenizer) {
 
   type_t type = {0};
 
-  tokenizer_t savetok = *tokenizer;
-  catch = true;
-  if (setjmp(catch_buf) == 0) {
-    type = parse_structdef(tokenizer);
-    catch = false;
-  }
-
-  if (type.kind == TY_NONE) {
-    *tokenizer = savetok;
-    catch = true;
-    if (setjmp(catch_buf) == 0) {
+  switch (token_peek(tokenizer).kind) {
+    case T_STRUCT:
+      type = parse_structdef(tokenizer);
+      break;
+    case T_ENUM:
       type = parse_enumdef(tokenizer);
-      catch = false;
-    }
-  }
-
-  if (type.kind == TY_NONE) {
-    *tokenizer = savetok;
-    type = parse_type(tokenizer);
+      break;
+    default:
+      type = parse_type(tokenizer);
   }
 
   token_t name = token_expect(tokenizer, T_SYM);
@@ -1733,18 +1721,14 @@ ast_t *parse_typedef(tokenizer_t *tokenizer) {
 ast_t *parse_global(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
+  if (token_peek(tokenizer).kind == T_TYPEDEF) {
+    return parse_typedef(tokenizer);
+  }
+
   tokenizer_t savetok = *tokenizer;
   catch = true;
   if (setjmp(catch_buf) == 0) {
     ast_t *ast = parse_funcdecl(tokenizer);
-    catch = false;
-    return ast;
-  }
-  *tokenizer = savetok;
-
-  catch = true;
-  if (setjmp(catch_buf) == 0) {
-    ast_t *ast = parse_typedef(tokenizer);
     catch = false;
     return ast;
   }
