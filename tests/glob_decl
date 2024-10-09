@@ -46,7 +46,6 @@ INSTRELLABEL CALLR main
 INST         POPA
 INSTLABEL    CALL exit
 SETLABEL     main
-INST         INCSP
 INST         RET
 EOF
 )

@@ -1561,11 +1561,18 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
     type = (type_t){TY_ARRAY, {.array = {type_malloc(type), array_len}}};
   }
   if (expr && array_len.kind != ARRAY_LEN_UNSET) {
-    expr = ast_malloc((ast_t){A_CAST, expr->forerror, {0}, {.cast = {type, expr}}});
+    // if (expr->kind == A_ARRAY) {
+    //   ast_t *a = expr;
+    //   while (a) {
+    //     a->as.astlist.ast = ast_malloc((ast_t){A_CAST, a->forerror, {}, {.cast = {type, a->as.astlist.ast}}});
+    //     a = a->as.astlist.next;
+    //   }
+    // }
+    expr = ast_malloc((ast_t){A_CAST, expr->forerror, {}, {.cast = {type, expr}}});
   }
   return ast_malloc((ast_t){A_DECL,
                             location_union(start, expr ? expr->forerror : name.loc),
-                            {0},
+                            {},
                             {.decl = {type, name, expr, array_len_expr}}});
 }
 
@@ -2159,21 +2166,21 @@ void coderead(state_t *state, type_t *type) {
     case 2:
       code(compiled, (bytecode_t){BINST, rB_A, {}});
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
+      state->sp += 2;
       break;
     default:
       assert(type->kind == TY_STRUCT);
       size += size % 2;
-      size -= 2;
       code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = size}});
       code(compiled, (bytecode_t){BINST, SUM, {}});
       code(compiled, (bytecode_t){BINST, A_B, {}});
-      for (; size > 0; size -= 2) {
+      for (size -= 2; size > 0; size -= 2) {
         code(compiled, (bytecode_t){BINST, rB_A, {}});
         code(compiled, (bytecode_t){BINST, PUSHA, {}});
+        state->sp += 2;
         code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
         code(compiled, (bytecode_t){BINST, SUB, {}});
         code(compiled, (bytecode_t){BINST, A_B, {}});
-        state->sp += 2;
       }
       code(compiled, (bytecode_t){BINST, rB_A, {}});
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
@@ -2516,6 +2523,7 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.binaryop.rhs, state);
         if (ast->as.binaryop.op == T_PLUS && type_is_kind(&ast->type, TY_PTR)) {
           code(compiled, (bytecode_t){BINST, POPA, {}});
+          state->sp -= 2;
           int size = type_size(ast->type.as.ptr);
           assert(size == 1 || size % 2 == 0);
           if (size >= 2) {
@@ -2526,9 +2534,10 @@ void compile(ast_t *ast, state_t *state) {
           code(compiled, (bytecode_t){BINST, A_B, {}});
         } else {
           code(compiled, (bytecode_t){BINST, POPB, {}});
+          state->sp -= 2;
         }
         code(compiled, (bytecode_t){BINST, POPA, {}});
-        state->sp -= 4;
+        state->sp -= 2;
         switch (ast->as.binaryop.op) {
           case T_PLUS:
             code(compiled, (bytecode_t){BINST, SUM, {}});
@@ -2548,6 +2557,7 @@ void compile(ast_t *ast, state_t *state) {
         case T_STAR:
           compile(ast->as.unaryop.arg, state);
           code(compiled, (bytecode_t){BINST, POPB, {}});
+          state->sp -= 2;
           coderead(state, &ast->type);
           break;
         default:

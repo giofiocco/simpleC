@@ -3,9 +3,18 @@
 echo TEST $0 running...
 
 export prog=$(cat << EOF
+typedef struct {
+  int x;
+  int y;
+} point;
+
+point a[3] = {
+  {1, 2},
+  {4, 2}
+};
+
 int main() {
-  char *str = "asdf";
-  *str;
+  a[2];
 }
 EOF
 )
@@ -14,8 +23,11 @@ ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
 SETLABEL     _000
-STRING       asdf
-HEX          0x00
+HEX2         0x0001
+HEX2         0x0002
+HEX2         0x0004
+HEX2         0x0002
+DB           4
 SETLABEL     _start
 INST         DECSP
 INSTRELLABEL CALLR main
@@ -24,10 +36,25 @@ INSTLABEL    CALL exit
 SETLABEL     main
 INSTLABEL    RAM_A _000
 INST         PUSHA
-INSTHEX      PEEKAR 0x02
+INSTHEX      RAM_AL 0x02
+INST         PUSHA
+INST         POPA
+INST         SHL
+INST         SHL
+INST         A_B
+INST         POPA
+INST         SUM
 INST         PUSHA
 INST         POPB
-INST         rB_AL
+INSTHEX2     RAM_A 0x0002
+INST         SUM
+INST         A_B
+INST         rB_A
+INST         PUSHA
+INSTHEX      RAM_AL 0x02
+INST         SUB
+INST         A_B
+INST         rB_A
 INST         PUSHA
 INST         INCSP
 INST         INCSP
