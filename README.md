@@ -40,7 +40,7 @@ Multi-line comments: `/* ... */`
 
 # Grammar
 
-- global ::= ( funcdecl | typedef | decl ) \*
+- global ::= ( funcdecl | typedef | decl )\*
 - funcdecl ::= type sym paramdef block
 - paramdef ::= PARO ( type SYM ( COMMA type SYM )\* )? PARC
 - block ::= BRO code BRC
@@ -51,8 +51,9 @@ Multi-line comments: `/* ... */`
 - term ::= unary ( STAR unary | SLASH unary )\*
 - unary ::= PLUS access | MINUS access | AND access | STAR access | access SQO expr SQC | access
 - access ::= fac DOT SYM | fac
-- fac ::= INT | SYM | STRING | CHAR | funcall | PARO expr PARC | PARO type PARC fac
+- fac ::= INT | SYM | STRING | HEX | CHAR | funcall | PARO expr PARC | cast
 - funcall ::= SYM PARO ( expr ( COMMA expr )\* )? PARC
+- cast ::= PARO type PARC fac
 - type ::= STRUCT ? SYM STAR ? | VOIDKW | INTKW | CHARKW
 - typedef ::= TYPEDEF ( type | structdef | enumdef ) SYM SEMICOLON
 - structdef ::= STRUCT SYM ? BRO ( type SYM SEMICOLON )\* BRC

@@ -8,7 +8,9 @@ typedef struct {
   int y;
 } point;
 
-point b[4];
+point b[4] = {
+  (point){1,2}
+};
 
 int main() {
   int a[2];
@@ -23,7 +25,9 @@ ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
 SETLABEL     _000
-DB           16
+HEX2         0x0001
+HEX2         0x0002
+DB           12
 SETLABEL     _start
 INST         DECSP
 INSTRELLABEL CALLR main
@@ -32,34 +36,14 @@ INSTLABEL    CALL exit
 SETLABEL     main
 INST         DECSP
 INST         DECSP
-INST         SP_A
-INST         A_B
-INSTHEX2     RAM_A 0x0002
-INST         SUM
+INSTHEX      PEEKAR 0x04
 INST         PUSHA
-INSTHEX      RAM_AL 0x01
-INST         PUSHA
-INST         POPA
-INST         SHL
-INST         A_B
-INST         POPA
-INST         SUM
-INST         PUSHA
-INST         POPB
-INST         rB_A
+INSTHEX2     RAM_A 0x0008
 INST         PUSHA
 INSTLABEL    RAM_A _000
-INST         PUSHA
-INSTHEX      RAM_AL 0x02
-INST         PUSHA
-INST         POPA
-INST         SHL
-INST         SHL
-INST         A_B
-INST         POPA
-INST         SUM
-INST         PUSHA
 INST         POPB
+INST         SUM
+INST         A_B
 INSTHEX2     RAM_A 0x0002
 INST         SUM
 INST         A_B
@@ -71,7 +55,7 @@ INST         A_B
 INST         rB_A
 INST         PUSHA
 INST         SP_A
-INSTHEX2     RAM_B 0x000C
+INSTHEX2     RAM_B 0x000A
 INST         SUM
 INST         A_SP
 INST         RET

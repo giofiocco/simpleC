@@ -839,6 +839,7 @@ typedef enum {
   A_ARRAY,
   A_TYPEDEF,
   A_CAST,
+  A_INDEX,
   A_ASM,
 } ast_kind_t;
 
@@ -851,6 +852,10 @@ typedef struct ast_t_ {
       struct ast_t_ *ast;
       struct ast_t_ *next;
     } astlist;
+    struct {
+      struct ast_t_ *left;
+      struct ast_t_ *right;
+    } binary;
     struct {
       type_t type;
       token_t name;
@@ -1025,6 +1030,13 @@ void ast_dump(ast_t *ast, bool dumptype) {
         ast_dump(ast->as.cast.ast, dumptype);
         free_ptr(str);
       }
+      break;
+    case A_INDEX:
+      printf("INDEX(");
+      ast_dump(ast->as.binary.left, dumptype);
+      printf(", ");
+      ast_dump(ast->as.binary.right, dumptype);
+      printf(")");
       break;
     case A_ASM:
       printf("ASM(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
@@ -1413,17 +1425,18 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     savetok = *tokenizer;
     catch = true;
     if (setjmp(catch_buf) == 0) {
-      ast_t *expr = parse_expr(tokenizer);
+      type_t type = parse_type(tokenizer);
       catch = false;
       token_expect(tokenizer, T_PARC);
-      return expr;
+      ast_t *fac = parse_fac(tokenizer);
+      return ast_malloc((ast_t){A_CAST, location_union(token.loc, fac->forerror), {0}, {.cast = {type, fac}}});
     }
     *tokenizer = savetok;
 
-    type_t type = parse_type(tokenizer);
+    ast_t *expr = parse_expr(tokenizer);
+    catch = false;
     token_expect(tokenizer, T_PARC);
-    ast_t *fac = parse_fac(tokenizer);
-    return ast_malloc((ast_t){A_CAST, location_union(token.loc, fac->forerror), {0}, {.cast = {type, fac}}});
+    return expr;
   }
 
   if (token.kind == T_BRO) {
@@ -1489,14 +1502,15 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
   if (token_next_if_kind(tokenizer, T_SQO)) {
     ast_t *expr = parse_expr(tokenizer);
     token_t sqc = token_expect(tokenizer, T_SQC);
-    ast = ast_malloc((ast_t){
-      A_UNARYOP,
-      location_union(ast->forerror, sqc.loc),
-      {},
-      {.unaryop = {
-         T_STAR,
-         ast_malloc(
-           (ast_t){A_BINARYOP, location_union(ast->forerror, sqc.loc), {}, {.binaryop = {T_PLUS, ast, expr}}})}}});
+    ast = ast_malloc((ast_t){A_INDEX, location_union(ast->forerror, sqc.loc), {}, {.binary = {ast, expr}}});
+    // ast = ast_malloc((ast_t){
+    //   A_UNARYOP,
+    //   location_union(ast->forerror, sqc.loc),
+    //   {},
+    //   {.unaryop = {
+    //      T_STAR,
+    //      ast_malloc(
+    //        (ast_t){A_BINARYOP, location_union(ast->forerror, sqc.loc), {}, {.binaryop = {T_PLUS, ast, expr}}})}}});
   }
 
   return ast;
@@ -2122,6 +2136,17 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       ast->type = ast->as.cast.target;
       break;
+    case A_INDEX:
+      typecheck_expandable(ast->as.binary.right, state, (type_t){TY_INT, {}});
+      typecheck(ast->as.binary.left, state);
+      if (type_is_kind(&ast->as.binary.left->type, TY_PTR)) {
+        assert(ast->as.binary.left->type.as.ptr);
+        ast->type = *ast->as.binary.left->type.as.ptr;
+      } else if (type_is_kind(&ast->as.binary.left->type, TY_ARRAY)) {
+        assert(ast->as.binary.left->type.as.array.type);
+        ast->type = *ast->as.binary.left->type.as.array.type;
+      }
+      break;
     case A_ASM:
       ast->type = (type_t){TY_VOID, {}};
       break;
@@ -2171,10 +2196,11 @@ void coderead(state_t *state, type_t *type) {
     default:
       assert(type->kind == TY_STRUCT);
       size += size % 2;
+      size -= 2;
       code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = size}});
       code(compiled, (bytecode_t){BINST, SUM, {}});
       code(compiled, (bytecode_t){BINST, A_B, {}});
-      for (size -= 2; size > 0; size -= 2) {
+      for (; size > 0; size -= 2) {
         code(compiled, (bytecode_t){BINST, rB_A, {}});
         code(compiled, (bytecode_t){BINST, PUSHA, {}});
         state->sp += 2;
@@ -2233,6 +2259,41 @@ int datauli(compiled_t *compiled, state_t *state) {
   int uli = state->uli++;
   data(compiled, bytecode_uli(BSETLABEL, 0, uli));
   return uli;
+}
+
+int get_local_offset(ast_t *ast, state_t *state) {
+  assert(ast);
+  assert(state);
+
+  switch (ast->kind) {
+    case A_FAC:
+      if (ast->as.fac.kind == T_SYM) {
+        symbol_t *s = state_find_symbol(state, ast->as.fac);
+        if (s->kind != INFO_LOCAL) {
+          return -1;
+        }
+        return state->sp - s->info.local;
+      }
+      break;
+    case A_INDEX:
+      {
+        if (ast->as.binary.right->kind != A_FAC) {
+          return -1;
+        }
+        int local = get_local_offset(ast->as.binary.left, state);
+        if (local < 0) {
+          return -1;
+        }
+        return local + ast->as.binary.right->as.fac.asint * type_size(&ast->type);
+      }
+      break;
+    default:
+      printf("cannot get_local_offset: ");
+      ast_dump(ast, false);
+      printf("\n");
+      exit(1);
+  }
+  return -1;
 }
 
 void state_change_sp(state_t *state, int delta) {
@@ -2362,6 +2423,26 @@ void get_addr_ast(state_t *state, ast_t *ast) {
       code(compiled, (bytecode_t){BINSTHEX, RAM_BL, {.num = 2}});
       code(compiled, (bytecode_t){BINST, SUM, {}});
       break;
+    case A_INDEX:
+      if (ast->as.binary.right->kind == A_FAC) {
+        code(compiled,
+             (bytecode_t){BINSTHEX2, RAM_A, {.num = ast->as.binary.right->as.fac.asint * type_size(&ast->type)}});
+      } else {
+        compile(ast->as.binary.right, state);
+        code(compiled, (bytecode_t){BINST, POPA, {}});
+        state->sp -= 2;
+        int size = type_size(&ast->type);
+        for (int i = 1; i < size; i += 2) {
+          code(compiled, (bytecode_t){BINST, SHL, {}});
+        }
+      }
+      code(compiled, (bytecode_t){BINST, PUSHA, {}});
+      state->sp += 2;
+      get_addr_ast(state, ast->as.binary.left);
+      code(compiled, (bytecode_t){BINST, POPB, {}});
+      state->sp -= 2;
+      code(compiled, (bytecode_t){BINST, SUM, {}});
+      break;
     default:
       printf("TODO: %s at %d of ", __FUNCTION__, __LINE__);
       ast_dump(ast, false);
@@ -2370,10 +2451,32 @@ void get_addr_ast(state_t *state, ast_t *ast) {
   }
 }
 
+void read(ast_t *ast, state_t *state) {
+  assert(ast);
+  assert(state);
+  compiled_t *compiled = &state->compiled;
+
+  int local = get_local_offset(ast, state);
+  if (local > 0) {
+    int size = type_size(&ast->type);
+    for (int i = 0; i < size; i += 2) {
+      code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = local + size - 2}});
+      code(compiled, (bytecode_t){BINST, PUSHA, {}});
+    }
+    state->sp += size + size % 2;
+  } else {
+    get_addr_ast(state, ast);
+    code(compiled, (bytecode_t){BINST, A_B, {}});
+    coderead(state, &ast->type);
+  }
+}
+
 void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
   assert(ast);
   assert(state);
   compiled_t *compiled = &state->compiled;
+
+  int start_sp = state->sp;
 
   switch (ast->kind) {
     case A_CAST:
@@ -2384,12 +2487,14 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
           data(compiled, (bytecode_t){BDB, 0, {.num = delta}});
         }
       }
+      state->sp = start_sp;
       return;
     case A_ARRAY:
       compile_data(ast->as.astlist.ast, state, uli, offset);
       if (ast->as.astlist.next) {
         compile_data(ast->as.astlist.next, state, uli, offset + type_size(&ast->as.astlist.ast->type));
       }
+      state->sp = start_sp;
       return;
     case A_FAC:
       switch (ast->as.fac.kind) {
@@ -2432,6 +2537,7 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
     code(compiled, (bytecode_t){BINST, A_rB, {}});
   }
   compiled->is_init = false;
+  state->sp = start_sp;
 }
 
 void compile(ast_t *ast, state_t *state) {
@@ -2514,42 +2620,38 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_BINARYOP:
-      if (ast->as.binaryop.op == T_DOT) {
-        get_addr_ast(state, ast);
-        code(compiled, (bytecode_t){BINST, A_B, {}});
-        coderead(state, &ast->type);
-      } else {
-        compile(ast->as.binaryop.lhs, state);
-        compile(ast->as.binaryop.rhs, state);
-        if (ast->as.binaryop.op == T_PLUS && type_is_kind(&ast->type, TY_PTR)) {
-          code(compiled, (bytecode_t){BINST, POPA, {}});
-          state->sp -= 2;
-          int size = type_size(ast->type.as.ptr);
-          assert(size == 1 || size % 2 == 0);
-          if (size >= 2) {
-            for (int i = 0; i < size; i += 2) {
-              code(compiled, (bytecode_t){BINST, SHL, {}});
-            }
-          }
+      switch (ast->as.binaryop.op) {
+        case T_DOT:
+          get_addr_ast(state, ast);
           code(compiled, (bytecode_t){BINST, A_B, {}});
-        } else {
-          code(compiled, (bytecode_t){BINST, POPB, {}});
-          state->sp -= 2;
-        }
-        code(compiled, (bytecode_t){BINST, POPA, {}});
-        state->sp -= 2;
-        switch (ast->as.binaryop.op) {
-          case T_PLUS:
-            code(compiled, (bytecode_t){BINST, SUM, {}});
-            break;
-          case T_MINUS:
-            code(compiled, (bytecode_t){BINST, SUB, {}});
-            break;
-          default:
-            assert(0);
-        }
-        code(compiled, (bytecode_t){BINST, PUSHA, {}});
-        state->sp += 2;
+          coderead(state, &ast->type);
+          break;
+        case T_PLUS:
+        case T_MINUS:
+          compile(ast->as.binaryop.lhs, state);
+          compile(ast->as.binaryop.rhs, state);
+          // TODO:T_MINUS?
+          if (ast->as.binaryop.op == T_PLUS && type_is_kind(&ast->type, TY_PTR)) {
+            code(compiled, (bytecode_t){BINST, POPA, {}});
+            state->sp -= 2;
+            int size = type_size(ast->type.as.ptr);
+            assert(size == 1 || size % 2 == 0);
+            if (size >= 2) {
+              for (int i = 0; i < size; i += 2) {
+                code(compiled, (bytecode_t){BINST, SHL, {}});
+              }
+            }
+            code(compiled, (bytecode_t){BINST, A_B, {}});
+          } else {
+            code(compiled, (bytecode_t){BINST, POPB, {}});
+            state->sp -= 2;
+          }
+          code(compiled, (bytecode_t){BINST, POPA, {}});
+          code(compiled, (bytecode_t){BINST, ast->as.binaryop.op == T_PLUS ? SUM : SUB, {}});
+          code(compiled, (bytecode_t){BINST, PUSHA, {}});
+          break;
+        default:
+          assert(0);
       }
       break;
     case A_UNARYOP:
@@ -2750,6 +2852,42 @@ void compile(ast_t *ast, state_t *state) {
         state->sp += tsize - size;
         compile(ast->as.cast.ast, state);
       }
+      break;
+    case A_INDEX:
+      read(ast, state);
+      /*
+            {
+              if (ast->as.binary.left->kind == A_FAC && ast->as.binary.right->kind == A_FAC) {
+                symbol_t *s = state_find_symbol(state, ast->as.binary.left->as.fac);
+                if (s->kind == INFO_LOCAL) {
+                  int size = type_size_aligned(&ast->type);
+                  int num = state->sp - s->info.local + ast->as.binary.right->as.fac.asint * size;
+                  for (int i = 0; i < size; i += 2) {
+                    code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = num + size - 2}});
+                    code(compiled, (bytecode_t){BINST, PUSHA, {}});
+                  }
+                  state->sp += size;
+                  break;
+                }
+              }
+              if (ast->as.binary.right->kind == A_FAC) {
+                code(compiled,
+                     (bytecode_t){BINSTHEX2, RAM_A, {.num = ast->as.binary.right->as.fac.asint *
+         type_size(&ast->type)}}); } else { compile(ast->as.binary.right, state); code(compiled, (bytecode_t){BINST,
+         POPA, {}}); state->sp -= 2; int size = type_size(&ast->type); for (int i = 1; i < size; i += 2) {
+                  code(compiled, (bytecode_t){BINST, SHL, {}});
+                }
+              }
+              code(compiled, (bytecode_t){BINST, PUSHA, {}});
+              state->sp += 2;
+              get_addr_ast(state, ast->as.binary.left);
+              code(compiled, (bytecode_t){BINST, POPB, {}});
+              state->sp -= 2;
+              code(compiled, (bytecode_t){BINST, SUM, {}});
+              code(compiled, (bytecode_t){BINST, A_B, {}});
+              coderead(state, &ast->type);
+            }
+            */
       break;
     case A_ASM:
       TODO;

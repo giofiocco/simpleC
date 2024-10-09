@@ -1,5 +1,7 @@
 compile asm
 
+assign -> binary left right
+
 array of struct
 typedef array
 struct with array
