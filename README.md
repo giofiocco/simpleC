@@ -4,11 +4,34 @@ A compiler for a subset of `C`
 
 # Tokens
 
-- SYM: `[a-zA-Z_][a-zA-Z0-9_]*`
-- INT: `[0-9]+`
-- HEX: `0[xX]([0-9a-fA-F]{2} | [0-9a-fA-F]{4})`
-- STRING: `"[^"]*"`
-- CHAR `'.'`
+- SYM: `/[a-zA-Z_][a-zA-Z_0-9]*/`
+- INT: `/[0-9]+/`
+- HEX: `/0[xX]([0-9a-fA-F]{2}|[0-9a-fA-F]{4})/`
+- STRING: `/"[^"]*?"/`
+- PARO: `(`
+- PARC: `)`
+- SQO: `[`
+- SQC: `]`
+- BRO: `{`
+- BRC: `}`
+- RETURN: `return`
+- TYPEDEF: `typedef`
+- STRUCT: `struct`
+- SEMICOLON: `;`
+- PLUS: `+`
+- MINUS: `-`
+- STAR: `*`
+- SLASH: `/`
+- EQUAL: `=`
+- AND: `&`
+- COMMA: `,`
+- DOT: `.`
+- VOIDKW: `void`
+- INTKW: `int`
+- CHARKW: `char`
+- CHAR: `/'.'/`
+- ENUM: `enum`
+- ASM: `__asm__`
 
 ## Comments
 
@@ -17,21 +40,21 @@ Multi-line comments: `/* ... */`
 
 # Grammar
 
-- `<global>` &rarr; `<funcdecl>\* | <typedef> | <decl>`
-- `<funcdecl>` &rarr; `<type> <sym><paramdef> <block>`
-- `<paramdef>` &rarr; `(\(<type> <sym> \(, <type> <type>\)\*\)\?)`
-- `<block>` &rarr; `{ <code>* }`
-- `<code>` &rarr; `<statement>`
-- `<statement>` &rarr; `return <expr>\?; | <decl>; | <expr> \(= <expr>\)?; | <asm>`
-- `<decl>` &rarr; `<type> <sym>\([<expr>?]\)\? \(= <expr>\)\?`
-- `<expr>` &rarr; `<term> \(+ <term> | - <term>\)\*`
-- `<term>` &rarr; `<unary> \(* <unary> | / <unary>\)\*`
-- `<unary>` &rarr; `+ <access> | - <access> | <access> | &<access> | *<access> | <access>[<expr>]`
-- `<access>` &rarr; `<fac> . <sym> | <fac>`
-- `<fac>` &rarr; `<int> | <sym> | <string> | <char> | <funccall> | (<expr>) | (<type>) <fac> {\(<expr> \(, <expr>\)\*\)\?}`
-- `<funccall>` &rarr; `<sym>(\(<expr> \(, <expr>\)\*\)\?)`
-- `<type>` &rarr; `struct\? <sym> \*\?`
-- `<typedef>` &rarr; `typedef \(<type> | <structdef> | <enumdef>\) <sym>;`
-- `<structdef>` &rarr; `struct <sym>\? { \(<type> <sym>;\)* }`
-- `<enumdef>` &rarr; `enum { \(<sym>,\)* }`
-- `<asm>` &rarr; `__asm__ ( <string> )`
+- global ::= ( funcdecl | typedef | decl ) \*
+- funcdecl ::= type sym paramdef block
+- paramdef ::= PARO ( type SYM ( COMMA type SYM )\* )? PARC
+- block ::= BRO code BRC
+- code ::= statement
+- statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm ) SEMICOLON
+- decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
+- expr ::= term ( PLUS term | MINUS term )\*
+- term ::= unary ( STAR unary | SLASH unary )\*
+- unary ::= PLUS access | MINUS access | AND access | STAR access | access SQO expr SQC | access
+- access ::= fac DOT SYM | fac
+- fac ::= INT | SYM | STRING | CHAR | funcall | PARO expr PARC | PARO type PARC fac
+- funcall ::= SYM PARO ( expr ( COMMA expr )\* )? PARC
+- type ::= STRUCT ? SYM STAR ? | VOIDKW | INTKW | CHARKW
+- typedef ::= TYPEDEF ( type | structdef | enumdef ) SYM SEMICOLON
+- structdef ::= STRUCT SYM ? BRO ( type SYM SEMICOLON )\* BRC
+- enumdef ::= ENUM BRO ( SYM COMMA )\* BRC
+- asm ::= ASM PARO STRING PARC

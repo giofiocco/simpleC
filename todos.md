@@ -13,6 +13,7 @@ struct with array
 
 # Parser
 
+- [ ] is cast correct?
 - [ ] code block
 - [ ] is cast necessary in decl?
 - [ ] int a,b;
