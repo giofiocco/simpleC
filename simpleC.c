@@ -2484,28 +2484,6 @@ void get_addr_ast(state_t *state, ast_t *ast) {
   }
 }
 
-/*
-void read(ast_t *ast, state_t *state) {
-  assert(ast);
-  assert(state);
-  compiled_t *compiled = &state->compiled;
-
-  int local = get_local_offset(ast, state);
-  if (local > 0) {
-    int size = type_size(&ast->type);
-    for (int i = 0; i < size; i += 2) {
-      code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = local + size - 2}});
-      code(compiled, (bytecode_t){BINST, PUSHA, {}});
-    }
-    state->sp += size + size % 2;
-  } else {
-    get_addr_ast(state, ast);
-    code(compiled, (bytecode_t){BINST, A_B, {}});
-    coderead(state, &ast->type);
-  }
-}
-*/
-
 void read(state_t *state, type_t *type) {
   assert(state);
   assert(type);
@@ -2919,9 +2897,19 @@ void compile_ir(state_t *state, int iri) {
         int delta = state->sp - ir.arg.num;
         assert(0 < delta && delta < 256);
         int size = state->irs[iri + 1].arg.num;
-        for (int i = 0; i < size; i += 2) {
-          code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = delta}});
+        if (size == 1) {
+          code(compiled, (bytecode_t){BINST, SP_A, {}});
+          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = delta}});
+          code(compiled, (bytecode_t){BINST, SUM, {}});
+          code(compiled, (bytecode_t){BINST, A_B, {}});
+          code(compiled, (bytecode_t){BINST, rB_AL, {}});
           code(compiled, (bytecode_t){BINST, PUSHA, {}});
+        } else {
+          assert(size % 2 == 0);
+          for (int i = 0; i < size; i += 2) {
+            code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = delta}});
+            code(compiled, (bytecode_t){BINST, PUSHA, {}});
+          }
         }
         ++iri;
       } else if (iri + 1 < state->ir_num && state->irs[iri + 1].kind == IR_WRITE) {
@@ -2976,7 +2964,6 @@ void compile_ir(state_t *state, int iri) {
           }
         }
         code(compiled, (bytecode_t){BINST, PUSHA, {}});
-
         ++iri;
       } else {
         TODO;
