@@ -2849,7 +2849,7 @@ void compile_change_sp(state_t *state, int delta) {
   }
 
   assert(delta % 2 == 0);
-  if (abs(delta) <= 6) {
+  if (abs(delta) <= 8) {
     for (int i = 0; i < abs(delta); i += 2) {
       code(compiled, (bytecode_t){BINST, delta > 0 ? DECSP : INCSP, {}});
     }

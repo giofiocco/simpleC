@@ -31,18 +31,16 @@ INST         DECSP
 INST         DECSP
 INST         DECSP
 INST         SP_A
-INST         A_B
-INSTHEX2     RAM_A 0x0006
-INST         SUM
-INSTHEX      RAM_BL 0x03
+INSTHEX2     RAM_B 0x0009
 INST         SUM
 INST         A_B
 INST         rB_AL
 INST         PUSHA
-INST         SP_A
-INSTHEX2     RAM_B 0x000A
-INST         SUM
-INST         A_SP
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         INCSP
 INST         RET
 EOF
 )
