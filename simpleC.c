@@ -1089,9 +1089,10 @@ typedef struct {
     IR_ADDR_GLOBAL,  // + num
     IR_ADDR_OFFSET,  // + num
     IR_READ,         // + num
+    IR_WRITE,        // + num
     IR_CHANGE_SP,    // + num
     IR_INT,          // + num
-    IR_STRING,       // + sv
+    IR_STRING,       // + num
     IR_OPERATION,    // + inst
     IR_MUL,          // + num
     IR_CALL,         // + sv
@@ -1130,6 +1131,9 @@ void ir_dump(ir_t ir) {
     case IR_READ:
       printf("READ %d", ir.arg.num);
       break;
+    case IR_WRITE:
+      printf("WRITE %d", ir.arg.num);
+      break;
     case IR_CHANGE_SP:
       printf("CHANGE SP %d", ir.arg.num);
       break;
@@ -1137,7 +1141,7 @@ void ir_dump(ir_t ir) {
       printf("INT %d", ir.arg.num);
       break;
     case IR_STRING:
-      printf("STRING " SV_FMT, SV_UNPACK(ir.arg.sv));
+      printf("STRING %d", ir.arg.num);
       break;
     case IR_OPERATION:
       printf("OPERATION %s", instruction_to_string(ir.arg.inst));
@@ -2519,8 +2523,6 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
   assert(state);
   compiled_t *compiled = &state->compiled;
 
-  int start_sp = state->sp;
-
   switch (ast->kind) {
     case A_CAST:
       {
@@ -2530,14 +2532,12 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
           data(compiled, (bytecode_t){BDB, 0, {.num = delta}});
         }
       }
-      state->sp = start_sp;
       return;
     case A_ARRAY:
       compile_data(ast->as.binary.left, state, uli, offset);
       if (ast->as.binary.right) {
         compile_data(ast->as.binary.right, state, uli, offset + type_size(&ast->as.binary.left->type));
       }
-      state->sp = start_sp;
       return;
     case A_FAC:
       switch (ast->as.fac.kind) {
@@ -2580,7 +2580,6 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
     code(compiled, (bytecode_t){BINST, A_rB, {}});
   }
   compiled->is_init = false;
-  state->sp = start_sp;
 }
 
 void compile(ast_t *ast, state_t *state) {
@@ -2688,19 +2687,23 @@ void compile(ast_t *ast, state_t *state) {
             if (s->kind == INFO_CONSTANT) {
               state_add_ir(state, (ir_t){IR_INT, {.num = s->info.num}});
               state->sp += 2;
-            } else if (s->kind == INFO_LOCAL) {
+            } else {
               get_addr_ast(state, ast);
               assert(s->type);
               read(state, s->type);
               state->sp += type_size_aligned(s->type);
-            } else {
-              TODO;
             }
           }
           break;
         case T_STRING:
-          state_add_ir(state, (ir_t){IR_STRING, {.sv = ast->as.fac.image}});
-          state->sp += 2;
+          {
+            int uli = datauli(compiled, state);
+            compile_data(ast, state, 0, 0);
+            // state_add_ir(state, (ir_t){IR_STRING, {.num = uli}});
+            state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
+            state_add_ir(state, (ir_t){IR_READ, {.num = 2}});
+            state->sp += 2;
+          }
           break;
         default:
           assert(0);
@@ -2729,12 +2732,13 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_ASSIGN:
-      compile(ast->as.binary.right, state);
-      get_addr_ast(state, ast->as.binary.left);
-      code(compiled, (bytecode_t){BINST, A_B, {}});
-      code(compiled, (bytecode_t){BINST, POPA, {}});
-      state->sp -= 2;
-      codewrite(compiled, &ast->type);
+      {
+        compile(ast->as.binary.right, state);
+        get_addr_ast(state, ast->as.binary.left);
+        int size = type_size_aligned(&ast->type);
+        state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
+        state->sp -= size;
+      }
       break;
     case A_FUNCALL:
       if (ast->as.funcall.params) {
@@ -2920,6 +2924,15 @@ void compile_ir(state_t *state, int iri) {
           code(compiled, (bytecode_t){BINST, PUSHA, {}});
         }
         ++iri;
+      } else if (iri + 1 < state->ir_num && state->irs[iri + 1].kind == IR_WRITE) {
+        int delta = state->sp - ir.arg.num;
+        assert(0 < delta && delta < 256);
+        int size = state->irs[iri + 1].arg.num;
+        for (int i = 0; i < size; i += 2) {
+          code(compiled, (bytecode_t){BINST, POPA, {}});
+          code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = delta}});
+        }
+        ++iri;
       } else {
         int delta = state->sp - ir.arg.num;
         if (abs(delta) <= 4) {
@@ -2941,8 +2954,37 @@ void compile_ir(state_t *state, int iri) {
       }
       break;
     case IR_ADDR_GLOBAL:
+      if (iri + 1 < state->ir_num && state->irs[iri + 1].kind == IR_READ) {
+        int size = state->irs[iri + 1].arg.num;
+        code(compiled, bytecode_uli(BINSTLABEL, RAM_B, ir.arg.num));
+        if (size == 1) {
+          code(compiled, (bytecode_t){BINST, rB_AL, {}});
+        } else {
+          assert(size % 2 == 0);
+          if (size > 2) {
+            code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = size - 2}});
+            code(compiled, (bytecode_t){BINST, SUM, {}});
+            code(compiled, (bytecode_t){BINST, A_B, {}});
+          }
+          code(compiled, (bytecode_t){BINST, rB_A, {}});
+          for (int i = 2; i < size; i += 2) {
+            code(compiled, (bytecode_t){BINST, PUSHA, {}});
+            code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
+            code(compiled, (bytecode_t){BINST, SUB, {}});
+            code(compiled, (bytecode_t){BINST, A_B, {}});
+            code(compiled, (bytecode_t){BINST, rB_A, {}});
+          }
+        }
+        code(compiled, (bytecode_t){BINST, PUSHA, {}});
+
+        ++iri;
+      } else {
+        TODO;
+      }
       break;
     case IR_ADDR_OFFSET:
+      break;
+    case IR_WRITE:
       break;
     case IR_READ:
       break;
@@ -2956,16 +2998,16 @@ void compile_ir(state_t *state, int iri) {
         code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = ir.arg.num}});
       }
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      state->sp += 2;
       break;
     case IR_STRING:
+      code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.num));
+      code(compiled, (bytecode_t){BINST, PUSHA, {}});
       break;
     case IR_OPERATION:
       code(compiled, (bytecode_t){BINST, POPA, {}});
       code(compiled, (bytecode_t){BINST, POPB, {}});
       code(compiled, (bytecode_t){BINST, ir.arg.inst, {}});
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      state->sp -= 2;
       break;
     case IR_MUL:
       break;

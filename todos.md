@@ -1,6 +1,7 @@
 compile asm
 
 forerror -> loc
+datauli(compiled, state) -> datauli(state)
 
 maybe my own bytecode compiled to asm file
 typedef array
