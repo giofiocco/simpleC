@@ -1084,6 +1084,7 @@ typedef struct {
   enum {
     IR_SETLABEL,     // + sv
     IR_RETURN,       // + num
+    IR_FUNCEND,      //
     IR_ADDR_LOCAL,   // + num
     IR_ADDR_GLOBAL,  // + num
     IR_ADDR_OFFSET,  // + num
@@ -1093,11 +1094,16 @@ typedef struct {
     IR_STRING,       // + sv
     IR_OPERATION,    // + inst
     IR_MUL,          // + num
+    IR_CALL,         // + sv
   } kind;
   union {
     sv_t sv;
     int num;
     instruction_t inst;
+    struct {
+      int pos;
+      int len;
+    } _return;
   } arg;
 } ir_t;
 
@@ -1107,7 +1113,10 @@ void ir_dump(ir_t ir) {
       printf("SETLABEL " SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
     case IR_RETURN:
-      printf("RETURN %d", ir.arg.num);
+      printf("RETURN %d x %d", ir.arg._return.pos, ir.arg._return.len);
+      break;
+    case IR_FUNCEND:
+      printf("FUNCEND %d", ir.arg.num);
       break;
     case IR_ADDR_LOCAL:
       printf("ADDR LOCAL %d", ir.arg.num);
@@ -1135,6 +1144,9 @@ void ir_dump(ir_t ir) {
       break;
     case IR_MUL:
       printf("MUL %d", ir.arg.num);
+      break;
+    case IR_CALL:
+      printf("CALL " SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
   }
   printf("\n");
@@ -2597,10 +2609,11 @@ void compile(ast_t *ast, state_t *state) {
       }
       state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
       if (ast->as.funcdecl.block) {
+        state->sp = 0;
         compile(ast->as.funcdecl.block, state);
       }
       if (state->irs[state->ir_num - 1].kind != IR_RETURN) {
-        state_change_sp(state, -state->sp);
+        state_add_ir(state, (ir_t){IR_FUNCEND, {.num = state->sp}});
       }
       state_drop_scope(state);
       break;
@@ -2625,7 +2638,7 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_RETURN:
       compile(ast->as.ast, state);
-      state_add_ir(state, (ir_t){IR_RETURN, {.num = type_size_aligned(&ast->as.ast->type)}});
+      state_add_ir(state, (ir_t){IR_RETURN, {._return = {state->sp + 2, type_size_aligned(&ast->as.ast->type)}}});
       break;
     case A_BINARYOP:
       switch (ast->as.binaryop.op) {
@@ -2728,7 +2741,7 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.funcall.params, state);
       }
       state_change_sp(state, type_size_aligned(&ast->type));
-      code(compiled, bytecode_with_sv(BINSTRELLABEL, CALLR, ast->as.funcall.name.image));
+      state_add_ir(state, (ir_t){IR_CALL, {.sv = ast->as.funcall.name.image}});
       break;
     case A_ARRAY:
       assert(ast->type.as.array.len.kind != ARRAY_LEN_EXPR);
@@ -2846,10 +2859,30 @@ void compile(ast_t *ast, state_t *state) {
   }
 }
 
-bytecode_t *get_last_bytecode(state_t *state) {
+void compile_change_sp(state_t *state, int delta) {
   assert(state);
-  assert(!state->compiled.is_init);
-  return &state->compiled.code[state->compiled.code_num - 1];
+  compiled_t *compiled = &state->compiled;
+  if (delta == 0) {
+    return;
+  }
+
+  assert(delta % 2 == 0);
+  if (abs(delta) <= 6) {
+    for (int i = 0; i < abs(delta); i += 2) {
+      code(compiled, (bytecode_t){BINST, delta > 0 ? DECSP : INCSP, {}});
+    }
+  } else {
+    code(compiled, (bytecode_t){BINST, SP_A, {}});
+    if (delta > 0) {
+      code(compiled, (bytecode_t){BINST, A_B, {}});
+      code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = delta}});
+      code(compiled, (bytecode_t){BINST, SUB, {}});
+    } else {
+      code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = -delta}});
+      code(compiled, (bytecode_t){BINST, SUM, {}});
+    }
+    code(compiled, (bytecode_t){BINST, A_SP, {}});
+  }
 }
 
 void compile_ir(state_t *state, int iri) {
@@ -2865,14 +2898,26 @@ void compile_ir(state_t *state, int iri) {
       code(compiled, bytecode_with_sv(BSETLABEL, 0, ir.arg.sv));
       break;
     case IR_RETURN:
+      assert(0 < ir.arg._return.pos && ir.arg._return.pos < 256);
+      for (int i = 0; i < ir.arg._return.len; i += 2) {
+        code(compiled, (bytecode_t){BINST, POPA, {}});
+        code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = ir.arg._return.pos}});
+      }
+      compile_change_sp(state, ir.arg._return.pos - 2 - ir.arg._return.len);
+      code(compiled, (bytecode_t){BINST, RET, {}});
+      break;
+    case IR_FUNCEND:
+      compile_change_sp(state, -ir.arg.num);
+      code(compiled, (bytecode_t){BINST, RET, {}});
       break;
     case IR_ADDR_LOCAL:
       if (iri + 1 < state->ir_num && state->irs[iri + 1].kind == IR_READ) {
         int delta = state->sp - ir.arg.num;
-        if (delta > 2) {
+        assert(0 < delta && delta < 256);
+        int size = state->irs[iri + 1].arg.num;
+        for (int i = 0; i < size; i += 2) {
           code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = delta}});
-        } else {
-          code(compiled, (bytecode_t){BINST, PEEKA, {}});
+          code(compiled, (bytecode_t){BINST, PUSHA, {}});
         }
         ++iri;
       } else {
@@ -2902,24 +2947,7 @@ void compile_ir(state_t *state, int iri) {
     case IR_READ:
       break;
     case IR_CHANGE_SP:
-      assert(ir.arg.num != 0 && ir.arg.num % 2 == 0);
-      if (abs(ir.arg.num) <= 6) {
-        for (int i = 0; i < abs(ir.arg.num); i += 2) {
-          code(compiled, (bytecode_t){BINST, ir.arg.num > 0 ? DECSP : INCSP, {}});
-        }
-      } else {
-        code(compiled, (bytecode_t){BINST, SP_A, {}});
-        if (ir.arg.num > 0) {
-          code(compiled, (bytecode_t){BINST, A_B, {}});
-          code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = ir.arg.num}});
-          code(compiled, (bytecode_t){BINST, SUB, {}});
-        } else {
-          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = -ir.arg.num}});
-          code(compiled, (bytecode_t){BINST, SUM, {}});
-        }
-        code(compiled, (bytecode_t){BINST, A_SP, {}});
-      }
-      state->sp += ir.arg.num;
+      compile_change_sp(state, ir.arg.num);
       break;
     case IR_INT:
       if (0 <= ir.arg.num && ir.arg.num < 256) {
@@ -2940,6 +2968,9 @@ void compile_ir(state_t *state, int iri) {
       state->sp -= 2;
       break;
     case IR_MUL:
+      break;
+    case IR_CALL:
+      code(compiled, bytecode_with_sv(BINSTRELLABEL, CALLR, ir.arg.sv));
       break;
   }
 
