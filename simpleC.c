@@ -2907,7 +2907,7 @@ void compile_ir(state_t *state, int iri) {
         } else {
           assert(size % 2 == 0);
           for (int i = 0; i < size; i += 2) {
-            code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = delta}});
+            code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = delta + size - 2}});
             code(compiled, (bytecode_t){BINST, PUSHA, {}});
           }
         }
