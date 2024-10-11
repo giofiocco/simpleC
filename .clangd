@@ -2,3 +2,5 @@ CompileFlags:
   Add:
     - "-Wall"
     - "-Wextra"
+    - "-Wunused"
+    - "-Wunreachable-code"

@@ -1,10 +1,12 @@
 compile asm
 
-assign -> binary left right
+forerror -> loc
 
-array of struct
+maybe my own bytecode compiled to asm file
 typedef array
 struct with array
+
+test multiple returns
 
 # Tokenizer
 
@@ -15,23 +17,21 @@ struct with array
 
 # Parser
 
-- [ ] is cast correct?
 - [ ] code block
-- [ ] is cast necessary in decl?
 - [ ] int a,b;
-- [ ] <index> -> <expr>[<expr>]
 - [ ] int \*\*a;
+- [ ] check proper location print when error
 
 # Typechecker
 
 - [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it
 - [ ] warn if no return in some function
-- [ ] operations between char
+- [ ] - - between char
 
 # Compiler
 
 - [ ] compile_data array of str or ptr
-- [ ] array with expression as length in the stack
+- [ ] array with expression as length
 
 # PostOpt
 

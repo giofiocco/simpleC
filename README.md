@@ -36,6 +36,7 @@ A compiler for a subset of `C`
 ## Comments
 
 Single-line comments: `//` (till the end of line)
+
 Multi-line comments: `/* ... */`
 
 # Grammar
@@ -59,3 +60,19 @@ Multi-line comments: `/* ... */`
 - structdef ::= STRUCT SYM ? BRO ( type SYM SEMICOLON )\* BRC
 - enumdef ::= ENUM BRO ( SYM COMMA )\* BRC
 - asm ::= ASM PARO STRING PARC
+
+# Bytecodes
+
+- SETLABEL
+- RETURN
+- ADDR_LOCAL
+- ADDR_GLOBAL
+- ADDR_OFFSET
+- READ
+- WRITE
+- INST (for sum sub shl shr ...)
+- NUMBER
+- STRING
+- DECL ? and GLOBDECL
+- CAST ?
+- ASM
