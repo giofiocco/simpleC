@@ -17,8 +17,7 @@ SETLABEL     _001
 HEX          0x20
 SETLABEL     _002
 HEX2         0x0005
-DB           2
-DB           6
+DB           8
 SETLABEL     _003
 STRING       asdf
 HEX          0x00
@@ -27,14 +26,17 @@ INSTHEX      RAM_AL 0x02
 INST         PUSHA
 INSTHEX      RAM_AL 0x01
 INST         PUSHA
-INST         POPB
 INST         POPA
+INST         POPB
 INST         SUM
 INST         PUSHA
-INSTLABEL    RAM_B _002
-INSTHEX2     RAM_A 0x0002
+INSTLABEL    RAM_A _002
+INST         PUSHA
+INST         POPA
+INSTHEX2     RAM_B 0x0002
 INST         SUM
-INST         A_B
+INST         PUSHA
+INST         POPB
 INST         POPA
 INST         A_rB
 INST         DECSP

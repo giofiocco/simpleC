@@ -34,13 +34,11 @@ INST         DECSP
 INST         DECSP
 INSTHEX      PEEKAR 0x04
 INST         PUSHA
-INSTHEX2     RAM_A 0x0008
-INST         PUSHA
+INST         INCSP
 INSTLABEL    RAM_A _000
-INST         POPB
-INST         SUM
-INST         A_B
-INSTHEX2     RAM_A 0x0002
+INST         PUSHA
+INST         POPA
+INSTHEX2     RAM_B 0x000A
 INST         SUM
 INST         A_B
 INST         rB_A
@@ -50,8 +48,8 @@ INST         SUB
 INST         A_B
 INST         rB_A
 INST         PUSHA
-INST         SP_A
-INSTHEX2     RAM_B 0x000A
-INST         SUM
-INST         A_SP
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         INCSP
 INST         RET

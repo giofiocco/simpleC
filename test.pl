@@ -74,14 +74,19 @@ while ( $i <= $#ARGV ) {
         print $file "output:\n";
         print $file $output;
         close $file;
+        print "RECORDED\n";
     }
     else {
         my $ok = 1;
         unless ( $expected eq $output ) {
             $ok = 0;
             print "\nOUTPUTS DIFFER\n";
-            `echo "$expected" > $_.expected`;
-            `echo "$output" > $_.output`;
+            open( my $file, ">", $_ . ".expected" );
+            print $file $expected;
+            close $file;
+            open( $file, ">", $_ . ".output" );
+            print $file $output;
+            close $file;
             system( "diff", "-y", "-d", "$_.expected", "$_.output" );
             `rm $_.expected $_.output`;
         }
