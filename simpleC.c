@@ -2405,6 +2405,9 @@ int get_local_offset(ast_t *ast, state_t *state) {
 
 void state_change_sp(state_t *state, int delta) {
   assert(state);
+  if (delta == 0) {
+    return;
+  }
   if (state->ir_num > 0 && state->irs[state->ir_num - 1].kind == IR_CHANGE_SP) {
     state->irs[state->ir_num - 1].arg.num += delta;
   } else {
@@ -2644,9 +2647,9 @@ void compile(ast_t *ast, state_t *state) {
     case A_UNARYOP:
       switch (ast->as.unaryop.op) {
         case T_STAR:
-          get_addr_ast(state, ast->as.unaryop.arg);
+          compile(ast->as.unaryop.arg, state);
           state_add_ir(state, (ir_t){IR_READ, {.num = type_size(&ast->type)}});
-          state->sp += type_size_aligned(&ast->type);
+          state->sp += type_size_aligned(&ast->type) - 2;
           break;
         default:
           assert(0);
@@ -2680,7 +2683,6 @@ void compile(ast_t *ast, state_t *state) {
             compile_data(ast, state, 0, 0);
             // state_add_ir(state, (ir_t){IR_STRING, {.num = uli}});
             state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
-            state_add_ir(state, (ir_t){IR_READ, {.num = 2}});
             state->sp += 2;
           }
           break;
@@ -2957,15 +2959,40 @@ void compile_ir(state_t *state, int iri) {
         }
         code(compiled, (bytecode_t){BINST, PUSHA, {}});
         ++iri;
-      } else {
+      } else if (iri + 1 < state->ir_num && state->irs[iri + 1].kind == IR_WRITE) {
         TODO;
+      } else {
+        code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.num));
+        code(compiled, (bytecode_t){BINST, PUSHA, {}});
       }
       break;
     case IR_ADDR_OFFSET:
+      assert(0);
       break;
     case IR_WRITE:
+      TODO;
       break;
     case IR_READ:
+      code(compiled, (bytecode_t){BINST, POPB, {}});
+      if (ir.arg.num == 1) {
+        code(compiled, (bytecode_t){BINST, rB_AL, {}});
+      } else {
+        assert(ir.arg.num % 2 == 0);
+        if (ir.arg.num > 2) {
+          code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = ir.arg.num - 2}});
+          code(compiled, (bytecode_t){BINST, SUM, {}});
+          code(compiled, (bytecode_t){BINST, A_B, {}});
+        }
+        code(compiled, (bytecode_t){BINST, rB_A, {}});
+        for (int i = 2; i < ir.arg.num; i += 2) {
+          code(compiled, (bytecode_t){BINST, PUSHA, {}});
+          code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
+          code(compiled, (bytecode_t){BINST, SUB, {}});
+          code(compiled, (bytecode_t){BINST, A_B, {}});
+          code(compiled, (bytecode_t){BINST, rB_A, {}});
+        }
+      }
+      code(compiled, (bytecode_t){BINST, PUSHA, {}});
       break;
     case IR_CHANGE_SP:
       compile_change_sp(state, ir.arg.num);
@@ -2989,6 +3016,7 @@ void compile_ir(state_t *state, int iri) {
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
       break;
     case IR_MUL:
+      TODO;
       break;
     case IR_CALL:
       code(compiled, bytecode_with_sv(BINSTRELLABEL, CALLR, ir.arg.sv));
