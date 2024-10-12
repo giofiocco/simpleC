@@ -1202,7 +1202,7 @@ void state_add_addr_offset(state_t *state, int offset) {
   assert(state);
   if (state->ir_num > 0 &&
       (state->irs[state->ir_num - 1].kind == IR_ADDR_LOCAL || state->irs[state->ir_num - 1].kind == IR_ADDR_OFFSET)) {
-    state->irs[state->ir_num - 1].arg.num -= offset;
+    state->irs[state->ir_num - 1].arg.num += offset;
   } else {
     state_add_ir(state, (ir_t){IR_ADDR_OFFSET, {.num = offset}});
   }
@@ -2081,6 +2081,9 @@ void typecheck(ast_t *ast, state_t *state) {
         case T_SYM:
           {
             symbol_t *s = state_find_symbol(state, ast->as.fac);
+            if (type_is_kind(s->type, TY_ARRAY)) {
+              eprintf(ast->forerror, "cannot access expr with ARRAY type, maybe wanna cast to PTR");
+            }
             ast->type = *s->type;
           }
           break;
@@ -2428,7 +2431,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
         assert(ast->as.fac.kind == T_SYM);
         symbol_t *s = state_find_symbol(state, ast->as.fac);
         if (s->kind == INFO_LOCAL) {
-          state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = s->info.local}});
+          state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - s->info.local}});
         } else if (s->kind == INFO_GLOBAL) {
           state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = s->info.global}});
         } else {
@@ -2492,18 +2495,6 @@ void get_addr_ast(state_t *state, ast_t *ast) {
       printf("\n");
       exit(1);
   }
-}
-
-void read(state_t *state, type_t *type) {
-  assert(state);
-  assert(type);
-  int size = 0;
-  if (type_is_kind(type, TY_ARRAY)) {
-    size = 2;
-  } else {
-    size = type_size(type);
-  }
-  state_add_ir(state, (ir_t){IR_READ, {.num = size}});
 }
 
 void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
@@ -2595,8 +2586,8 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.funcdecl.params, state);
       }
       state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
+      state->sp = 0;
       if (ast->as.funcdecl.block) {
-        state->sp = 0;
         compile(ast->as.funcdecl.block, state);
       }
       if (state->irs[state->ir_num - 1].kind != IR_RETURN) {
@@ -2631,7 +2622,7 @@ void compile(ast_t *ast, state_t *state) {
       switch (ast->as.binaryop.op) {
         case T_DOT:
           get_addr_ast(state, ast);
-          read(state, &ast->type);
+          state_add_ir(state, (ir_t){IR_READ, {.num = type_size(&ast->type)}});
           state->sp += type_size_aligned(&ast->type);
           break;
         case T_PLUS:
@@ -2654,7 +2645,7 @@ void compile(ast_t *ast, state_t *state) {
       switch (ast->as.unaryop.op) {
         case T_STAR:
           get_addr_ast(state, ast->as.unaryop.arg);
-          read(state, &ast->type);
+          state_add_ir(state, (ir_t){IR_READ, {.num = type_size(&ast->type)}});
           state->sp += type_size_aligned(&ast->type);
           break;
         default:
@@ -2678,7 +2669,7 @@ void compile(ast_t *ast, state_t *state) {
             } else {
               get_addr_ast(state, ast);
               assert(s->type);
-              read(state, s->type);
+              state_add_ir(state, (ir_t){IR_READ, {.num = type_size(s->type)}});
               state->sp += type_size_aligned(s->type);
             }
           }
@@ -2889,7 +2880,7 @@ void compile_ir(state_t *state, int iri) {
         code(compiled, (bytecode_t){BINST, POPA, {}});
         code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = ir.arg._return.pos}});
       }
-      compile_change_sp(state, ir.arg._return.pos - 2 - ir.arg._return.len);
+      compile_change_sp(state, -(ir.arg._return.pos - 2 - ir.arg._return.len));
       code(compiled, (bytecode_t){BINST, RET, {}});
       break;
     case IR_FUNCEND:
@@ -2898,12 +2889,11 @@ void compile_ir(state_t *state, int iri) {
       break;
     case IR_ADDR_LOCAL:
       if (iri + 1 < state->ir_num && state->irs[iri + 1].kind == IR_READ) {
-        int delta = state->sp - ir.arg.num;
-        assert(0 < delta && delta < 256);
+        assert(0 < ir.arg.num && ir.arg.num < 256);
         int size = state->irs[iri + 1].arg.num;
         if (size == 1) {
           code(compiled, (bytecode_t){BINST, SP_A, {}});
-          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = delta}});
+          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.num}});
           code(compiled, (bytecode_t){BINST, SUM, {}});
           code(compiled, (bytecode_t){BINST, A_B, {}});
           code(compiled, (bytecode_t){BINST, rB_AL, {}});
@@ -2911,34 +2901,32 @@ void compile_ir(state_t *state, int iri) {
         } else {
           assert(size % 2 == 0);
           for (int i = 0; i < size; i += 2) {
-            code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = delta + size - 2}});
+            code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = ir.arg.num + size - 2}});
             code(compiled, (bytecode_t){BINST, PUSHA, {}});
           }
         }
         ++iri;
       } else if (iri + 1 < state->ir_num && state->irs[iri + 1].kind == IR_WRITE) {
-        int delta = state->sp - ir.arg.num;
-        assert(0 < delta && delta < 256);
+        assert(0 < ir.arg.num && ir.arg.num < 256);
         int size = state->irs[iri + 1].arg.num;
         for (int i = 0; i < size; i += 2) {
           code(compiled, (bytecode_t){BINST, POPA, {}});
-          code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = delta}});
+          code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = ir.arg.num}});
         }
         ++iri;
       } else {
-        int delta = state->sp - ir.arg.num;
-        if (abs(delta) <= 4) {
-          for (int i = 0; i < abs(delta); ++i) {
-            code(compiled, (bytecode_t){BINST, delta > 0 ? INCA : DECA, {}});
+        if (abs(ir.arg.num) <= 4) {
+          for (int i = 0; i < abs(ir.arg.num); ++i) {
+            code(compiled, (bytecode_t){BINST, ir.arg.num > 0 ? INCA : DECA, {}});
           }
         } else {
           code(compiled, (bytecode_t){BINST, SP_A, {}});
-          if (delta > 0) {
-            code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = delta}});
+          if (ir.arg.num > 0) {
+            code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.num}});
             code(compiled, (bytecode_t){BINST, SUM, {}});
           } else {
             code(compiled, (bytecode_t){BINST, A_B, {}});
-            code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = -delta}});
+            code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = -ir.arg.num}});
             code(compiled, (bytecode_t){BINST, SUB, {}});
           }
         }

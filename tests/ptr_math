@@ -67,4 +67,3 @@ export exitcode=0
 #./simpleC $params -e "$prog"
 
 ./test $0
-
