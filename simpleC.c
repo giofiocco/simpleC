@@ -427,14 +427,10 @@ void token_dump(token_t token) {
          token.loc.col);
 }
 
-#define token_expect(__tok, __kind) token_expect_((__tok), (__kind), __FUNCTION__, __LINE__)
-token_t token_expect_(tokenizer_t *tokenizer, token_kind_t kind, const char *function, int line) {
+token_t token_expect(tokenizer_t *tokenizer, token_kind_t kind) {
   assert(tokenizer);
   token_t token = token_next(tokenizer);
   if (token.kind != kind) {
-    if (0) {
-      fprintf(stderr, "error rised from: %s:%d\n", function, line);
-    }
     eprintf(token.loc, "expected '%s' found '%s'", token_kind_to_string(kind), token_kind_to_string(token.kind));
   }
   return token;
@@ -791,16 +787,6 @@ int type_size(type_t *type) {
           }
         }
         return type_size(a) + type_size(type->as.fieldlist.next);
-
-        // if (type->as.fieldlist.type->kind == TY_CHAR) {
-        //   if (type->as.fieldlist.next && type->as.fieldlist.next->as.fieldlist.type->kind == TY_CHAR) {
-        //     return 2 + type_size(type->as.fieldlist.next->as.fieldlist.next);
-        //   } else {
-        //     return 2 + type_size(type->as.fieldlist.next);
-        //   }
-        // } else {
-        //   return type_size(type->as.fieldlist.type) + type_size(type->as.fieldlist.next);
-        // }
       }
     case TY_ENUM:
       return 2;
@@ -862,13 +848,12 @@ typedef enum {
   A_ARRAY,
   A_TYPEDEF,
   A_CAST,
-  A_INDEX,
   A_ASM,
 } ast_kind_t;
 
 typedef struct ast_t_ {
   ast_kind_t kind;
-  location_t forerror;
+  location_t loc;
   type_t type;
   union {
     struct {
@@ -1040,12 +1025,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
       }
       break;
     case A_ASSIGN:
-    case A_INDEX:
-      if (ast->kind == A_ASSIGN) {
-        printf("ASSIGN(");
-      } else {
-        printf("INDEX(");
-      }
+      printf("ASSIGN(");
       ast_dump(ast->as.binary.left, dumptype);
       printf(", ");
       ast_dump(ast->as.binary.right, dumptype);
@@ -1062,8 +1042,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
   }
 }
 
-#define LABEL_MAX  128
-#define ALIAS_MAX  128
 #define SYMBOL_MAX 128
 #define SCOPE_MAX  32
 #define DATA_MAX   128
@@ -1483,12 +1461,12 @@ ast_t *parse_param(tokenizer_t *tokenizer) {
   }
 
   ast_t *expr = parse_expr(tokenizer);
-  ast_t *ast = ast_malloc((ast_t){A_PARAM, expr->forerror, {0}, {.binary = {expr, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_PARAM, expr->loc, {0}, {.binary = {expr, NULL}}});
   ast_t *asti = ast;
 
   while (token_next_if_kind(tokenizer, T_COMMA)) {
     expr = parse_expr(tokenizer);
-    asti->as.binary.right = ast_malloc((ast_t){A_PARAM, expr->forerror, {0}, {.binary = {expr, NULL}}});
+    asti->as.binary.right = ast_malloc((ast_t){A_PARAM, expr->loc, {0}, {.binary = {expr, NULL}}});
     asti = asti->as.binary.right;
   }
 
@@ -1504,7 +1482,7 @@ ast_t *parse_funcall(tokenizer_t *tokenizer) {
   ast_t *param = parse_param(tokenizer);
 
   return ast_malloc(
-    (ast_t){A_FUNCALL, param ? location_union(name.loc, param->forerror) : name.loc, {0}, {.funcall = {name, param}}});
+    (ast_t){A_FUNCALL, param ? location_union(name.loc, param->loc) : name.loc, {0}, {.funcall = {name, param}}});
 }
 
 ast_t *parse_array(tokenizer_t *tokenizer) {
@@ -1519,15 +1497,15 @@ ast_t *parse_array(tokenizer_t *tokenizer) {
   }
 
   ast_t *expr = parse_expr(tokenizer);
-  ast_t *ast = ast_malloc((ast_t){A_ARRAY, expr->forerror, {0}, {.binary = {expr, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_ARRAY, expr->loc, {0}, {.binary = {expr, NULL}}});
   ast_t *asti = ast;
   while (token_next_if_kind(tokenizer, T_COMMA)) {
     expr = parse_expr(tokenizer);
-    asti->as.binary.right = ast_malloc((ast_t){A_ARRAY, expr->forerror, {0}, {.binary = {expr, NULL}}});
+    asti->as.binary.right = ast_malloc((ast_t){A_ARRAY, expr->loc, {0}, {.binary = {expr, NULL}}});
     asti = asti->as.binary.right;
   }
   token_t brc = token_expect(tokenizer, T_BRC);
-  ast->forerror = location_union(bro.loc, brc.loc);
+  ast->loc = location_union(bro.loc, brc.loc);
   return ast;
 }
 
@@ -1546,7 +1524,7 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
       catch = false;
       token_expect(tokenizer, T_PARC);
       ast_t *fac = parse_fac(tokenizer);
-      return ast_malloc((ast_t){A_CAST, location_union(token.loc, fac->forerror), {0}, {.cast = {type, fac}}});
+      return ast_malloc((ast_t){A_CAST, location_union(token.loc, fac->loc), {0}, {.cast = {type, fac}}});
     }
     *tokenizer = savetok;
 
@@ -1588,7 +1566,7 @@ ast_t *parse_access(tokenizer_t *tokenizer) {
     token_t name = token_expect(tokenizer, T_SYM);
 
     return ast_malloc((ast_t){A_BINARYOP,
-                              location_union(fac->forerror, name.loc),
+                              location_union(fac->loc, name.loc),
                               {0},
                               {.binaryop = {dot.kind, fac, ast_malloc((ast_t){A_FAC, name.loc, {0}, {.fac = name}})}}});
   }
@@ -1607,8 +1585,7 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
     case T_STAR:
       token_next(tokenizer);
       ast_t *arg = parse_access(tokenizer);
-      return ast_malloc(
-        (ast_t){A_UNARYOP, location_union(token.loc, arg->forerror), {0}, {.unaryop = {token.kind, arg}}});
+      return ast_malloc((ast_t){A_UNARYOP, location_union(token.loc, arg->loc), {0}, {.unaryop = {token.kind, arg}}});
     default:
       break;
   }
@@ -1618,15 +1595,13 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
   if (token_next_if_kind(tokenizer, T_SQO)) {
     ast_t *expr = parse_expr(tokenizer);
     token_t sqc = token_expect(tokenizer, T_SQC);
-    // ast = ast_malloc((ast_t){A_INDEX, location_union(ast->forerror, sqc.loc), {}, {.binary = {ast, expr}}});
     ast = ast_malloc((ast_t){
       A_UNARYOP,
-      location_union(ast->forerror, sqc.loc),
+      location_union(ast->loc, sqc.loc),
       {},
       {.unaryop = {
          T_STAR,
-         ast_malloc(
-           (ast_t){A_BINARYOP, location_union(ast->forerror, sqc.loc), {}, {.binaryop = {T_PLUS, ast, expr}}})}}});
+         ast_malloc((ast_t){A_BINARYOP, location_union(ast->loc, sqc.loc), {}, {.binaryop = {T_PLUS, ast, expr}}})}}});
   }
 
   return ast;
@@ -1640,8 +1615,7 @@ ast_t *parse_term(tokenizer_t *tokenizer) {
   while (token = token_peek(tokenizer), token.kind == T_STAR || token.kind == T_SLASH) {
     token_next(tokenizer);
     ast_t *b = parse_unary(tokenizer);
-    a =
-      ast_malloc((ast_t){A_BINARYOP, location_union(a->forerror, b->forerror), {0}, {.binaryop = {token.kind, a, b}}});
+    a = ast_malloc((ast_t){A_BINARYOP, location_union(a->loc, b->loc), {0}, {.binaryop = {token.kind, a, b}}});
   }
 
   return a;
@@ -1656,8 +1630,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
   while (token = token_peek(tokenizer), token.kind == T_PLUS || token.kind == T_MINUS) {
     token_next(tokenizer);
     ast_t *b = parse_term(tokenizer);
-    a =
-      ast_malloc((ast_t){A_BINARYOP, location_union(a->forerror, b->forerror), {0}, {.binaryop = {token.kind, a, b}}});
+    a = ast_malloc((ast_t){A_BINARYOP, location_union(a->loc, b->loc), {0}, {.binaryop = {token.kind, a, b}}});
   }
 
   return a;
@@ -1694,14 +1667,14 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
     // if (expr->kind == A_ARRAY) {
     //   ast_t *a = expr;
     //   while (a) {
-    //     a->as.binary.left = ast_malloc((ast_t){A_CAST, a->forerror, {}, {.cast = {type, a->as.binary.left}}});
+    //     a->as.binary.left = ast_malloc((ast_t){A_CAST, a->loc, {}, {.cast = {type, a->as.binary.left}}});
     //     a = a->as.binary.right;
     //   }
     // }
-    expr = ast_malloc((ast_t){A_CAST, expr->forerror, {}, {.cast = {type, expr}}});
+    expr = ast_malloc((ast_t){A_CAST, expr->loc, {}, {.cast = {type, expr}}});
   }
   return ast_malloc((ast_t){A_DECL,
-                            location_union(start, expr ? expr->forerror : name.loc),
+                            location_union(start, expr ? expr->loc : name.loc),
                             {},
                             {.decl = {type, name, expr, array_len_expr}}});
 }
@@ -1729,7 +1702,7 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
       expr = parse_expr(tokenizer);
     }
     token_expect(tokenizer, T_SEMICOLON);
-    return ast_malloc((ast_t){A_RETURN, location_union(start, expr ? expr->forerror : start), {0}, {.ast = expr}});
+    return ast_malloc((ast_t){A_RETURN, location_union(start, expr ? expr->loc : start), {0}, {.ast = expr}});
   }
 
   tokenizer_t savetok = *tokenizer;
@@ -1755,12 +1728,12 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
   if (token_next_if_kind(tokenizer, T_EQUAL)) {
     ast_t *b = parse_expr(tokenizer);
     token_expect(tokenizer, T_SEMICOLON);
-    a = ast_malloc((ast_t){A_ASSIGN, location_union(a->forerror, b->forerror), {}, {.binary = {a, b}}});
-    return ast_malloc((ast_t){A_STATEMENT, a->forerror, {}, {.ast = a}});
+    a = ast_malloc((ast_t){A_ASSIGN, location_union(a->loc, b->loc), {}, {.binary = {a, b}}});
+    return ast_malloc((ast_t){A_STATEMENT, a->loc, {}, {.ast = a}});
   }
   token_expect(tokenizer, T_SEMICOLON);
 
-  a = ast_malloc((ast_t){A_STATEMENT, a->forerror, {}, {.ast = a}});
+  a = ast_malloc((ast_t){A_STATEMENT, a->loc, {}, {.ast = a}});
 
   return a;
 }
@@ -1781,14 +1754,14 @@ ast_t *parse_block(tokenizer_t *tokenizer) {
   }
 
   ast_t *code = parse_code(tokenizer);
-  ast_t *ast = ast_malloc((ast_t){A_BLOCK, location_union(token.loc, code->forerror), {0}, {.binary = {code, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_BLOCK, location_union(token.loc, code->loc), {0}, {.binary = {code, NULL}}});
   ast_t *block = ast;
 
   while (token_peek(tokenizer).kind != T_BRC) {
     code = parse_code(tokenizer);
     if (code) {
       block->as.binary.right =
-        ast_malloc((ast_t){A_BLOCK, location_union(ast->forerror, code->forerror), {0}, {.binary = {code, NULL}}});
+        ast_malloc((ast_t){A_BLOCK, location_union(ast->loc, code->loc), {0}, {.binary = {code, NULL}}});
       block = block->as.binary.right;
     }
   }
@@ -1816,7 +1789,7 @@ ast_t *parse_paramdef(tokenizer_t *tokenizer) {
     type = parse_type(tokenizer);
     name = token_expect(tokenizer, T_SYM);
     asti->as.paramdef.next =
-      ast_malloc((ast_t){A_PARAMDEF, location_union(ast->forerror, name.loc), {0}, {.paramdef = {type, name, NULL}}});
+      ast_malloc((ast_t){A_PARAMDEF, location_union(ast->loc, name.loc), {0}, {.paramdef = {type, name, NULL}}});
     asti = asti->as.paramdef.next;
   }
 
@@ -1837,7 +1810,7 @@ ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
   ast_t *block = parse_block(tokenizer);
 
   return ast_malloc((ast_t){A_FUNCDECL,
-                            location_union(token.loc, block ? block->forerror : (param ? param->forerror : name.loc)),
+                            location_union(token.loc, block ? block->loc : (param ? param->loc : name.loc)),
                             {0},
                             {.funcdecl = {type, name, param, block}}});
 }
@@ -1896,12 +1869,12 @@ ast_t *parse(tokenizer_t *tokenizer) {
   }
 
   ast_t *glob = parse_global(tokenizer);
-  ast_t *ast = ast_malloc((ast_t){A_GLOBAL, glob->forerror, {0}, {.binary = {glob, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_GLOBAL, glob->loc, {0}, {.binary = {glob, NULL}}});
   ast_t *asti = ast;
 
   while (token_peek(tokenizer).kind != T_NONE) {
     ast_t *glob = parse_global(tokenizer);
-    asti->as.binary.right = ast_malloc((ast_t){A_GLOBAL, glob->forerror, {0}, {.binary = {glob, NULL}}});
+    asti->as.binary.right = ast_malloc((ast_t){A_GLOBAL, glob->loc, {0}, {.binary = {glob, NULL}}});
     asti = asti->as.binary.right;
   }
 
@@ -1916,7 +1889,7 @@ void typecheck_expect(ast_t *ast, state_t *state, type_t type) {
     typecheck(ast, state);
   }
 
-  type_expect(ast->forerror, &ast->type, &type);
+  type_expect(ast->loc, &ast->type, &type);
 }
 
 void typecheck_expandable(ast_t *ast, state_t *state, type_t type) {
@@ -1930,7 +1903,7 @@ void typecheck_expandable(ast_t *ast, state_t *state, type_t type) {
     return;
   }
 
-  type_expect(ast->forerror, &ast->type, &type);
+  type_expect(ast->loc, &ast->type, &type);
 }
 
 void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
@@ -2028,7 +2001,7 @@ void typecheck(ast_t *ast, state_t *state) {
           assert(ast->as.binaryop.rhs->as.fac.kind == T_SYM);
 
           if (!type_is_kind(type, TY_STRUCT)) {
-            eprintf(ast->as.binaryop.lhs->forerror, "expected a 'STRUCT', found '%s'", type_dump_to_string(type));
+            eprintf(ast->as.binaryop.lhs->loc, "expected a 'STRUCT', found '%s'", type_dump_to_string(type));
           }
 
           type_t *f = type->as.alias.type->as.struct_.fieldlist;
@@ -2036,9 +2009,7 @@ void typecheck(ast_t *ast, state_t *state) {
             f = f->as.fieldlist.next;
           };
           if (!f) {
-            eprintf(ast->as.binaryop.rhs->forerror,
-                    "member not found in '%s'",
-                    type_dump_to_string(type->as.alias.type));
+            eprintf(ast->as.binaryop.rhs->loc, "member not found in '%s'", type_dump_to_string(type->as.alias.type));
           }
 
           ast->type = *f->as.fieldlist.type;
@@ -2049,9 +2020,9 @@ void typecheck(ast_t *ast, state_t *state) {
           } else if (type->kind == TY_ARRAY) {
             ast->type = (type_t){TY_PTR, {.ptr = type->as.array.type}};
             ast_t *lhs = ast->as.binaryop.lhs;
-            lhs = ast_malloc((ast_t){A_CAST, lhs->forerror, {}, {.cast = {ast->type, lhs}}});
+            lhs = ast_malloc((ast_t){A_CAST, lhs->loc, {}, {.cast = {ast->type, lhs}}});
           } else {
-            eprintf(ast->forerror,
+            eprintf(ast->loc,
                     "invalid operation '%s' between '%s' and '%s'",
                     token_kind_to_string(ast->as.binaryop.op),
                     type_dump_to_string(&ast->as.binaryop.lhs->type),
@@ -2081,7 +2052,7 @@ void typecheck(ast_t *ast, state_t *state) {
             ast->type = *ast->as.unaryop.arg->type.as.array.type;
           } else {
             char *type = type_dump_to_string(&ast->as.unaryop.arg->type);
-            eprintf(ast->as.unaryop.arg->forerror, "cannot dereference non PTR type: '%s'", type);
+            eprintf(ast->as.unaryop.arg->loc, "cannot dereference non PTR type: '%s'", type);
           }
           break;
         default:
@@ -2118,11 +2089,11 @@ void typecheck(ast_t *ast, state_t *state) {
       state_solve_type_alias(state, &ast->as.decl.type);
       if (type_is_kind(&ast->as.decl.type, TY_ARRAY) && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_UNSET &&
           ast->as.decl.expr == NULL) {
-        eprintf(ast->forerror, "array without length uninitialized");
+        eprintf(ast->loc, "array without length uninitialized");
       }
       if (type_is_kind(&ast->as.decl.type, TY_ARRAY) && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_EXPR) {
         if (ast->as.decl.expr != NULL) {
-          eprintf(ast->forerror, "array with variable length cannot be initialized");
+          eprintf(ast->loc, "array with variable length cannot be initialized");
         } else {
           typecheck_expect(ast->as.decl.array_len, state, (type_t){TY_INT, {}});
         }
@@ -2143,10 +2114,10 @@ void typecheck(ast_t *ast, state_t *state) {
       assert(ast->as.binary.right);
       typecheck(ast->as.binary.left, state);
       if (type_is_kind(&ast->as.binary.left->type, TY_ARRAY)) {
-        eprintf(ast->forerror, "assign to array");
+        eprintf(ast->loc, "assign to array");
       }
       if (type_is_kind(&ast->as.binary.left->type, TY_ENUM)) {
-        eprintf(ast->forerror, "assign to enumerator");
+        eprintf(ast->loc, "assign to enumerator");
       }
       typecheck_expect(ast->as.binary.right, state, ast->as.binary.left->type);
       ast->type = ast->as.binary.left->type;
@@ -2156,13 +2127,13 @@ void typecheck(ast_t *ast, state_t *state) {
         symbol_t *s = state_find_symbol(state, ast->as.funcall.name);
         if (s->type->kind != TY_FUNC) {
           char *foundstr = type_dump_to_string(s->type);
-          eprintf(ast->forerror, "expected 'TY_FUNC', found '%s'", foundstr);
+          eprintf(ast->loc, "expected 'TY_FUNC', found '%s'", foundstr);
         }
         if (s->type->as.func.params == NULL && ast->as.funcall.params != NULL) {
-          eprintf(ast->forerror, "too many parameters");
+          eprintf(ast->loc, "too many parameters");
         }
         if (s->type->as.func.params != NULL && ast->as.funcall.params == NULL) {
-          eprintf(ast->forerror, "too few parameters");
+          eprintf(ast->loc, "too few parameters");
         }
         if (s->type->as.func.params) {
           typecheck_expect(ast->as.funcall.params, state, *s->type->as.func.params);
@@ -2235,28 +2206,15 @@ void typecheck(ast_t *ast, state_t *state) {
         }
 
         if (f != NULL) {
-          eprintf(ast->forerror, "too few fields");
+          eprintf(ast->loc, "too few fields");
         }
         if (expr != NULL) {
-          eprintf(ast->forerror, "too many fields");
+          eprintf(ast->loc, "too many fields");
         }
       } else {
         typecheck_expandable(ast->as.cast.ast, state, ast->as.cast.target);
       }
       ast->type = ast->as.cast.target;
-      break;
-    case A_INDEX:
-      assert(ast->as.binary.left);
-      assert(ast->as.binary.right);
-      typecheck_expandable(ast->as.binary.right, state, (type_t){TY_INT, {}});
-      typecheck(ast->as.binary.left, state);
-      if (type_is_kind(&ast->as.binary.left->type, TY_PTR)) {
-        assert(ast->as.binary.left->type.as.ptr);
-        ast->type = *ast->as.binary.left->type.as.ptr;
-      } else if (type_is_kind(&ast->as.binary.left->type, TY_ARRAY)) {
-        assert(ast->as.binary.left->type.as.array.type);
-        ast->type = *ast->as.binary.left->type.as.array.type;
-      }
       break;
     case A_ASM:
       ast->type = (type_t){TY_VOID, {}};
@@ -2291,52 +2249,11 @@ bytecode_t bytecode_uli(bytecode_kind_t kind, instruction_t inst, int uli) {
   return b;
 }
 
-int datauli(compiled_t *compiled, state_t *state) {
-  assert(compiled);
+int datauli(state_t *state) {
   assert(state);
   int uli = state->uli++;
-  data(compiled, bytecode_uli(BSETLABEL, 0, uli));
+  data(&state->compiled, bytecode_uli(BSETLABEL, 0, uli));
   return uli;
-}
-
-int get_local_offset(ast_t *ast, state_t *state) {
-  assert(ast);
-  assert(state);
-
-  switch (ast->kind) {
-    case A_FAC:
-      if (ast->as.fac.kind == T_SYM) {
-        symbol_t *s = state_find_symbol(state, ast->as.fac);
-        if (s->kind != INFO_LOCAL) {
-          return -1;
-        }
-        return state->sp - s->info.local;
-      }
-      break;
-    case A_INDEX:
-      {
-        if (ast->as.binary.right->kind != A_FAC) {
-          return -1;
-        }
-        int local = get_local_offset(ast->as.binary.left, state);
-        if (local < 0) {
-          return -1;
-        }
-        return local + ast->as.binary.right->as.fac.asint * type_size(&ast->type);
-      }
-    case A_BINARYOP:
-      if (ast->as.binaryop.op == T_PLUS) {
-        return -1;
-      }
-      break;
-    default:
-      break;
-  }
-
-  printf("cannot %s:%d: ", __FUNCTION__, __LINE__);
-  ast_dump(ast, false);
-  printf("\n");
-  exit(1);
 }
 
 void state_change_sp(state_t *state, int delta) {
@@ -2600,9 +2517,8 @@ void compile(ast_t *ast, state_t *state) {
           break;
         case T_STRING:
           {
-            int uli = datauli(compiled, state);
+            int uli = datauli(state);
             compile_data(ast, state, 0, 0);
-            // state_add_ir(state, (ir_t){IR_STRING, {.num = uli}});
             state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
             state->sp += 2;
           }
@@ -2624,7 +2540,7 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_GLOBDECL:
       {
-        int uli = datauli(compiled, state);
+        int uli = datauli(state);
         if (ast->as.decl.expr) {
           compile_data(ast->as.decl.expr, state, uli, 0);
         } else {
@@ -2707,7 +2623,7 @@ void compile(ast_t *ast, state_t *state) {
         int tsize = type_size_aligned(&ast->as.cast.target);
         int size = type_size_aligned(&ast->as.cast.ast->type);
         if (tsize - size < 0) {  // TODO: needed?
-          eprintf(ast->forerror,
+          eprintf(ast->loc,
                   "cannot cast '%s' to smaller size type '%s' ",
                   type_dump_to_string(&ast->as.cast.ast->type),
                   type_dump_to_string(&ast->as.cast.target));
@@ -2715,44 +2631,6 @@ void compile(ast_t *ast, state_t *state) {
         state_change_sp(state, tsize - size);
         compile(ast->as.cast.ast, state);
       }
-      break;
-    case A_INDEX:
-      TODO;
-      /*{
-        if (ast->as.binary.left->kind == A_FAC && ast->as.binary.right->kind == A_FAC) {
-          symbol_t *s = state_find_symbol(state, ast->as.binary.left->as.fac);
-          if (s->kind == INFO_LOCAL) {
-            int size = type_size_aligned(&ast->type);
-            int num = state->sp - s->info.local + ast->as.binary.right->as.fac.asint * size;
-            for (int i = 0; i < size; i += 2) {
-              code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = num + size - 2}});
-              code(compiled, (bytecode_t){BINST, PUSHA, {}});
-            }
-            state->sp += size;
-            break;
-          }
-        }
-        if (ast->as.binary.right->kind == A_FAC) {
-          code(compiled,
-               (bytecode_t){BINSTHEX2, RAM_A, {.num = ast->as.binary.right->as.fac.asint * type_size(&ast->type)}});
-        } else {
-          compile(ast->as.binary.right, state);
-          code(compiled, (bytecode_t){BINST, POPA, {}});
-          state->sp -= 2;
-          int size = type_size(&ast->type);
-          for (int i = 1; i < size; i += 2) {
-            code(compiled, (bytecode_t){BINST, SHL, {}});
-          }
-        }
-        code(compiled, (bytecode_t){BINST, PUSHA, {}});
-        state->sp += 2;
-        get_addr_ast(state, ast->as.binary.left);
-        code(compiled, (bytecode_t){BINST, POPB, {}});
-        state->sp -= 2;
-        code(compiled, (bytecode_t){BINST, SUM, {}});
-        code(compiled, (bytecode_t){BINST, A_B, {}});
-        coderead(state, &ast->type);
-      }*/
       break;
     case A_ASM:
       TODO;
