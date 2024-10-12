@@ -745,7 +745,9 @@ bool type_greaterthan(type_t *a, type_t *b) {  // a >= b
 }
 
 int type_size(type_t *type) {
-  assert(type);
+  if (!type) {
+    return 0;
+  }
   switch (type->kind) {
     case TY_NONE:
       assert(0);
@@ -772,12 +774,29 @@ int type_size(type_t *type) {
       assert(type->as.struct_.fieldlist);
       return type_size(type->as.struct_.fieldlist);
     case TY_FIELDLIST:
-      assert(type->as.fieldlist.type);
-      if (type->as.fieldlist.type->kind == TY_CHAR && type->as.fieldlist.next &&
-          type->as.fieldlist.next->as.fieldlist.type->kind != TY_CHAR) {
-        return 2 + type_size(type->as.fieldlist.next);
-      } else {
-        return type_size(type->as.fieldlist.type) + (type->as.fieldlist.next ? type_size(type->as.fieldlist.next) : 0);
+      {
+        assert(type->as.fieldlist.type);
+        type_t *a = type->as.fieldlist.type;
+        type_t *b = type->as.fieldlist.next ? type->as.fieldlist.next->as.fieldlist.type : NULL;
+
+        if (type_size(a) == 1) {
+          if (b && type_size(b) == 1) {
+            return 2 + type_size(type->as.fieldlist.next->as.fieldlist.next);
+          } else {
+            return 2 + type_size(type->as.fieldlist.next);
+          }
+        }
+        return type_size(a) + type_size(type->as.fieldlist.next);
+
+        // if (type->as.fieldlist.type->kind == TY_CHAR) {
+        //   if (type->as.fieldlist.next && type->as.fieldlist.next->as.fieldlist.type->kind == TY_CHAR) {
+        //     return 2 + type_size(type->as.fieldlist.next->as.fieldlist.next);
+        //   } else {
+        //     return 2 + type_size(type->as.fieldlist.next);
+        //   }
+        // } else {
+        //   return type_size(type->as.fieldlist.type) + type_size(type->as.fieldlist.next);
+        // }
       }
     case TY_ENUM:
       return 2;
@@ -2184,15 +2203,6 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_CAST:
       state_solve_type_alias(state, &ast->as.cast.target);
 
-      /*
-       * CAST INT TO CHAR
-       *
-      if (type_is_kind(&ast->as.cast.target, TY_CHAR)) {
-        typecheck(ast->as.cast.ast, state);
-        if (!type_is_kind(&ast->as.cast.ast->type, TY_INT)) {
-          typecheck_expandable(ast->as.cast.ast, state, ast->as.cast.target);
-        }
-      } else*/
       if (type_is_kind(&ast->as.cast.target, TY_STRUCT) && ast->as.cast.ast->kind == A_ARRAY) {
         type_t *target = type_pass_alias(&ast->as.cast.target);
         type_t *f = target->as.struct_.fieldlist;
@@ -2732,16 +2742,10 @@ void compile(ast_t *ast, state_t *state) {
           if (ast->as.binary.right->as.binary.right) {
             compile(ast->as.binary.right->as.binary.right, state);
           }
-          ast_t *a = ast->as.binary.left;
-          ast_t *b = ast->as.binary.right->as.binary.left;
-
-          // TODO: use asint
-          assert(a->kind == A_FAC && a->as.fac.kind == T_HEX);
-          code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = strtol(a->as.fac.image.start, NULL, 16)}});
-          code(compiled, (bytecode_t){BINSTHEX, RAM_BL, {.num = strtol(b->as.fac.image.start, NULL, 16)}});
-          code(compiled, (bytecode_t){BINST, B_AH, {}});
-          code(compiled, (bytecode_t){BINST, PUSHA, {}});
-          state->sp += 2;
+          compile(ast->as.binary.left, state);
+          compile(ast->as.binary.right->as.binary.left, state);
+          state_add_ir(state, (ir_t){IR_OPERATION, {.inst = B_AH}});
+          state->sp -= 2;
         } else {
           compile(ast->as.binary.left, state);
         }
@@ -2764,37 +2768,37 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_CAST:
-      if (type_is_kind(&ast->as.cast.target, TY_PTR) && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
-        get_addr_ast(state, ast->as.cast.ast);
-        code(compiled, (bytecode_t){BINST, PUSHA, {}});
-        state->sp += 2;
-      } else if (type_is_kind(&ast->as.cast.target, TY_STRUCT) && ast->as.cast.ast->kind == A_ARRAY) {
+      if (type_is_kind(&ast->as.cast.target, TY_STRUCT) && ast->as.cast.ast->kind == A_ARRAY) {
         ast_t *asts[128] = {0};
         int ast_num = 0;
         ast_t *asti = ast->as.cast.ast;
         while (asti) {
+          assert(ast_num + 1 < 128);
           asts[ast_num++] = asti->as.binary.left;
           asti = asti->as.binary.right;
         }
         for (--ast_num; ast_num >= 0; --ast_num) {
-          compile(asts[ast_num], state);
+          if (ast_num > 1 && type_is_kind(&asts[ast_num]->type, TY_CHAR) &&
+              type_is_kind(&asts[ast_num - 1]->type, TY_CHAR)) {
+            compile(asts[ast_num - 1], state);
+            compile(asts[ast_num], state);
+            state_add_ir(state, (ir_t){IR_OPERATION, {.inst = B_AH}});
+            state->sp -= 2;
+            --ast_num;
+          } else {
+            compile(asts[ast_num], state);
+          }
         }
       } else {
         int tsize = type_size_aligned(&ast->as.cast.target);
         int size = type_size_aligned(&ast->as.cast.ast->type);
-        if (tsize - size < 0) {
+        if (tsize - size < 0) {  // TODO: needed?
           eprintf(ast->forerror,
                   "cannot cast '%s' to smaller size type '%s' ",
                   type_dump_to_string(&ast->as.cast.ast->type),
                   type_dump_to_string(&ast->as.cast.target));
         }
-        if (tsize - size > 0) {
-          code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 0}});
-        }
-        for (int i = 0; i < (tsize - size) / 2; ++i) {
-          code(compiled, (bytecode_t){BINST, PUSHA, {}});
-        }
-        state->sp += tsize - size;
+        state_change_sp(state, tsize - size);
         compile(ast->as.cast.ast, state);
       }
       break;

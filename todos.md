@@ -2,6 +2,7 @@ compile asm
 
 forerror -> loc
 datauli(compiled, state) -> datauli(state)
+type size into the type
 
 maybe my own bytecode compiled to asm file
 typedef array
