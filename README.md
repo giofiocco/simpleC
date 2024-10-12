@@ -65,14 +65,15 @@ Multi-line comments: `/* ... */`
 
 - SETLABEL
 - RETURN
+- FUNCEND
 - ADDR_LOCAL
 - ADDR_GLOBAL
 - ADDR_OFFSET
 - READ
 - WRITE
-- INST (for sum sub shl shr ...)
-- NUMBER
+- CHANGE_SP
+- INT
 - STRING
-- DECL ? and GLOBDECL
-- CAST ?
-- ASM
+- OPERATION
+- MUL
+- CALL

@@ -2868,65 +2868,33 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
   compile_ir(state, irs, ir_num, iri + 1);
 }
 
-bool compiled_is_inst(compiled_t *compiled, int i, instruction_t inst) {
-  assert(compiled);
-
-  if (i >= compiled->code_num) {
-    return false;
-  }
-  if ((compiled->code[i].kind == BINST || compiled->code[i].kind == BINSTHEX || compiled->code[i].kind == BINSTHEX2 ||
-       compiled->code[i].kind == BINSTLABEL || compiled->code[i].kind == BINSTRELLABEL) &&
-      compiled->code[i].inst == inst) {
-    return true;
-  }
-  return false;
+bool is_inst(bytecode_t *bs, int *b_count, int i, instruction_t inst) {
+  assert(bs);
+  return i < *b_count && bs[i].inst == inst;
 }
 
-void compiled_copy(compiled_t *compiled, int i, int a, int n) {
-  assert(compiled);
-  assert(n >= a + 1);
-  memcpy(&compiled->code[i + a], &compiled->code[i + n], (compiled->code_num - i - n) * sizeof(bytecode_t));
-  compiled->code_num -= n - a;
-}
+void optimize_asm(bytecode_t *bs, int *b_count) {
+  assert(bs);
 
-void optimize_compiled(compiled_t *compiled) {
-  assert(compiled);
-
-  for (int i = 0; i < compiled->code_num;) {
-    if (compiled_is_inst(compiled, i, PEEKA) && compiled_is_inst(compiled, i + 1, A_B)) {
-      compiled->code[i] = (bytecode_t){BINST, PEEKB, {}};
-      compiled_copy(compiled, i, 1, 2);
+  for (int i = 0; i < *b_count; ++i) {
+    // if ((is_inst(bs, b_count, i, PEEKAR) || is_inst(bs, b_count, i, PEEKA)) && is_inst(bs, b_count, i + 1, A_B)) {
+    //   bs[i].inst = PEEKB;
+    //   memcpy(bs + i + 1, bs + i + 2, (b_count - i - 1) * sizeof(bs[0]));
+    // }
+    if (is_inst(bs, b_count, i, PEEKAR) && bs[i].arg.num == 2) {
+      bs[i] = (bytecode_t){BINST, PEEKA, {}};
+    } else if (is_inst(bs, b_count, i, PUSHA) && is_inst(bs, b_count, i + 1, POPA)) {
+      memcpy(bs + i, bs + i + 2, (*b_count - i - 2) * sizeof(bytecode_t));
+      *b_count -= 2;
       i = 0;
-    } else if (compiled_is_inst(compiled, i, RAM_A) && compiled_is_inst(compiled, i + 2, A_B)) {
-      compiled->code[i] = (bytecode_t){BINST, RAM_B, {}};
-      compiled_copy(compiled, i, 2, 3);
+    } else if (is_inst(bs, b_count, i, PUSHA) && is_inst(bs, b_count, i + 1, POPB)) {
+      bs[i].inst = A_B;
+      memcpy(bs + i + 1, bs + i + 2, (*b_count - i - 2) * sizeof(bs[0]));
+      *b_count -= 1;
       i = 0;
-    } else if (compiled_is_inst(compiled, i, PUSHA) && compiled_is_inst(compiled, i + 1, PEEKA)) {
-      compiled_copy(compiled, i, 1, 2);
-      i = 0;
-    } else if (compiled_is_inst(compiled, i, PEEKAR) && compiled->code[i + 1].arg.num == 2) {
-      compiled->code[i] = (bytecode_t){BINST, PEEKA, {}};
-      compiled_copy(compiled, i, 1, 2);
-      i = 0;
-    } else if (compiled_is_inst(compiled, i, SP_A) && compiled_is_inst(compiled, i + 1, RAM_BL) &&
-               compiled_is_inst(compiled, i + 3, SUM) && compiled_is_inst(compiled, i + 4, A_B) &&
-               compiled_is_inst(compiled, i + 5, rB_A)) {
-      compiled->code[i] = (bytecode_t){BINST, PEEKAR, {}};
-      compiled->code[i + 1] = compiled->code[i + 2];
-      compiled_copy(compiled, i, 2, 6);
-      i = 0;
-    } else if (compiled_is_inst(compiled, i, RAM_A)) {
-      // && compiled->code[i+1].kind == B_HEX2)
-      // bytecode_dump(compiled->code[i+1], stdout); printf(" <-\n");
-
-      // && compiled->code[i+1].arg.num < 256)
-      // TODO: does not optimize this
-      // compiled->code[i].arg.inst = RAM_AL;
-      // compiled->code[i+1].kind = B_HEX;
-      // i = 0;
-      ++i;
-    } else {
-      ++i;
+    } else if ((is_inst(bs, b_count, i, RAM_A) || is_inst(bs, b_count, i, RAM_B)) && bs[i].arg.num < 256) {
+      bs[i].inst = bs[i].inst == RAM_A ? RAM_AL : RAM_BL;
+      bs[i].kind = BINSTHEX;
     }
   }
 }
@@ -2937,14 +2905,15 @@ void help(int errorcode) {
           "Options:\n"
           " -d [<module>]  enable debug options for a module\n"
           " -D [<module>]  stop the execution after a module and print the output\n"
-          "                (if no module name or module all then it will execute "
+          "                (if no module name or module 'all' then it will execute"
           "only the tokenizer)\n"
           " -e <string>    compile the string provided\n"
           " -o <file>      write output to the file [default is 'out.asm']\n"
           " -O0 | -O       no optimization\n"
-          " -O1            optimize the assembly code\n"
-          " -O2            optimize pre-compilation\n"
-          " -O3            optimize both ways\n"
+          " -O1            enable ASM bytecode optimization\n"
+          " -O2            enable IR optimization\n"
+          " -O3            enable AST optimization\n"
+          " -O4            enable all optimization\n"
           " -h | --help    print this page and exit\n\n"
           "Modules:\n"
           "no module name is enables all the modules\n"
@@ -2967,8 +2936,10 @@ typedef enum {
 } module_t;
 
 typedef enum {
-  OL_POST,
-  OL_PRE,
+  OL_NONE,
+  OL_ASM,
+  OL_IR,
+  OL_AST,
   OL_COUNT,
 } optlevel_t;
 
@@ -3012,7 +2983,6 @@ int main(int argc, char **argv) {
   input_t inputs[INPUTS_MAX] = {0};
   int input_num = 0;
 
-  assert(OL_COUNT < 8);
   uint8_t opt = 0;
   assert(M_COUNT < 8);
   uint8_t debug = 0;
@@ -3065,6 +3035,10 @@ int main(int argc, char **argv) {
           break;
         case 'O':
           opt = atoi(arg + 2);
+          if (opt > OL_COUNT) {
+            fprintf(stderr, "ERROR: invalid optimize level: %d, max: %d\n", opt, OL_COUNT);
+            help(1);
+          }
           ++argv;
           break;
         case 'h':
@@ -3142,6 +3116,9 @@ int main(int argc, char **argv) {
 
     state_init(&state);
     typecheck(ast, &state);
+    if (opt == OL_AST) {
+      TODO;
+    }
     if ((debug >> M_TYP) & 1) {
       printf("TYPED AST:\n");
       ast_dump(ast, true);
@@ -3169,13 +3146,12 @@ int main(int argc, char **argv) {
       exit(1);
     }
 
-    if ((opt >> OL_PRE) & 1) {
-      TODO;
-    }
-
     state_init_with_compiled(&state);
     compile(ast, &state);
 
+    if (opt == OL_IR) {
+      TODO;
+    }
     if ((debug >> M_IR) & 1) {
       printf("IR INIT:\n");
       for (int i = 0; i < state.ir_init_num; i++) {
@@ -3205,10 +3181,10 @@ int main(int argc, char **argv) {
     code(&state.compiled, bytecode_with_string(BINSTLABEL, CALL, "exit"));
     state.compiled.is_init = false;
 
-    if ((opt >> OL_POST) & 1) {
-      optimize_compiled(&state.compiled);
+    if (opt == OL_ASM) {
+      optimize_asm(state.compiled.code, &state.compiled.code_num);
+      optimize_asm(state.compiled.init, &state.compiled.init_num);
     }
-
     if ((debug >> M_COM) & 1) {
       printf("ASSEMBLY:\n");
       code_dump(&state.compiled);

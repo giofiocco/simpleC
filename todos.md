@@ -4,6 +4,8 @@ type size into the type
 make array access cast to ptr
 read function
 
+maybe struct ir_list and bytecode_list
+
 typedef array
 struct with array
 
