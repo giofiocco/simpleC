@@ -1,8 +1,6 @@
-#!/bin/env sh
-
-echo TEST $0 running...
-
-export prog=$(cat << EOF
+params: -D com
+exitcode: 0
+code:
 typedef struct {
   int a;
   char b;
@@ -21,9 +19,7 @@ int main() {
   A b = {1, 0x02, 3};
   B c = {5, 0x01, 0x02, 4};
 }
-EOF
-)
-export stdout=$(cat << EOF
+output:
 ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
@@ -66,11 +62,3 @@ INSTHEX2     RAM_B 0x0010
 INST         SUM
 INST         A_SP
 INST         RET
-EOF
-)
-export params="-D com"
-export exitcode=0
-
-#./simpleC $params -e "$prog"
-
-./test $0

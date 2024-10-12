@@ -1,8 +1,6 @@
-#!/bin/env sh
-
-echo TEST $0 running...
-
-export prog=$(cat << EOF
+params: -D com
+exitcode: 0
+code:
 int add(int a) {
   return a;
 }
@@ -10,9 +8,7 @@ int add(int a) {
 int main() {
   add(4);
 }
-EOF
-)
-export stdout=$(cat << EOF
+output:
 ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
@@ -35,12 +31,3 @@ INSTRELLABEL CALLR add
 INST         INCSP
 INST         INCSP
 INST         RET
-EOF
-)
-export params="-D com"
-export exitcode=0
-
-#./simpleC $params -e "$prog"
-
-./test $0
-

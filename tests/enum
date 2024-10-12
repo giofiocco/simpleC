@@ -1,8 +1,6 @@
-#!/bin/env sh
-
-echo TEST $0 running...
-
-export prog=$(cat << EOF
+params: -D com
+exitcode: 0
+code:
 typedef enum {
   A,
   B,
@@ -11,9 +9,7 @@ typedef enum {
 int main() {
   int a = B;
 }
-EOF
-)
-export stdout=$(cat << EOF
+output:
 ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
@@ -27,11 +23,3 @@ INSTHEX      RAM_AL 0x01
 INST         PUSHA
 INST         INCSP
 INST         RET
-EOF
-)
-export params="-D com"
-export exitcode=0
-
-#./simpleC $params -e "$prog"
-
-./test $0

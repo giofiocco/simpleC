@@ -1,13 +1,9 @@
-#!/bin/env sh
-
-echo TEST $0 running...
-
-export prog=$(cat << EOF
+params: -D com
+exitcode: 0
+code:
 int main() {
 }
-EOF
-)
-export stdout=$(cat << EOF
+output:
 ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
@@ -18,11 +14,3 @@ INST         POPA
 INSTLABEL    CALL exit
 SETLABEL     main
 INST         RET
-EOF
-)
-export params="-D com"
-export exitcode=0
-
-# ./simpleC $params -e "$prog"
-
-./test $0
