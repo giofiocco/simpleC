@@ -1273,23 +1273,26 @@ typedef struct {
   bool is_init;
 } compiled_t;
 
+typedef enum {
+  IR_NONE,
+  IR_SETLABEL,     // + sv
+  IR_RETURN,       // + num
+  IR_FUNCEND,      //
+  IR_ADDR_LOCAL,   // + num
+  IR_ADDR_GLOBAL,  // + num
+  IR_ADDR_OFFSET,  // + num
+  IR_READ,         // + num
+  IR_WRITE,        // + num
+  IR_CHANGE_SP,    // + num
+  IR_INT,          // + num
+  IR_STRING,       // + num
+  IR_OPERATION,    // + inst
+  IR_MUL,          // + num
+  IR_CALL,         // + sv
+} ir_kind_t;
+
 typedef struct {
-  enum {
-    IR_SETLABEL,     // + sv
-    IR_RETURN,       // + num
-    IR_FUNCEND,      //
-    IR_ADDR_LOCAL,   // + num
-    IR_ADDR_GLOBAL,  // + num
-    IR_ADDR_OFFSET,  // + num
-    IR_READ,         // + num
-    IR_WRITE,        // + num
-    IR_CHANGE_SP,    // + num
-    IR_INT,          // + num
-    IR_STRING,       // + num
-    IR_OPERATION,    // + inst
-    IR_MUL,          // + num
-    IR_CALL,         // + sv
-  } kind;
+  ir_kind_t kind;
   union {
     sv_t sv;
     int num;
@@ -1303,6 +1306,9 @@ typedef struct {
 
 void ir_dump(ir_t ir) {
   switch (ir.kind) {
+    case IR_NONE:
+      printf("NONE");
+      break;
     case IR_SETLABEL:
       printf("SETLABEL " SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
@@ -1310,7 +1316,7 @@ void ir_dump(ir_t ir) {
       printf("RETURN %d x %d", ir.arg._return.pos, ir.arg._return.len);
       break;
     case IR_FUNCEND:
-      printf("FUNCEND %d", ir.arg.num);
+      printf("FUNCEND");
       break;
     case IR_ADDR_LOCAL:
       printf("ADDR LOCAL %d", ir.arg.num);
@@ -2440,18 +2446,8 @@ void optimize_ast(ast_t **astp) {
       optimize_ast(&ast->as.ast);
       break;
     case A_BINARYOP:
-      {
-        ast_t *a = ast->as.binaryop.lhs;
-        ast_t *b = ast->as.binaryop.rhs;
-        optimize_ast(&a);
-        optimize_ast(&b);
-        if ((ast->as.binaryop.op == T_PLUS || ast->as.binaryop.op == T_MINUS) && a->kind == A_INT && b->kind == A_INT) {
-          a->as.fac.asint += (ast->as.binaryop.op == T_MINUS ? -1 : 1) * b->as.fac.asint;
-          *astp = ast_malloc((ast_t){A_INT, ast->loc, ast->type, {.fac = a->as.fac}});
-          free_ptr(a);
-          free_ptr(b);
-        }
-      }
+      optimize_ast(&ast->as.binaryop.lhs);
+      optimize_ast(&ast->as.binaryop.rhs);
       break;
     case A_UNARYOP:
       optimize_ast(&ast->as.unaryop.arg);
@@ -2510,6 +2506,9 @@ void state_change_sp(state_t *state, int delta) {
   }
   if (state->ir_num > 0 && state->irs[state->ir_num - 1].kind == IR_CHANGE_SP) {
     state->irs[state->ir_num - 1].arg.num += delta;
+    if (state->irs[state->ir_num - 1].arg.num == 0) {
+      state->ir_num -= 1;
+    }
   } else {
     state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = delta}});
   }
@@ -2651,11 +2650,16 @@ void compile(ast_t *ast, state_t *state) {
       assert(0);
     case A_GLOBAL:
     case A_BLOCK:
-    case A_PARAM:
       compile(ast->as.binary.left, state);
       if (ast->as.binary.right) {
         compile(ast->as.binary.right, state);
       }
+      break;
+    case A_PARAM:
+      if (ast->as.binary.right) {
+        compile(ast->as.binary.right, state);
+      }
+      compile(ast->as.binary.left, state);
       break;
     case A_FUNCDECL:
       state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
@@ -2669,8 +2673,9 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.funcdecl.block) {
         compile(ast->as.funcdecl.block, state);
       }
-      if (state->irs[state->ir_num - 1].kind != IR_RETURN) {
-        state_add_ir(state, (ir_t){IR_FUNCEND, {.num = state->sp}});
+      if (state->irs[state->ir_num - 1].kind != IR_RETURN && state->irs[state->ir_num - 1].kind != IR_FUNCEND) {
+        state_change_sp(state, -state->sp);
+        state_add_ir(state, (ir_t){IR_FUNCEND, {.num = 0}});
       }
       state_drop_scope(state);
       break;
@@ -2694,8 +2699,15 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_RETURN:
-      compile(ast->as.ast, state);
-      state_add_ir(state, (ir_t){IR_RETURN, {._return = {state->sp + 2, type_size_aligned(&ast->as.ast->type)}}});
+      {
+        compile(ast->as.ast, state);
+        int size = type_size_aligned(&ast->as.ast->type);
+        state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp + 2}});
+        state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
+        state->sp -= size;
+        state_change_sp(state, -state->sp);
+        state_add_ir(state, (ir_t){IR_FUNCEND, {}});
+      }
       break;
     case A_BINARYOP:
       switch (ast->as.binaryop.op) {
@@ -2761,7 +2773,15 @@ void compile(ast_t *ast, state_t *state) {
       {
         int size = type_size_aligned(&ast->as.decl.type);
         if (ast->as.decl.expr) {
+          int start_sp = state->sp;
           compile(ast->as.decl.expr, state);
+          assert(state->sp > start_sp);
+          if (state->sp - start_sp > size) {
+            state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - start_sp - size}});
+            state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
+            state_change_sp(state, -(state->sp - start_sp - 2 * size));
+            state->sp = start_sp + size;
+          }
         } else {
           state_change_sp(state, size);
         }
@@ -2868,6 +2888,75 @@ void compile(ast_t *ast, state_t *state) {
   }
 }
 
+bool is_ir_kind(ir_t *irs, int *ir_count, int i, ir_kind_t kind) {
+  assert(irs);
+  return i < *ir_count && irs[i].kind == kind;
+}
+
+void optimize_ir(ir_t *irs, int *ir_count) {
+  assert(irs);
+  assert(ir_count);
+
+  for (int i = 0; i < *ir_count; ++i) {
+    if (is_ir_kind(irs, ir_count, i, IR_CHANGE_SP) && irs[i].arg.num == 0) {
+      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
+      *ir_count -= 1;
+    } else if (is_ir_kind(irs, ir_count, i, IR_CHANGE_SP) && is_ir_kind(irs, ir_count, i + 1, IR_CHANGE_SP)) {
+      irs[i + 1].arg.num += irs[i].arg.num;
+      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
+      *ir_count -= 1;
+      i = 0;
+    } else if (is_ir_kind(irs, ir_count, i, IR_READ) && is_ir_kind(irs, ir_count, i + 1, IR_CHANGE_SP) &&
+               irs[i].arg.num <= -irs[i + 1].arg.num) {
+      irs[i + 1].arg.num += irs[i].arg.num;
+      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
+      *ir_count -= 1;
+      i = 0;
+    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL) &&
+               !(is_ir_kind(irs, ir_count, i + 1, IR_READ) || is_ir_kind(irs, ir_count, i + 1, IR_WRITE))) {
+      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
+      *ir_count -= 1;
+      i = 0;
+    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_GLOBAL) &&
+               !(is_ir_kind(irs, ir_count, i + 1, IR_ADDR_OFFSET) || is_ir_kind(irs, ir_count, i + 1, IR_READ) ||
+                 is_ir_kind(irs, ir_count, i + 1, IR_WRITE))) {
+      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
+      *ir_count -= 1;
+      i = 0;
+    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL) && is_ir_kind(irs, ir_count, i + 1, IR_READ) &&
+               is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL) && is_ir_kind(irs, ir_count, i + 3, IR_READ) &&
+               irs[i].arg.num - irs[i + 3].arg.num == irs[i + 2].arg.num - irs[i + 1].arg.num) {
+      irs[i + 2].arg.num = irs[i].arg.num - irs[i + 3].arg.num;
+      irs[i + 3].arg.num += irs[i + 1].arg.num;
+      *ir_count -= 2;
+      memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
+      i = 0;
+    } else if (is_ir_kind(irs, ir_count, i, IR_INT) && is_ir_kind(irs, ir_count, i + 1, IR_INT) &&
+               is_ir_kind(irs, ir_count, i + 2, IR_OPERATION) && irs[i + 2].arg.inst == B_AH) {
+      irs[i].arg.num = (irs[i].arg.num << 8) | irs[i + 1].arg.num;
+      *ir_count -= 2;
+      memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
+      i = 0;
+    } else if (is_ir_kind(irs, ir_count, i, IR_INT) && is_ir_kind(irs, ir_count, i + 1, IR_INT) &&
+               is_ir_kind(irs, ir_count, i + 2, IR_OPERATION) &&
+               (irs[i + 2].arg.inst == SUM || irs[i + 2].arg.inst == SUB)) {
+      irs[i].arg.num += (irs[i + 2].arg.inst == SUB ? -1 : 1) * irs[i + 1].arg.num;
+      *ir_count -= 2;
+      memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
+      i = 0;
+    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL) && is_ir_kind(irs, ir_count, i + 1, IR_READ) &&
+               is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL) && is_ir_kind(irs, ir_count, i + 3, IR_WRITE) &&
+               is_ir_kind(irs, ir_count, i + 4, IR_CHANGE_SP) && irs[i].arg.num == 2 &&
+               irs[i + 1].arg.num == irs[i + 3].arg.num && -irs[i + 4].arg.num >= irs[i + 1].arg.num) {
+      irs[i + 2].arg.num -= irs[i + 1].arg.num;
+      irs[i + 4].arg.num += irs[i + 1].arg.num;
+      *ir_count -= 2;
+      memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
+      i = 0;
+    }
+  }
+}
+
 void compile_change_sp(state_t *state, int delta) {
   assert(state);
   compiled_t *compiled = &state->compiled;
@@ -2904,6 +2993,8 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
   ir_t ir = irs[iri];
 
   switch (ir.kind) {
+    case IR_NONE:
+      assert(0);
     case IR_SETLABEL:
       code(compiled, bytecode_with_sv(BSETLABEL, 0, ir.arg.sv));
       break;
@@ -3105,6 +3196,7 @@ bool is_inst(bytecode_t *bs, int *b_count, int i, instruction_t inst) {
 
 void optimize_asm(bytecode_t *bs, int *b_count) {
   assert(bs);
+  assert(b_count);
 
   for (int i = 0; i < *b_count; ++i) {
     // if ((is_inst(bs, b_count, i, PEEKAR) || is_inst(bs, b_count, i, PEEKA)) && is_inst(bs, b_count, i + 1, A_B)) {
@@ -3380,7 +3472,8 @@ int main(int argc, char **argv) {
     compile(ast, &state);
 
     if (opt >= OL_IR) {
-      TODO;
+      optimize_ir(state.irs_init, &state.ir_init_num);
+      optimize_ir(state.irs, &state.ir_num);
     }
     if ((debug >> M_IR) & 1) {
       printf("IR INIT:\n");

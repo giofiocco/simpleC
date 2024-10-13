@@ -6,4 +6,9 @@ int main() {
 }
 output:
 TYPED AST:
-GLOBAL(FUNCDECL(INT main NULL BLOCK(RETURN(INT(4) {INT}) {INT} NULL) {VOID}) {FUNC {INT}} NULL) {VOID}
+GLOBAL
+  FUNCDECL {INT} main :: {FUNC {INT} <2>}
+    BLOCK
+      RETURN :: {INT <2>}
+        INT 4 :: {INT <2>}
+

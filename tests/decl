@@ -1,0 +1,68 @@
+params: -D com
+exitcode: 0
+code:
+typedef struct {
+  int x;
+  int y;
+} point_t;
+
+point_t point(int a, int b, int d) {
+  point_t c = {a, b};
+  return c;
+}
+
+int main() {
+  point_t x = point(2, 1, 4);
+  x;
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INST         DECSP
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     point
+INSTHEX      PEEKAR 0x0A
+INST         PUSHA
+INSTHEX      PEEKAR 0x0A
+INST         PUSHA
+INSTHEX      PEEKAR 0x04
+INST         PUSHA
+INSTHEX      PEEKAR 0x04
+INST         PUSHA
+INST         POPA
+INSTHEX      PUSHAR 0x0A
+INST         POPA
+INSTHEX      PUSHAR 0x0A
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         RET
+SETLABEL     main
+INSTHEX      RAM_AL 0x04
+INST         PUSHA
+INSTHEX      RAM_AL 0x01
+INST         PUSHA
+INSTHEX      RAM_AL 0x02
+INST         PUSHA
+INST         DECSP
+INST         DECSP
+INSTRELLABEL CALLR point
+INST         POPA
+INSTHEX      PUSHAR 0x06
+INST         POPA
+INSTHEX      PUSHAR 0x06
+INST         INCSP
+INSTHEX      PEEKAR 0x04
+INST         PUSHA
+INSTHEX      PEEKAR 0x04
+INST         PUSHA
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         RET

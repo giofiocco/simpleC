@@ -77,3 +77,17 @@ Multi-line comments: `/* ... */`
 - OPERATION
 - MUL
 - CALL
+
+# IR Optimization
+
+- CHANGE_SP(0) -> nothing
+- CHANGE_SP(x) CHANGE_SP(y) -> CHANGE_SP(x+y)
+- READ(x) CHANGE_SP(y) if x <= -y -> CHANGE_SP(y+x)
+- ADDR_LOCAL !(READ || WRITE) -> nothing
+- ADDR_GLOBAL !(ADDR_OFFSET || READ || WRITE) -> nothing
+- ADDR_LOCAL(x) READ(y) ADDR_LOCAL(x) READ(y) if x > y -> ADDR_LOCAL(x-y) READ(2\*y)
+- ADDR_LOCAL(x+z) READ(y) ADDR_LOCAL(y+z) READ(x) -> ADDR_LOCAL(z) READ(x+y)
+- INT(x) INT(y) OPERATION(B_AH) -> INT((x << 8) | y)
+- INT(x) INT(y) OPERATION(SUM) -> INT(x + y)
+- INT(x) INT(y) OPERATION(SUB) -> INT(x - y)
+- ADDR_LOCAL(2) READ(x) ADDR_LOCAL(y) WRITE(x) CHANGE_SP(-z) if z >= x -> ADDR_LOCAL(y-x) WRITE(x) CHANGE_SP(z-x)

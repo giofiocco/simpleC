@@ -9,6 +9,13 @@ struct with array
 
 test multiple returns
 
+better documentation for ir
+specify in ast_kind_t which ast_t.as use
+
+remove IR_RETURN
+
+if decl with expr with funcalls all the param expr will remain in the stack
+
 # Tokenizer
 
 - [ ] binary litterals
@@ -35,10 +42,18 @@ test multiple returns
 - [ ] compile_data array of str or ptr
 - [ ] array with expression as length
 
+# IR OPT
+
+- [ ] ADDR_LOCAL(x+z) READ(y) ADDR_LOCAL(y+z) READ(x) -> ADDR_LOCAL(z) READ(x+y)
+      similar for global decl
+- [ ] ADDR_LOCAL(2) READ(x) ADDR_LOCAL(y) WRITE(x) -> ADDR_LOCAL(y-x) WRITE(x)
+      similar for global decl
+
 # PostOpt
 
-- [ ] remove dead code
+- [ ] remove dead or unreachable code
 - [ ] A_SP SP_A -> A_SP
+- [ ] ptail opt
 
 # Roadmap
 
