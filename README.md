@@ -50,7 +50,7 @@ Multi-line comments: `/* ... */`
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
 - expr ::= term ( PLUS term | MINUS term )\*
 - term ::= unary ( STAR unary | SLASH unary )\*
-- unary ::= PLUS access | MINUS access | AND access | STAR access | access SQO expr SQC | access
+- unary ::= PLUS unary | MINUS unary | AND unary | STAR unary | access SQO expr SQC | access
 - access ::= fac DOT SYM | fac
 - fac ::= INT | SYM | STRING | HEX | CHAR | funcall | PARO expr PARC | cast
 - funcall ::= SYM PARO ( expr ( COMMA expr )\* )? PARC
@@ -82,10 +82,7 @@ Multi-line comments: `/* ... */`
 
 - CHANGE_SP(0) -> nothing
 - CHANGE_SP(x) CHANGE_SP(y) -> CHANGE_SP(x+y)
-- READ(x) CHANGE_SP(y) if x <= -y -> CHANGE_SP(y+x)
-- ADDR_LOCAL !(READ || WRITE) -> nothing
-- ADDR_GLOBAL !(ADDR_OFFSET || READ || WRITE) -> nothing
-- ADDR_LOCAL(x) READ(y) ADDR_LOCAL(x) READ(y) if x > y -> ADDR_LOCAL(x-y) READ(2\*y)
+- ADDR_LOCAL READ(x) CHANGE_SP(y) if x <= -y -> CHANGE_SP(y+x)
 - ADDR_LOCAL(x+z) READ(y) ADDR_LOCAL(y+z) READ(x) -> ADDR_LOCAL(z) READ(x+y)
 - INT(x) INT(y) OPERATION(B_AH) -> INT((x << 8) | y)
 - INT(x) INT(y) OPERATION(SUM) -> INT(x + y)

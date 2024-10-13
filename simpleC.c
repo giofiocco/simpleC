@@ -1493,7 +1493,7 @@ type_t parse_type(tokenizer_t *tokenizer) {
   }
 
   if (is_struct && type.kind != TY_ALIAS) {
-    eprintf(token.loc, "invalid struct type");  // TODO: better error
+    eprintf(token.loc, "expected the name of an incomplete struct");
   }
 
   if (token_next_if_kind(tokenizer, T_STAR)) {
@@ -1733,7 +1733,7 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
     case T_AND:
     case T_STAR:
       token_next(tokenizer);
-      ast_t *arg = parse_access(tokenizer);
+      ast_t *arg = parse_unary(tokenizer);
       return ast_malloc((ast_t){A_UNARYOP, location_union(token.loc, arg->loc), {0}, {.unaryop = {token.kind, arg}}});
     default:
       break;
@@ -1850,6 +1850,9 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
   tokenizer_t savetok = *tokenizer;
   catch = true;
   if (setjmp(catch_buf) == 0) {
+    if (token_peek(tokenizer).kind == T_STRUCT) {
+      catch = false;
+    }
     ast_t *ast = parse_decl(tokenizer);
     token_expect(tokenizer, T_SEMICOLON);
     catch = false;
@@ -2685,6 +2688,10 @@ void compile(ast_t *ast, state_t *state) {
           state_add_ir(state, (ir_t){IR_READ, {.num = ast->type.size}});
           state->sp += type_size_aligned(&ast->type) - 2;
           break;
+        case T_AND:
+          get_addr_ast(state, ast->as.unaryop.arg);
+          state->sp += 2;
+          break;
         default:
           assert(0);
       }
@@ -2845,29 +2852,19 @@ void optimize_ir(ir_t *irs, int *ir_count) {
 
   for (int i = 0; i < *ir_count; ++i) {
     if (is_ir_kind(irs, ir_count, i, IR_CHANGE_SP) && irs[i].arg.num == 0) {
-      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
       *ir_count -= 1;
+      memcpy(irs + i, irs + i + 1, (*ir_count - i) * sizeof(ir_t));
+      i = 0;
     } else if (is_ir_kind(irs, ir_count, i, IR_CHANGE_SP) && is_ir_kind(irs, ir_count, i + 1, IR_CHANGE_SP)) {
       irs[i + 1].arg.num += irs[i].arg.num;
-      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
       *ir_count -= 1;
+      memcpy(irs + i, irs + i + 1, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-    } else if (is_ir_kind(irs, ir_count, i, IR_READ) && is_ir_kind(irs, ir_count, i + 1, IR_CHANGE_SP) &&
-               irs[i].arg.num <= -irs[i + 1].arg.num) {
-      irs[i + 1].arg.num += irs[i].arg.num;
-      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
-      *ir_count -= 1;
-      i = 0;
-    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL) &&
-               !(is_ir_kind(irs, ir_count, i + 1, IR_READ) || is_ir_kind(irs, ir_count, i + 1, IR_WRITE))) {
-      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
-      *ir_count -= 1;
-      i = 0;
-    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_GLOBAL) &&
-               !(is_ir_kind(irs, ir_count, i + 1, IR_ADDR_OFFSET) || is_ir_kind(irs, ir_count, i + 1, IR_READ) ||
-                 is_ir_kind(irs, ir_count, i + 1, IR_WRITE))) {
-      memcpy(irs + i, irs + i + 1, (*ir_count - i - 1) * sizeof(ir_t));
-      *ir_count -= 1;
+    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL) && is_ir_kind(irs, ir_count, i + 1, IR_READ) &&
+               is_ir_kind(irs, ir_count, i + 2, IR_CHANGE_SP) && irs[i + 1].arg.num <= -irs[i + 2].arg.num) {
+      irs[i + 2].arg.num += irs[i + 1].arg.num;
+      *ir_count -= 2;
+      memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
     } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL) && is_ir_kind(irs, ir_count, i + 1, IR_READ) &&
                is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL) && is_ir_kind(irs, ir_count, i + 3, IR_READ) &&
@@ -2975,12 +2972,12 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
         }
         ++iri;
       } else {
+        code(compiled, (bytecode_t){BINST, SP_A, {}});
         if (abs(ir.arg.num) <= 4) {
           for (int i = 0; i < abs(ir.arg.num); ++i) {
             code(compiled, (bytecode_t){BINST, ir.arg.num > 0 ? INCA : DECA, {}});
           }
         } else {
-          code(compiled, (bytecode_t){BINST, SP_A, {}});
           if (ir.arg.num > 0) {
             code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.num}});
             code(compiled, (bytecode_t){BINST, SUM, {}});

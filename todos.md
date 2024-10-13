@@ -1,4 +1,3 @@
-type size into the type
 make array access cast to ptr
 
 abstract read function for compile_ir
@@ -17,15 +16,13 @@ specify in ast_kind_t which ast_t.as use
 
 - [ ] binary litterals
 - [ ] escape char in string
-- [ ] maybe find the row end when changing the row instead of finding it when printing error
 
 # Parser
 
 - [ ] code block
 - [ ] int a,b;
 - [ ] int \*\*a;
-- [ ] struct point a;
-- [ ] &a; e \*&a;
+- [ ] struct point a; only in structdef
 
 # Typechecker
 
