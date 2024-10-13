@@ -1,8 +1,8 @@
-compile asm
-
 type size into the type
 make array access cast to ptr
-read function
+read function for compile_ir
+
+remove atoi
 
 maybe struct ir_list and bytecode_list
 
@@ -13,7 +13,6 @@ test multiple returns
 
 # Tokenizer
 
-- [ ] location.row_start -> sv_t location.line with the len of the line
 - [ ] binary litterals
 - [ ] escape char in string
 - [ ] maybe find the row end when changing the row instead of finding it when printing error
@@ -23,13 +22,13 @@ test multiple returns
 - [ ] code block
 - [ ] int a,b;
 - [ ] int \*\*a;
-- [ ] check proper location print when error
 
 # Typechecker
 
 - [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it
 - [ ] warn if no return in some function
 - [ ] - - between char
+- [ ] return needs type VOID?
 
 # Compiler
 

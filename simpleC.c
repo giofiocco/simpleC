@@ -79,7 +79,7 @@ typedef enum {
 
 typedef struct {
   char *filename;
-  char *row_start;
+  sv_t line;
   unsigned int row, col;
   unsigned int len;
 } location_t;
@@ -87,11 +87,7 @@ typedef struct {
 location_t location_union(location_t a, location_t b) {
   location_t c = a;
   if (a.row != b.row) {
-    char *row_end = c.row_start;
-    while (*row_end != '\n') {
-      ++row_end;
-    }
-    c.len = row_end - c.row_start;
+    c.len = a.line.len;
   } else {
     c.len = b.col + b.len - a.col;
   }
@@ -114,10 +110,14 @@ typedef struct {
 
 void tokenizer_init(tokenizer_t *tokenizer, char *buffer, char *filename) {
   assert(tokenizer);
+  char *row_end = buffer;
+  while (*row_end != '\n' && *row_end != '\0') {
+    ++row_end;
+  }
   tokenizer->buffer = buffer;
   tokenizer->loc = (location_t){
     filename,
-    buffer,
+    (sv_t){buffer, row_end - buffer},
     1,
     1,
     0,
@@ -125,12 +125,13 @@ void tokenizer_init(tokenizer_t *tokenizer, char *buffer, char *filename) {
 }
 
 void print_location(location_t location) {
-  char *row_end = location.row_start;
-  while (*row_end != '\n' && *row_end != '\0') {
-    ++row_end;
-  }
-  int row_len = row_end - location.row_start;
-  fprintf(stderr, "%*d | %*.*s\n", location.row < 1000 ? 3 : 5, location.row, row_len, row_len, location.row_start);
+  fprintf(stderr,
+          "%*d | %*.*s\n",
+          location.row < 1000 ? 3 : 5,
+          location.row,
+          location.line.len,
+          location.line.len,
+          location.line.start);
   fprintf(stderr,
           "%s   %*.*s%c%*.*s\n",
           location.row < 1000 ? "   " : "     ",
@@ -205,11 +206,18 @@ token_t token_next(tokenizer_t *tokenizer) {
       ++tokenizer->loc.col;
       return token_next(tokenizer);
     case '\n':
-      ++tokenizer->loc.row;
-      tokenizer->loc.col = 1;
-      ++tokenizer->buffer;
-      tokenizer->loc.row_start = tokenizer->buffer;
-      return token_next(tokenizer);
+      {
+        ++tokenizer->loc.row;
+        tokenizer->loc.col = 1;
+        ++tokenizer->buffer;
+        tokenizer->loc.line.start = tokenizer->buffer;
+        char *row_end = tokenizer->buffer;
+        while (*row_end != '\n' && *row_end != '\0') {
+          ++row_end;
+        }
+        tokenizer->loc.line.len = row_end - tokenizer->buffer;
+        return token_next(tokenizer);
+      }
     case '/':
       if (tokenizer->buffer[1] == '/') {
         while (tokenizer->buffer[0] != '\n') {
@@ -839,7 +847,9 @@ typedef enum {
   A_RETURN,
   A_BINARYOP,
   A_UNARYOP,
-  A_FAC,
+  A_INT,
+  A_STRING,
+  A_SYM,
   A_DECL,
   A_GLOBDECL,
   A_ASSIGN,
@@ -975,8 +985,14 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.unaryop.arg, dumptype);
       printf(")");
       break;
-    case A_FAC:
-      printf("FAC(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
+    case A_INT:
+      printf("INT(%d)", ast->as.fac.asint);
+      break;
+    case A_STRING:
+      printf("STRING(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
+      break;
+    case A_SYM:
+      printf("SYM(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
       break;
     case A_GLOBDECL:
       printf("GLOB");
@@ -1223,17 +1239,17 @@ void state_drop_scope(state_t *state) {
   --state->scope_num;
 }
 
-symbol_t *state_find_symbol(state_t *state, token_t token) {
+symbol_t *state_find_symbol(state_t *state, token_t name) {
   assert(state);
   for (int j = state->scope_num > 0 ? state->scope_num - 1 : 0; j >= 0; --j) {
     scope_t *scope = &state->scopes[j];
     for (int i = 0; i < scope->symbol_num; ++i) {
-      if (sv_eq(scope->symbols[i].name.image, token.image)) {
+      if (sv_eq(scope->symbols[i].name.image, name.image)) {
         return &scope->symbols[i];
       }
     }
   }
-  eprintf(token.loc, "symbol not declared: " SV_FMT, SV_UNPACK(token.image));
+  eprintf(name.loc, "symbol not declared: " SV_FMT, SV_UNPACK(name.image));
   assert(0);
 }
 
@@ -1547,13 +1563,17 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     *tokenizer = savetok;
   }
 
-  if (token.kind != T_INT && token.kind != T_SYM && token.kind != T_STRING && token.kind != T_HEX &&
-      token.kind != T_CHAR) {
+  token_next(tokenizer);
+  if (token.kind == T_INT || token.kind == T_HEX || token.kind == T_CHAR) {
+    return ast_malloc((ast_t){A_INT, token.loc, {}, {.fac = token}});
+  } else if (token.kind == T_STRING) {
+    return ast_malloc((ast_t){A_STRING, token.loc, {}, {.fac = token}});
+  } else if (token.kind == T_SYM) {
+    return ast_malloc((ast_t){A_SYM, token.loc, {}, {.fac = token}});
+  } else {
     eprintf(token.loc, "unvalid token for fac: '%s'", token_kind_to_string(token.kind));
   }
-  token_next(tokenizer);
-
-  return ast_malloc((ast_t){A_FAC, token.loc, {0}, {.fac = token}});
+  assert(0);
 }
 
 ast_t *parse_access(tokenizer_t *tokenizer) {
@@ -1568,7 +1588,7 @@ ast_t *parse_access(tokenizer_t *tokenizer) {
     return ast_malloc((ast_t){A_BINARYOP,
                               location_union(fac->loc, name.loc),
                               {0},
-                              {.binaryop = {dot.kind, fac, ast_malloc((ast_t){A_FAC, name.loc, {0}, {.fac = name}})}}});
+                              {.binaryop = {dot.kind, fac, ast_malloc((ast_t){A_SYM, name.loc, {0}, {.fac = name}})}}});
   }
 
   return fac;
@@ -1650,8 +1670,8 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
       array_len_expr = parse_expr(tokenizer);
       token_expect(tokenizer, T_SQC);
       array_len = (array_len_t){ARRAY_LEN_EXPR, 0};
-      if (array_len_expr->kind == A_FAC && array_len_expr->as.fac.kind == T_INT) {
-        array_len = (array_len_t){ARRAY_LEN_NUM, atoi(array_len_expr->as.fac.image.start)};
+      if (array_len_expr->kind == A_INT) {
+        array_len = (array_len_t){ARRAY_LEN_NUM, array_len_expr->as.fac.asint};
         array_len_expr = NULL;
       }
     }
@@ -1664,13 +1684,6 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
     type = (type_t){TY_ARRAY, {.array = {type_malloc(type), array_len}}};
   }
   if (expr && array_len.kind != ARRAY_LEN_UNSET) {
-    // if (expr->kind == A_ARRAY) {
-    //   ast_t *a = expr;
-    //   while (a) {
-    //     a->as.binary.left = ast_malloc((ast_t){A_CAST, a->loc, {}, {.cast = {type, a->as.binary.left}}});
-    //     a = a->as.binary.right;
-    //   }
-    // }
     expr = ast_malloc((ast_t){A_CAST, expr->loc, {}, {.cast = {type, expr}}});
   }
   return ast_malloc((ast_t){A_DECL,
@@ -1997,8 +2010,7 @@ void typecheck(ast_t *ast, state_t *state) {
         type_t *type = &ast->as.binaryop.lhs->type;
 
         if (ast->as.binaryop.op == T_DOT) {
-          assert(ast->as.binaryop.rhs->kind == A_FAC);
-          assert(ast->as.binaryop.rhs->as.fac.kind == T_SYM);
+          assert(ast->as.binaryop.rhs->kind == A_SYM);
 
           if (!type_is_kind(type, TY_STRUCT)) {
             eprintf(ast->as.binaryop.lhs->loc, "expected a 'STRUCT', found '%s'", type_dump_to_string(type));
@@ -2059,30 +2071,14 @@ void typecheck(ast_t *ast, state_t *state) {
           assert(0);
       }
       break;
-    case A_FAC:
-      switch (ast->as.fac.kind) {
-        case T_INT:
-          ast->type = (type_t){TY_INT, {}};
-          break;
-        case T_SYM:
-          ast->type = *state_find_symbol(state, ast->as.fac)->type;
-          break;
-        case T_STRING:
-          ast->type = (type_t){TY_PTR, {.ptr = type_malloc((type_t){TY_CHAR, {}})}};
-          break;
-        case T_HEX:
-          if (ast->as.fac.image.len - 2 == 2) {
-            ast->type = (type_t){TY_CHAR, {}};
-          } else {
-            ast->type = (type_t){TY_INT, {}};
-          }
-          break;
-        case T_CHAR:
-          ast->type = (type_t){TY_CHAR, {}};
-          break;
-        default:
-          assert(0);
-      }
+    case A_INT:
+      ast->type = (type_t){TY_INT, {}};
+      break;
+    case A_STRING:
+      ast->type = (type_t){TY_PTR, {.ptr = type_malloc((type_t){TY_CHAR, {}})}};
+      break;
+    case A_SYM:
+      ast->type = *state_find_symbol(state, ast->as.fac)->type;
       break;
     case A_GLOBDECL:
     case A_DECL:
@@ -2192,8 +2188,8 @@ void typecheck(ast_t *ast, state_t *state) {
         ast_t *expr = ast->as.cast.ast;
 
         while (f && expr) {
-          if (type_is_kind(f->as.fieldlist.type, TY_PTR) && expr->as.binary.left->kind == A_FAC &&
-              expr->as.binary.left->as.fac.kind == T_INT && atoi(expr->as.binary.left->as.fac.image.start) == 0) {
+          if (type_is_kind(f->as.fieldlist.type, TY_PTR) && expr->as.binary.left->kind == A_INT &&
+              expr->as.binary.left->as.fac.asint == 0) {
             expr->as.binary.left->type = *f->as.fieldlist.type;
           } else {
             typecheck_expect(expr->as.binary.left, state, *f->as.fieldlist.type);
@@ -2218,6 +2214,68 @@ void typecheck(ast_t *ast, state_t *state) {
       break;
     case A_ASM:
       ast->type = (type_t){TY_VOID, {}};
+      break;
+  }
+}
+
+void optimize_ast(ast_t **astp) {
+  assert(astp);
+  ast_t *ast = *astp;
+  if (!ast) {
+    return;
+  }
+
+  switch (ast->kind) {
+    case A_NONE:
+      assert(0);
+    case A_PARAMDEF:
+    case A_INT:
+    case A_SYM:
+    case A_STRING:
+    case A_TYPEDEF:
+    case A_ASM:
+      break;
+    case A_GLOBAL:
+    case A_BLOCK:
+    case A_ASSIGN:
+    case A_PARAM:
+    case A_ARRAY:
+      optimize_ast(&ast->as.binary.left);
+      optimize_ast(&ast->as.binary.right);
+      break;
+    case A_FUNCDECL:
+      optimize_ast(&ast->as.funcdecl.block);
+      break;
+    case A_STATEMENT:
+    case A_RETURN:
+      optimize_ast(&ast->as.ast);
+      break;
+    case A_BINARYOP:
+      {
+        ast_t *a = ast->as.binaryop.lhs;
+        ast_t *b = ast->as.binaryop.rhs;
+        optimize_ast(&a);
+        optimize_ast(&b);
+        if ((ast->as.binaryop.op == T_PLUS || ast->as.binaryop.op == T_MINUS) && a->kind == A_INT && b->kind == A_INT) {
+          a->as.fac.asint += (ast->as.binaryop.op == T_MINUS ? -1 : 1) * b->as.fac.asint;
+          *astp = ast_malloc((ast_t){A_INT, ast->loc, ast->type, {.fac = a->as.fac}});
+          free_ptr(a);
+          free_ptr(b);
+        }
+      }
+      break;
+    case A_UNARYOP:
+      optimize_ast(&ast->as.unaryop.arg);
+      break;
+    case A_DECL:
+    case A_GLOBDECL:
+      optimize_ast(&ast->as.decl.expr);
+      break;
+    case A_FUNCALL:
+      optimize_ast(&ast->as.funcall.params);
+      break;
+    case A_CAST:
+      optimize_ast(&ast->as.cast.ast);
       break;
   }
 }
@@ -2282,9 +2340,8 @@ void get_addr_ast(state_t *state, ast_t *ast) {
   assert(ast);
 
   switch (ast->kind) {
-    case A_FAC:
+    case A_SYM:
       {
-        assert(ast->as.fac.kind == T_SYM);
         symbol_t *s = state_find_symbol(state, ast->as.fac);
         if (s->kind == INFO_LOCAL) {
           state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - s->info.local}});
@@ -2329,8 +2386,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
             assert(type_is_kind(&ast->type, TY_PTR));
             get_addr_ast(state, ast->as.binaryop.lhs);
             int size = type_size(ast->type.as.ptr);
-            if (ast->as.binaryop.rhs->kind == A_FAC) {
-              assert(ast->as.binaryop.rhs->as.fac.kind == T_INT);
+            if (ast->as.binaryop.rhs->kind == A_INT) {
               state_add_addr_offset(state, ast->as.binaryop.rhs->as.fac.asint * size);
             } else {
               compile(ast->as.binaryop.rhs, state);
@@ -2367,39 +2423,32 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
           data(compiled, (bytecode_t){BDB, 0, {.num = delta}});
         }
       }
-      return;
+      break;
     case A_ARRAY:
       compile_data(ast->as.binary.left, state, uli, offset);
       if (ast->as.binary.right) {
         compile_data(ast->as.binary.right, state, uli, offset + type_size(&ast->as.binary.left->type));
       }
-      return;
-    case A_FAC:
-      switch (ast->as.fac.kind) {
-        case T_INT:
-        case T_HEX:
-          data(compiled, (bytecode_t){type_size(&ast->type) == 2 ? BHEX2 : BHEX, 0, {.num = ast->as.fac.asint}});
-          break;
-        case T_STRING:
-          data(compiled, bytecode_with_sv(BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
-          data(compiled, (bytecode_t){BHEX, 0, {.num = 0}});
-          break;
-        default:
-          break;
-      }
-      return;
-    default:
       break;
+    case A_INT:
+      data(compiled, (bytecode_t){type_size(&ast->type) == 2 ? BHEX2 : BHEX, 0, {.num = ast->as.fac.asint}});
+      break;
+    case A_STRING:
+      data(compiled, bytecode_with_sv(BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
+      data(compiled, (bytecode_t){BHEX, 0, {.num = 0}});
+      break;
+    default:
+      {
+        int size = type_size(&ast->type);
+        data(compiled, (bytecode_t){BDB, 0, {.num = size}});
+        state->is_init = true;
+        compile(ast, state);
+        state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
+        state_add_ir(state, (ir_t){IR_ADDR_OFFSET, {.num = offset}});
+        state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
+        state->is_init = false;
+      }
   }
-
-  int size = type_size(&ast->type);
-  data(compiled, (bytecode_t){BDB, 0, {.num = size}});
-  state->is_init = true;
-  compile(ast, state);
-  state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
-  state_add_ir(state, (ir_t){IR_ADDR_OFFSET, {.num = offset}});
-  state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
-  state->is_init = false;
 }
 
 void compile(ast_t *ast, state_t *state) {
@@ -2493,38 +2542,30 @@ void compile(ast_t *ast, state_t *state) {
           assert(0);
       }
       break;
-    case A_FAC:
-      switch (ast->as.fac.kind) {
-        case T_INT:
-        case T_HEX:
-        case T_CHAR:
-          state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.fac.asint}});
+    case A_INT:
+      state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.fac.asint}});
+      state->sp += 2;
+      break;
+    case A_SYM:
+      {
+        symbol_t *s = state_find_symbol(state, ast->as.fac);
+        if (s->kind == INFO_CONSTANT) {
+          state_add_ir(state, (ir_t){IR_INT, {.num = s->info.num}});
           state->sp += 2;
-          break;
-        case T_SYM:
-          {
-            symbol_t *s = state_find_symbol(state, ast->as.fac);
-            if (s->kind == INFO_CONSTANT) {
-              state_add_ir(state, (ir_t){IR_INT, {.num = s->info.num}});
-              state->sp += 2;
-            } else {
-              get_addr_ast(state, ast);
-              assert(s->type);
-              state_add_ir(state, (ir_t){IR_READ, {.num = type_size(s->type)}});
-              state->sp += type_size_aligned(s->type);
-            }
-          }
-          break;
-        case T_STRING:
-          {
-            int uli = datauli(state);
-            compile_data(ast, state, 0, 0);
-            state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
-            state->sp += 2;
-          }
-          break;
-        default:
-          assert(0);
+        } else {
+          get_addr_ast(state, ast);
+          assert(s->type);
+          state_add_ir(state, (ir_t){IR_READ, {.num = type_size(s->type)}});
+          state->sp += type_size_aligned(s->type);
+        }
+      }
+      break;
+    case A_STRING:
+      {
+        int uli = datauli(state);
+        compile_data(ast, state, 0, 0);
+        state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
+        state->sp += 2;
       }
       break;
     case A_DECL:
@@ -3117,7 +3158,7 @@ int main(int argc, char **argv) {
     state_init(&state);
     typecheck(ast, &state);
     if (opt == OL_AST) {
-      TODO;
+      optimize_ast(&ast);
     }
     if ((debug >> M_TYP) & 1) {
       printf("TYPED AST:\n");
