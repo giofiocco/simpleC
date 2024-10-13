@@ -2,8 +2,6 @@ type size into the type
 make array access cast to ptr
 read function for compile_ir
 
-remove atoi
-
 maybe struct ir_list and bytecode_list
 
 typedef array
@@ -22,13 +20,15 @@ test multiple returns
 - [ ] code block
 - [ ] int a,b;
 - [ ] int \*\*a;
+- [ ] struct point a;
+- [ ] &a; e \*&a;
 
 # Typechecker
 
 - [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it
 - [ ] warn if no return in some function
-- [ ] - - between char
 - [ ] return needs type VOID?
+- [ ] alias of alias?
 
 # Compiler
 
@@ -37,7 +37,6 @@ test multiple returns
 
 # PostOpt
 
-- [ ] both init and code
 - [ ] remove dead code
 - [ ] A_SP SP_A -> A_SP
 

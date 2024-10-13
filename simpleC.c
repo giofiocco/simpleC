@@ -481,6 +481,7 @@ typedef enum {
 
 typedef struct type_t_ {
   type_kind_t kind;
+  int size;
   union {
     struct {
       struct type_t_ *type;
@@ -1053,7 +1054,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
   }
   if (dumptype) {
     char *str = type_dump_to_string(&ast->type);
-    printf(" {%s}", str);
+    printf(" {%s <%d>}", str, ast->type.size);
     free_ptr(str);
   }
 }
@@ -1311,11 +1312,13 @@ void state_solve_type_alias(state_t *state, type_t *type) {
         }
         assert(s->type);
         type->as.alias.type = s->type;
+        type->size = type->as.alias.type->size;
       }
       break;
     case TY_STRUCT:
       if (type->as.struct_.fieldlist) {
         state_solve_type_alias(state, type->as.struct_.fieldlist);
+        type->size = type->as.struct_.fieldlist->size;
       }
       break;
     case TY_FIELDLIST:
@@ -1324,6 +1327,7 @@ void state_solve_type_alias(state_t *state, type_t *type) {
       if (type->as.fieldlist.next) {
         state_solve_type_alias(state, type->as.fieldlist.next);
       }
+      type->size = type->as.fieldlist.type->size + (type->as.fieldlist.next ? type->as.fieldlist.next->size : 0);
       break;
     case TY_ENUM:
       break;
@@ -1353,14 +1357,14 @@ type_t parse_type(tokenizer_t *tokenizer) {
 
   token_t token = token_peek(tokenizer);
   if (token_next_if_kind(tokenizer, T_VOIDKW)) {
-    type = (type_t){TY_VOID, {}};
+    type = (type_t){TY_VOID, 0, {}};
   } else if (token_next_if_kind(tokenizer, T_INTKW)) {
-    type = (type_t){TY_INT, {}};
+    type = (type_t){TY_INT, 2, {}};
   } else if (token_next_if_kind(tokenizer, T_CHARKW)) {
-    type = (type_t){TY_CHAR, {}};
+    type = (type_t){TY_CHAR, 1, {}};
   } else {
     token = token_expect(tokenizer, T_SYM);
-    type = (type_t){TY_ALIAS, {.alias = {token, NULL, is_struct}}};
+    type = (type_t){TY_ALIAS, 0, {.alias = {token, NULL, is_struct}}};
   }
 
   if (is_struct && type.kind != TY_ALIAS) {
@@ -1368,7 +1372,7 @@ type_t parse_type(tokenizer_t *tokenizer) {
   }
 
   if (token_next_if_kind(tokenizer, T_STAR)) {
-    type = (type_t){TY_PTR, {.ptr = type_malloc(type)}};
+    type = (type_t){TY_PTR, 2, {.ptr = type_malloc(type)}};
   }
 
   return type;
@@ -1384,7 +1388,7 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
   }
   token_expect(tokenizer, T_BRO);
   if (token_next_if_kind(tokenizer, T_BRC)) {
-    return (type_t){TY_STRUCT, {.struct_ = {name, NULL}}};
+    return (type_t){TY_STRUCT, 0, {.struct_ = {name, NULL}}};
   }
 
   sv_t fields[128] = {0};
@@ -1393,7 +1397,7 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
   type_t ftype = parse_type(tokenizer);
   token_t fname = token_expect(tokenizer, T_SYM);
   token_expect(tokenizer, T_SEMICOLON);
-  type_t type = {TY_FIELDLIST, {.fieldlist = {type_malloc(ftype), fname, NULL}}};
+  type_t type = {TY_FIELDLIST, 0, {.fieldlist = {type_malloc(ftype), fname, NULL}}};
   type_t *typei = &type;
 
   fields[field_num++] = fname.image;
@@ -1410,7 +1414,7 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
     ftype = parse_type(tokenizer);
     fname = token_expect(tokenizer, T_SYM);
     token_expect(tokenizer, T_SEMICOLON);
-    typei->as.fieldlist.next = type_malloc((type_t){TY_FIELDLIST, {.fieldlist = {type_malloc(ftype), fname, NULL}}});
+    typei->as.fieldlist.next = type_malloc((type_t){TY_FIELDLIST, 0, {.fieldlist = {type_malloc(ftype), fname, NULL}}});
     typei = typei->as.fieldlist.next;
 
     for (int i = 0; i < field_num; ++i) {
@@ -1430,7 +1434,7 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
     }
   }
 
-  return (type_t){TY_STRUCT, {.struct_ = {name, type_malloc(type)}}};
+  return (type_t){TY_STRUCT, 0, {.struct_ = {name, type_malloc(type)}}};
 }
 
 type_t parse_enumdef(tokenizer_t *tokenizer) {
@@ -1442,7 +1446,7 @@ type_t parse_enumdef(tokenizer_t *tokenizer) {
   token_t name = token_expect(tokenizer, T_SYM);
   token_expect(tokenizer, T_COMMA);
 
-  type_t type = {TY_ENUM, {.enum_ = {name, NULL}}};
+  type_t type = {TY_ENUM, 2, {.enum_ = {name, NULL}}};
   type_t *typei = &type;
 
   token_t names[128] = {name};
@@ -1460,7 +1464,7 @@ type_t parse_enumdef(tokenizer_t *tokenizer) {
 
     names[i++] = name;
 
-    typei->as.enum_.next = type_malloc((type_t){TY_ENUM, {.enum_ = {name, NULL}}});
+    typei->as.enum_.next = type_malloc((type_t){TY_ENUM, 2, {.enum_ = {name, NULL}}});
     typei = typei->as.enum_.next;
   }
 
@@ -1681,7 +1685,7 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
     expr = parse_expr(tokenizer);
   }
   if (array_len.kind != ARRAY_LEN_NOTARRAY) {
-    type = (type_t){TY_ARRAY, {.array = {type_malloc(type), array_len}}};
+    type = (type_t){TY_ARRAY, 0, {.array = {type_malloc(type), array_len}}};
   }
   if (expr && array_len.kind != ARRAY_LEN_UNSET) {
     expr = ast_malloc((ast_t){A_CAST, expr->loc, {}, {.cast = {type, expr}}});
@@ -1937,7 +1941,7 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
     typecheck_funcbody(ast->as.binary.right, state, ret);
   }
 
-  ast->type = (type_t){TY_VOID, {}};
+  ast->type = (type_t){TY_VOID, 0, {}};
 }
 
 void typecheck(ast_t *ast, state_t *state) {
@@ -1955,12 +1959,12 @@ void typecheck(ast_t *ast, state_t *state) {
       assert(ast->as.binary.left);
       typecheck(ast->as.binary.left, state);
       typecheck(ast->as.binary.right, state);
-      ast->type = (type_t){TY_VOID, {}};
+      ast->type = (type_t){TY_VOID, 0, {}};
       break;
     case A_STATEMENT:
       assert(ast->as.ast);
       typecheck(ast->as.ast, state);
-      ast->type = (type_t){TY_VOID, {}};
+      ast->type = (type_t){TY_VOID, 0, {}};
       break;
     case A_FUNCDECL:
       {
@@ -1971,6 +1975,7 @@ void typecheck(ast_t *ast, state_t *state) {
         state_solve_type_alias(state, &ast->as.funcdecl.type);
         ast->type =
           (type_t){TY_FUNC,
+                   ast->as.funcdecl.type.size,
                    {.func = {&ast->as.funcdecl.type, ast->as.funcdecl.params ? &ast->as.funcdecl.params->type : NULL}}};
 
         if (ast->as.funcdecl.block) {
@@ -1991,6 +1996,7 @@ void typecheck(ast_t *ast, state_t *state) {
         typecheck(ast->as.paramdef.next, state);
         ast->type =
           (type_t){TY_PARAM,
+                   ast->as.paramdef.type.size,
                    {.list = {&ast->as.paramdef.type, ast->as.paramdef.next ? &ast->as.paramdef.next->type : NULL}}};
       }
       break;
@@ -1999,7 +2005,7 @@ void typecheck(ast_t *ast, state_t *state) {
       if (ast->as.ast) {
         ast->type = ast->as.ast->type;
       } else {
-        ast->type = (type_t){TY_VOID, {}};
+        ast->type = (type_t){TY_VOID, 0, {}};
       }
       break;
     case A_BINARYOP:
@@ -2026,11 +2032,11 @@ void typecheck(ast_t *ast, state_t *state) {
 
           ast->type = *f->as.fieldlist.type;
         } else if (ast->as.binaryop.op == T_PLUS || ast->as.binaryop.op == T_MINUS) {
-          typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, {{0}}});
+          typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
           if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR)) {
             ast->type = *type;
           } else if (type->kind == TY_ARRAY) {
-            ast->type = (type_t){TY_PTR, {.ptr = type->as.array.type}};
+            ast->type = (type_t){TY_PTR, 2, {.ptr = type->as.array.type}};
             ast_t *lhs = ast->as.binaryop.lhs;
             lhs = ast_malloc((ast_t){A_CAST, lhs->loc, {}, {.cast = {ast->type, lhs}}});
           } else {
@@ -2049,12 +2055,12 @@ void typecheck(ast_t *ast, state_t *state) {
       assert(ast->as.unaryop.arg);
       switch (ast->as.unaryop.op) {
         case T_MINUS:
-          typecheck_expandable(ast->as.unaryop.arg, state, (type_t){TY_INT, {{0}}});
+          typecheck_expandable(ast->as.unaryop.arg, state, (type_t){TY_INT, 2, {}});
           ast->type.kind = TY_INT;
           break;
         case T_AND:
           typecheck(ast->as.unaryop.arg, state);
-          ast->type = (type_t){TY_PTR, {.ptr = &ast->as.unaryop.arg->type}};
+          ast->type = (type_t){TY_PTR, 2, {.ptr = &ast->as.unaryop.arg->type}};
           break;
         case T_STAR:
           typecheck(ast->as.unaryop.arg, state);
@@ -2072,10 +2078,14 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       break;
     case A_INT:
-      ast->type = (type_t){TY_INT, {}};
+      if (ast->as.fac.kind == T_CHAR || (ast->as.fac.kind == T_HEX && ast->as.fac.image.len == 4)) {
+        ast->type = (type_t){TY_CHAR, 1, {}};
+      } else {
+        ast->type = (type_t){TY_INT, 2, {}};
+      }
       break;
     case A_STRING:
-      ast->type = (type_t){TY_PTR, {.ptr = type_malloc((type_t){TY_CHAR, {}})}};
+      ast->type = (type_t){TY_PTR, 2, {.ptr = type_malloc((type_t){TY_CHAR, 1, {}})}};
       break;
     case A_SYM:
       ast->type = *state_find_symbol(state, ast->as.fac)->type;
@@ -2091,7 +2101,7 @@ void typecheck(ast_t *ast, state_t *state) {
         if (ast->as.decl.expr != NULL) {
           eprintf(ast->loc, "array with variable length cannot be initialized");
         } else {
-          typecheck_expect(ast->as.decl.array_len, state, (type_t){TY_INT, {}});
+          typecheck_expect(ast->as.decl.array_len, state, (type_t){TY_INT, 2, {}});
         }
       }
       if (ast->as.decl.expr) {
@@ -2103,7 +2113,7 @@ void typecheck(ast_t *ast, state_t *state) {
         ast->as.decl.expr->type = ast->as.decl.type;
       }
       state_add_symbol(state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, 0, {}});
-      ast->type = (type_t){TY_VOID, {}};
+      ast->type = (type_t){TY_VOID, 0, {}};
       break;
     case A_ASSIGN:
       assert(ast->as.binary.left);
@@ -2144,6 +2154,7 @@ void typecheck(ast_t *ast, state_t *state) {
       typecheck(ast->as.binary.right, state);
       ast->type =
         (type_t){TY_PARAM,
+                 ast->as.binary.left->type.size,
                  {.list = {&ast->as.binary.left->type, ast->as.binary.right ? &ast->as.binary.right->type : NULL}}};
       break;
     case A_ARRAY:
@@ -2156,10 +2167,13 @@ void typecheck(ast_t *ast, state_t *state) {
 
         type_t type = ast->as.binary.right->type;
         type.as.array.len.num += 1;
+        type.size += ast->as.binary.left->type.size;
         ast->type = type;
       } else {
         typecheck(ast->as.binary.left, state);
-        ast->type = (type_t){TY_ARRAY, {.array = {&ast->as.binary.left->type, .len = {ARRAY_LEN_NUM, 1}}}};
+        ast->type = (type_t){TY_ARRAY,
+                             ast->as.binary.left->type.size,
+                             {.array = {&ast->as.binary.left->type, .len = {ARRAY_LEN_NUM, 1}}}};
       }
       break;
     case A_TYPEDEF:
@@ -2176,7 +2190,7 @@ void typecheck(ast_t *ast, state_t *state) {
 
         state_solve_type_alias(state, type);
         state_add_symbol(state, (symbol_t){ast->as.typedef_.name, &ast->as.typedef_.type, INFO_TYPE, {}});
-        ast->type = (type_t){TY_VOID, {}};
+        ast->type = (type_t){TY_VOID, 0, {}};
       }
       break;
     case A_CAST:
@@ -2213,7 +2227,7 @@ void typecheck(ast_t *ast, state_t *state) {
       ast->type = ast->as.cast.target;
       break;
     case A_ASM:
-      ast->type = (type_t){TY_VOID, {}};
+      ast->type = (type_t){TY_VOID, 0, {}};
       break;
   }
 }
@@ -2633,7 +2647,7 @@ void compile(ast_t *ast, state_t *state) {
         for (type_t *typei = &ast->as.typedef_.type; typei; typei = typei->as.enum_.next) {
           state_add_symbol(
             state,
-            (symbol_t){typei->as.enum_.name, type_malloc((type_t){TY_INT, {}}), INFO_CONSTANT, {.num = i}});
+            (symbol_t){typei->as.enum_.name, type_malloc((type_t){TY_INT, 2, {}}), INFO_CONSTANT, {.num = i}});
           i++;
         }
       }
@@ -2952,8 +2966,8 @@ void help(int errorcode) {
           " -o <file>      write output to the file [default is 'out.asm']\n"
           " -O0 | -O       no optimization\n"
           " -O1            enable ASM bytecode optimization\n"
-          " -O2            enable IR optimization\n"
-          " -O3            enable AST optimization\n"
+          " -O2            enable IR optimization (and ASM)\n"
+          " -O3            enable AST optimization (and ASM and IR)\n"
           " -O4            enable all optimization\n"
           " -h | --help    print this page and exit\n\n"
           "Modules:\n"
@@ -3157,7 +3171,7 @@ int main(int argc, char **argv) {
 
     state_init(&state);
     typecheck(ast, &state);
-    if (opt == OL_AST) {
+    if (opt >= OL_AST) {
       optimize_ast(&ast);
     }
     if ((debug >> M_TYP) & 1) {
@@ -3190,7 +3204,7 @@ int main(int argc, char **argv) {
     state_init_with_compiled(&state);
     compile(ast, &state);
 
-    if (opt == OL_IR) {
+    if (opt >= OL_IR) {
       TODO;
     }
     if ((debug >> M_IR) & 1) {
@@ -3222,7 +3236,7 @@ int main(int argc, char **argv) {
     code(&state.compiled, bytecode_with_string(BINSTLABEL, CALL, "exit"));
     state.compiled.is_init = false;
 
-    if (opt == OL_ASM) {
+    if (opt >= OL_ASM) {
       optimize_asm(state.compiled.code, &state.compiled.code_num);
       optimize_asm(state.compiled.init, &state.compiled.init_num);
     }

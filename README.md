@@ -61,7 +61,7 @@ Multi-line comments: `/* ... */`
 - enumdef ::= ENUM BRO ( SYM COMMA )\* BRC
 - asm ::= ASM PARO STRING PARC
 
-# Bytecodes
+# Intermidiate Rappresentation
 
 - SETLABEL
 - RETURN
