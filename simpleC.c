@@ -1276,7 +1276,6 @@ typedef struct {
 typedef enum {
   IR_NONE,
   IR_SETLABEL,     // + sv
-  IR_RETURN,       // + num
   IR_FUNCEND,      //
   IR_ADDR_LOCAL,   // + num
   IR_ADDR_GLOBAL,  // + num
@@ -1297,10 +1296,6 @@ typedef struct {
     sv_t sv;
     int num;
     instruction_t inst;
-    struct {
-      int pos;
-      int len;
-    } _return;
   } arg;
 } ir_t;
 
@@ -1311,9 +1306,6 @@ void ir_dump(ir_t ir) {
       break;
     case IR_SETLABEL:
       printf("SETLABEL " SV_FMT, SV_UNPACK(ir.arg.sv));
-      break;
-    case IR_RETURN:
-      printf("RETURN %d x %d", ir.arg._return.pos, ir.arg._return.len);
       break;
     case IR_FUNCEND:
       printf("FUNCEND");
@@ -2673,7 +2665,7 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.funcdecl.block) {
         compile(ast->as.funcdecl.block, state);
       }
-      if (state->irs[state->ir_num - 1].kind != IR_RETURN && state->irs[state->ir_num - 1].kind != IR_FUNCEND) {
+      if (state->irs[state->ir_num - 1].kind != IR_FUNCEND) {
         state_change_sp(state, -state->sp);
         state_add_ir(state, (ir_t){IR_FUNCEND, {.num = 0}});
       }
@@ -2998,17 +2990,7 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
     case IR_SETLABEL:
       code(compiled, bytecode_with_sv(BSETLABEL, 0, ir.arg.sv));
       break;
-    case IR_RETURN:
-      assert(0 < ir.arg._return.pos && ir.arg._return.pos < 256);
-      for (int i = 0; i < ir.arg._return.len; i += 2) {
-        code(compiled, (bytecode_t){BINST, POPA, {}});
-        code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = ir.arg._return.pos}});
-      }
-      compile_change_sp(state, -(ir.arg._return.pos - 2 - ir.arg._return.len));
-      code(compiled, (bytecode_t){BINST, RET, {}});
-      break;
     case IR_FUNCEND:
-      compile_change_sp(state, -ir.arg.num);
       code(compiled, (bytecode_t){BINST, RET, {}});
       break;
     case IR_ADDR_LOCAL:

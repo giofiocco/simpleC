@@ -12,10 +12,6 @@ test multiple returns
 better documentation for ir
 specify in ast_kind_t which ast_t.as use
 
-remove IR_RETURN
-
-if decl with expr with funcalls all the param expr will remain in the stack
-
 # Tokenizer
 
 - [ ] binary litterals
