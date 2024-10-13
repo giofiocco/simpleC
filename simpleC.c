@@ -753,59 +753,8 @@ bool type_greaterthan(type_t *a, type_t *b) {  // a >= b
   return type_cmp(a, b);
 }
 
-int type_size(type_t *type) {
-  if (!type) {
-    return 0;
-  }
-  switch (type->kind) {
-    case TY_NONE:
-      assert(0);
-    case TY_VOID:
-      return 0;
-    case TY_CHAR:
-      return 1;
-    case TY_INT:
-      return 2;
-    case TY_FUNC:
-      assert(0);
-    case TY_PTR:
-      return 2;
-    case TY_PARAM:
-      assert(0);
-    case TY_ARRAY:
-      assert(type->as.array.type);
-      assert(type->as.array.len.kind == ARRAY_LEN_NUM);
-      return type_size(type->as.array.type) * type->as.array.len.num;
-    case TY_ALIAS:
-      assert(type->as.alias.type);
-      return type_size(type->as.alias.type);
-    case TY_STRUCT:
-      assert(type->as.struct_.fieldlist);
-      return type_size(type->as.struct_.fieldlist);
-    case TY_FIELDLIST:
-      {
-        assert(type->as.fieldlist.type);
-        type_t *a = type->as.fieldlist.type;
-        type_t *b = type->as.fieldlist.next ? type->as.fieldlist.next->as.fieldlist.type : NULL;
-
-        if (type_size(a) == 1) {
-          if (b && type_size(b) == 1) {
-            return 2 + type_size(type->as.fieldlist.next->as.fieldlist.next);
-          } else {
-            return 2 + type_size(type->as.fieldlist.next);
-          }
-        }
-        return type_size(a) + type_size(type->as.fieldlist.next);
-      }
-    case TY_ENUM:
-      return 2;
-  }
-  assert(0);
-}
-
 int type_size_aligned(type_t *type) {
-  int size = type_size(type);
-  return size + size % 2;
+  return type->size + type->size % 2;
 }
 
 void type_expect(location_t loc, type_t *found, type_t *expect) {
@@ -1473,6 +1422,9 @@ void state_solve_type_alias(state_t *state, type_t *type) {
     case TY_ARRAY:
       assert(type->as.array.type);
       state_solve_type_alias(state, type->as.array.type);
+      if (type->as.array.len.kind == ARRAY_LEN_NUM) {
+        type->size = type->as.array.type->size * type->as.array.len.num;
+      }
       break;
     case TY_ALIAS:
       {
@@ -2487,6 +2439,7 @@ bytecode_t bytecode_uli(bytecode_kind_t kind, instruction_t inst, int uli) {
 int datauli(state_t *state) {
   assert(state);
   int uli = state->uli++;
+  data(&state->compiled, (bytecode_t){BALIGN, 0, {}});
   data(&state->compiled, bytecode_uli(BSETLABEL, 0, uli));
   return uli;
 }
@@ -2548,7 +2501,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
                   !type_is_kind(f->as.fieldlist.next->as.fieldlist.type, TY_CHAR)) {
                 offset += 2;
               } else {
-                offset += type_size(f->as.fieldlist.type);
+                offset += f->as.fieldlist.type->size;
               }
               f = f->as.fieldlist.next;
             };
@@ -2565,7 +2518,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
           {
             assert(type_is_kind(&ast->type, TY_PTR));
             get_addr_ast(state, ast->as.binaryop.lhs);
-            int size = type_size(ast->type.as.ptr);
+            int size = ast->type.as.ptr->size;
             if (ast->as.binaryop.rhs->kind == A_INT) {
               state_add_addr_offset(state, ast->as.binaryop.rhs->as.fac.asint * size);
             } else {
@@ -2599,6 +2552,7 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
       {
         compile_data(ast->as.cast.ast, state, uli, 0);
         int delta = type_size_aligned(&ast->as.cast.target) - type_size_aligned(&ast->as.cast.ast->type);
+        assert(delta >= 0);
         if (delta > 0) {
           data(compiled, (bytecode_t){BDB, 0, {.num = delta}});
         }
@@ -2607,11 +2561,11 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
     case A_ARRAY:
       compile_data(ast->as.binary.left, state, uli, offset);
       if (ast->as.binary.right) {
-        compile_data(ast->as.binary.right, state, uli, offset + type_size(&ast->as.binary.left->type));
+        compile_data(ast->as.binary.right, state, uli, offset + ast->as.binary.left->type.size);
       }
       break;
     case A_INT:
-      data(compiled, (bytecode_t){type_size(&ast->type) == 2 ? BHEX2 : BHEX, 0, {.num = ast->as.fac.asint}});
+      data(compiled, (bytecode_t){ast->type.size == 2 ? BHEX2 : BHEX, 0, {.num = ast->as.fac.asint}});
       break;
     case A_STRING:
       data(compiled, bytecode_with_sv(BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
@@ -2619,7 +2573,7 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
       break;
     default:
       {
-        int size = type_size(&ast->type);
+        int size = ast->type.size;
         data(compiled, (bytecode_t){BDB, 0, {.num = size}});
         state->is_init = true;
         compile(ast, state);
@@ -2705,7 +2659,7 @@ void compile(ast_t *ast, state_t *state) {
       switch (ast->as.binaryop.op) {
         case T_DOT:
           get_addr_ast(state, ast);
-          state_add_ir(state, (ir_t){IR_READ, {.num = type_size(&ast->type)}});
+          state_add_ir(state, (ir_t){IR_READ, {.num = ast->type.size}});
           state->sp += type_size_aligned(&ast->type);
           break;
         case T_PLUS:
@@ -2728,7 +2682,7 @@ void compile(ast_t *ast, state_t *state) {
       switch (ast->as.unaryop.op) {
         case T_STAR:
           compile(ast->as.unaryop.arg, state);
-          state_add_ir(state, (ir_t){IR_READ, {.num = type_size(&ast->type)}});
+          state_add_ir(state, (ir_t){IR_READ, {.num = ast->type.size}});
           state->sp += type_size_aligned(&ast->type) - 2;
           break;
         default:
@@ -2748,7 +2702,7 @@ void compile(ast_t *ast, state_t *state) {
         } else {
           get_addr_ast(state, ast);
           assert(s->type);
-          state_add_ir(state, (ir_t){IR_READ, {.num = type_size(s->type)}});
+          state_add_ir(state, (ir_t){IR_READ, {.num = s->type->size}});
           state->sp += type_size_aligned(s->type);
         }
       }
@@ -2786,7 +2740,7 @@ void compile(ast_t *ast, state_t *state) {
         if (ast->as.decl.expr) {
           compile_data(ast->as.decl.expr, state, uli, 0);
         } else {
-          data(compiled, (bytecode_t){BDB, 0, {.num = type_size(&ast->as.decl.type)}});
+          data(compiled, (bytecode_t){BDB, 0, {.num = ast->as.decl.type.size}});
         }
         state_add_symbol(state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_GLOBAL, {uli}});
       }
@@ -2957,7 +2911,7 @@ void compile_change_sp(state_t *state, int delta) {
   }
 
   assert(delta % 2 == 0);
-  if (abs(delta) <= 8) {
+  if (abs(delta) <= 10) {
     for (int i = 0; i < abs(delta); i += 2) {
       code(compiled, (bytecode_t){BINST, delta > 0 ? DECSP : INCSP, {}});
     }

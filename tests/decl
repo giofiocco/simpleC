@@ -39,8 +39,6 @@ INST         POPA
 INSTHEX      PUSHAR 0x0A
 INST         INCSP
 INST         INCSP
-INST         INCSP
-INST         INCSP
 INST         RET
 SETLABEL     main
 INSTHEX      RAM_AL 0x04
