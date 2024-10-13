@@ -921,6 +921,54 @@ ast_t *ast_malloc(ast_t ast) {
   return ptr;
 }
 
+char *ast_kind_to_string(ast_kind_t kind) {
+  switch (kind) {
+    case A_NONE:
+      return "NONE";
+    case A_GLOBAL:
+      return "GLOBAL";
+    case A_FUNCDECL:
+      return "FUNCDECL";
+    case A_PARAMDEF:
+      return "PARAMDEF";
+    case A_BLOCK:
+      return "BLOCK";
+    case A_STATEMENT:
+      return "STATEMENT";
+    case A_RETURN:
+      return "RETURN";
+    case A_BINARYOP:
+      return "BINARYOP";
+    case A_UNARYOP:
+      return "UNARYOP";
+    case A_INT:
+      return "INT";
+    case A_STRING:
+      return "STRING";
+    case A_SYM:
+      return "SYM";
+    case A_DECL:
+      return "DECL";
+    case A_GLOBDECL:
+      return "GLOBDECL";
+    case A_ASSIGN:
+      return "ASSIGN";
+    case A_FUNCALL:
+      return "FUNCALL";
+    case A_PARAM:
+      return "PARAM";
+    case A_ARRAY:
+      return "ARRAY";
+    case A_TYPEDEF:
+      return "TYPEDEF";
+    case A_CAST:
+      return "CAST";
+    case A_ASM:
+      return "ASM";
+  }
+  assert(0);
+}
+
 void ast_dump(ast_t *ast, bool dumptype) {
   if (!ast) {
     printf("NULL");
@@ -1052,11 +1100,138 @@ void ast_dump(ast_t *ast, bool dumptype) {
       printf("ASM(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
       break;
   }
-  if (dumptype) {
+  if (dumptype && ast->type.kind != TY_VOID) {
     char *str = type_dump_to_string(&ast->type);
     printf(" {%s <%d>}", str, ast->type.size);
     free_ptr(str);
   }
+}
+
+void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
+  if (!ast) {
+    return;
+  }
+
+  if (indent > 0) {
+    assert(indent < 200);
+    printf(
+      "%*.*s",
+      indent * 2,
+      indent * 2,
+      "                                                                                                             "
+      "                                                                                                             "
+      "                                                                                                             "
+      "                                                                         ");
+  }
+  printf("%s", ast_kind_to_string(ast->kind));
+
+#define dump_type                                   \
+  if (dumptype && ast->type.kind != TY_VOID) {      \
+    char *str = type_dump_to_string(&ast->type);    \
+    printf(" :: {%s <%d>}\n", str, ast->type.size); \
+    free_ptr(str);                                  \
+  } else {                                          \
+    printf("\n");                                   \
+  }
+
+  switch (ast->kind) {
+    case A_NONE:
+      dump_type;
+      break;
+    case A_GLOBAL:
+    case A_BLOCK:
+    case A_PARAM:
+    case A_ARRAY:
+      {
+        dump_type;
+        ast_dump_tree(ast->as.binary.left, dumptype, indent + 1);
+        ast_t *next = ast->as.binary.right;
+        while (next) {
+          assert(next->kind == ast->kind);
+          ast_dump_tree(next->as.binary.left, dumptype, indent + 1);
+          next = next->as.binary.right;
+        }
+      }
+      break;
+    case A_FUNCDECL:
+      {
+        char *str = type_dump_to_string(&ast->as.funcdecl.type);
+        printf(" {%s} " SV_FMT, str, SV_UNPACK(ast->as.funcdecl.name.image));
+        free_ptr(str);
+        dump_type;
+        ast_dump_tree(ast->as.funcdecl.params, dumptype, indent + 1);
+        ast_dump_tree(ast->as.funcdecl.block, dumptype, indent + 1);
+      }
+      break;
+    case A_PARAMDEF:
+      {
+        char *str = type_dump_to_string(&ast->as.paramdef.type);
+        printf(" {%s} " SV_FMT, str, SV_UNPACK(ast->as.paramdef.name.image));
+        free_ptr(str);
+        dump_type;
+        ast_dump_tree(ast->as.paramdef.next, dumptype, indent);
+      }
+      break;
+    case A_STATEMENT:
+    case A_RETURN:
+      dump_type;
+      ast_dump_tree(ast->as.ast, dumptype, indent + 1);
+      break;
+    case A_BINARYOP:
+      printf(" %s", token_kind_to_string(ast->as.binaryop.op));
+      dump_type;
+      ast_dump_tree(ast->as.binaryop.lhs, dumptype, indent + 1);
+      ast_dump_tree(ast->as.binaryop.rhs, dumptype, indent + 1);
+      break;
+    case A_UNARYOP:
+      printf(" %s", token_kind_to_string(ast->as.unaryop.op));
+      dump_type;
+      ast_dump_tree(ast->as.unaryop.arg, dumptype, indent + 1);
+      break;
+    case A_INT:
+      printf(" %d", ast->as.fac.asint);
+      dump_type;
+      break;
+    case A_STRING:
+    case A_SYM:
+    case A_ASM:
+      printf(" " SV_FMT, SV_UNPACK(ast->as.fac.image));
+      dump_type;
+      break;
+    case A_GLOBDECL:
+    case A_DECL:
+      {
+        char *str = type_dump_to_string(&ast->as.decl.type);
+        printf(" {%s} " SV_FMT, str, SV_UNPACK(ast->as.decl.name.image));
+        free_ptr(str);
+        dump_type;
+        ast_dump_tree(ast->as.decl.expr, dumptype, indent + 1);
+      }
+      break;
+    case A_ASSIGN:
+      dump_type;
+      ast_dump_tree(ast->as.binary.left, dumptype, indent + 1);
+      ast_dump_tree(ast->as.binary.right, dumptype, indent + 1);
+      break;
+    case A_FUNCALL:
+      dump_type;
+      ast_dump_tree(ast->as.funcall.params, dumptype, indent + 1);
+      break;
+    case A_TYPEDEF:
+      {
+        char *str = type_dump_to_string(&ast->as.typedef_.type);
+        printf(" {%s} " SV_FMT, str, SV_UNPACK(ast->as.typedef_.name.image));
+        free_ptr(str);
+        dump_type;
+      }
+      break;
+    case A_CAST:
+      dump_type;
+      ast_dump_tree(ast->as.cast.ast, dumptype, indent + 1);
+      break;
+  }
+
+#undef dump_type
 }
 
 #define SYMBOL_MAX 128
@@ -3162,7 +3337,7 @@ int main(int argc, char **argv) {
     ast = parse(&tokenizer);
     if ((debug >> M_PAR) & 1) {
       printf("AST:\n");
-      ast_dump(ast, false);
+      ast_dump_tree(ast, false, 0);
       printf("\n");
     }
     if ((exitat >> M_PAR) & 1) {
@@ -3176,7 +3351,7 @@ int main(int argc, char **argv) {
     }
     if ((debug >> M_TYP) & 1) {
       printf("TYPED AST:\n");
-      ast_dump(ast, true);
+      ast_dump_tree(ast, true, 0);
       printf("\n");
     }
     if ((exitat >> M_TYP) & 1) {
