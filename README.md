@@ -90,4 +90,4 @@ Multi-line comments: `/* ... */`
 - INT(x) INT(y) OPERATION(B_AH) -> INT((x << 8) | y)
 - INT(x) INT(y) OPERATION(SUM) -> INT(x + y)
 - INT(x) INT(y) OPERATION(SUB) -> INT(x - y)
-- ADDR_LOCAL(2) READ(x) ADDR_LOCAL(y) WRITE(x) CHANGE_SP(-z) if z >= x -> ADDR_LOCAL(y-x) WRITE(x) CHANGE_SP(z-x)
+- ADDR_LOCAL(2) READ(x) ADDR_LOCAL(y) WRITE(x) CHANGE_SP(z) if -z >= x -> ADDR_LOCAL(y-x) WRITE(x) CHANGE_SP(z+x)
