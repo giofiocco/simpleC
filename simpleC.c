@@ -1422,6 +1422,9 @@ void state_solve_type_alias(state_t *state, type_t *type) {
     case TY_ARRAY:
       assert(type->as.array.type);
       state_solve_type_alias(state, type->as.array.type);
+      if (type->as.array.len.kind == ARRAY_LEN_NUM) {
+        type->size = type->as.array.type->size * type->as.array.len.num;
+      }
       break;
     case TY_ALIAS:
       {
@@ -2436,6 +2439,7 @@ bytecode_t bytecode_uli(bytecode_kind_t kind, instruction_t inst, int uli) {
 int datauli(state_t *state) {
   assert(state);
   int uli = state->uli++;
+  data(&state->compiled, (bytecode_t){BALIGN, 0, {}});
   data(&state->compiled, bytecode_uli(BSETLABEL, 0, uli));
   return uli;
 }
@@ -2548,6 +2552,7 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
       {
         compile_data(ast->as.cast.ast, state, uli, 0);
         int delta = type_size_aligned(&ast->as.cast.target) - type_size_aligned(&ast->as.cast.ast->type);
+        assert(delta >= 0);
         if (delta > 0) {
           data(compiled, (bytecode_t){BDB, 0, {.num = delta}});
         }
@@ -2906,7 +2911,7 @@ void compile_change_sp(state_t *state, int delta) {
   }
 
   assert(delta % 2 == 0);
-  if (abs(delta) <= 8) {
+  if (abs(delta) <= 10) {
     for (int i = 0; i < abs(delta); i += 2) {
       code(compiled, (bytecode_t){BINST, delta > 0 ? DECSP : INCSP, {}});
     }

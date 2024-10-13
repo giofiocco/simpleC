@@ -11,13 +11,17 @@ output:
 ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
+ALIGN
 SETLABEL     _000
 HEX2         0x000A
+ALIGN
 SETLABEL     _001
 HEX          0x20
+ALIGN
 SETLABEL     _002
 HEX2         0x0005
 DB           8
+ALIGN
 SETLABEL     _003
 STRING       asdf
 HEX          0x00

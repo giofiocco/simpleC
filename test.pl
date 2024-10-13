@@ -106,5 +106,7 @@ while ( $i <= $#ARGV ) {
 }
 
 print "TESTED $tests FILES, " . ( $#fails + 1 ) . " FAILED\n";
-print join "\n", @fails;
+for (@fails) {
+    print "FAILED: $_\n";
+}
 

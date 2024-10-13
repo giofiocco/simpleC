@@ -20,6 +20,7 @@ output:
 ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
+ALIGN
 SETLABEL     _000
 HEX2         0x0001
 HEX2         0x0002

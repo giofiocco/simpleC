@@ -29,10 +29,8 @@ INSTHEX      PEEKAR 0x08
 INST         PUSHA
 INSTHEX      PEEKAR 0x08
 INST         PUSHA
-INST         INCSP
-INST         INCSP
-INST         INCSP
-INST         INCSP
-INST         INCSP
-INST         INCSP
+INST         SP_A
+INSTHEX2     RAM_B 0x000C
+INST         SUM
+INST         A_SP
 INST         RET

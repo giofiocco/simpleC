@@ -9,6 +9,7 @@ output:
 ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
+ALIGN
 SETLABEL     _000
 STRING       asdf
 HEX          0x00
