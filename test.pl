@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 #
 # input list of files
 # -r <filename> to record the output of the file

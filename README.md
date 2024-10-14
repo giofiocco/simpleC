@@ -44,8 +44,8 @@ Multi-line comments: `/* ... */`
 - global ::= ( funcdecl | typedef | decl )\*
 - funcdecl ::= type sym paramdef block
 - paramdef ::= PARO ( type SYM ( COMMA type SYM )\* )? PARC
-- block ::= BRO code BRC
-- code ::= statement
+- block ::= BRO code\* BRC
+- code ::= statement | code
 - statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm ) SEMICOLON
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
 - expr ::= term ( PLUS term | MINUS term )\*

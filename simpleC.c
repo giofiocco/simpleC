@@ -1364,7 +1364,8 @@ void state_drop_scope(state_t *state) {
 
 symbol_t *state_find_symbol(state_t *state, token_t name) {
   assert(state);
-  for (int j = state->scope_num > 0 ? state->scope_num - 1 : 0; j >= 0; --j) {
+  assert(state->scope_num > 0);
+  for (int j = state->scope_num - 1; j >= 0; --j) {
     scope_t *scope = &state->scopes[j];
     for (int i = 0; i < scope->symbol_num; ++i) {
       if (sv_eq(scope->symbols[i].name.image, name.image)) {
@@ -1372,22 +1373,27 @@ symbol_t *state_find_symbol(state_t *state, token_t name) {
       }
     }
   }
-  eprintf(name.loc, "symbol not declared: " SV_FMT, SV_UNPACK(name.image));
-  assert(0);
+  return NULL;
+}
+
+symbol_t *state_expect_symbol(state_t *state, token_t name) {
+  symbol_t *s = state_find_symbol(state, name);
+  if (!s) {
+    eprintf(name.loc, "symbol not declared: " SV_FMT, SV_UNPACK(name.image));
+  }
+  return s;
 }
 
 void state_add_symbol(state_t *state, symbol_t symbol) {
   assert(state);
 
-  catch = true;
-  if (setjmp(catch_buf) == 0) {
-    symbol_t *s = state_find_symbol(state, symbol.name);
+  symbol_t *s = state_find_symbol(state, symbol.name);
+  if (s != NULL) {
     eprintf(symbol.name.loc,
             "redefinition of symbol '" SV_FMT "', defined at %d:%d",
             SV_UNPACK(symbol.name.image),
             s->name.loc.row,
             s->name.loc.col);
-    catch = false;
   }
 
   scope_t *scope = &state->scopes[state->scope_num - 1];
@@ -1428,7 +1434,7 @@ void state_solve_type_alias(state_t *state, type_t *type) {
       break;
     case TY_ALIAS:
       {
-        symbol_t *s = state_find_symbol(state, type->as.alias.name);
+        symbol_t *s = state_expect_symbol(state, type->as.alias.name);
         if (s->kind == INFO_TYPEINCOMPLETE && !type->as.alias.is_struct) {
           eprintf(type->as.alias.name.loc, "must use 'struct " SV_FMT "'", SV_UNPACK(type->as.alias.name.image));
         }
@@ -1883,8 +1889,13 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
   return a;
 }
 
+ast_t *parse_block(tokenizer_t *tokenizer);
 ast_t *parse_code(tokenizer_t *tokenizer) {
   assert(tokenizer);
+
+  if (token_peek(tokenizer).kind == T_BRO) {
+    return parse_block(tokenizer);
+  }
 
   return parse_statement(tokenizer);
 }
@@ -2062,6 +2073,8 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
 
   if (code->kind == A_RETURN) {
     typecheck_expandable(code, state, ret);
+  } else if (code->kind == A_BLOCK) {
+    typecheck_funcbody(code, state, ret);
   } else {
     typecheck(code, state);
   }
@@ -2216,7 +2229,7 @@ void typecheck(ast_t *ast, state_t *state) {
       ast->type = (type_t){TY_PTR, 2, {.ptr = type_malloc((type_t){TY_CHAR, 1, {}})}};
       break;
     case A_SYM:
-      ast->type = *state_find_symbol(state, ast->as.fac)->type;
+      ast->type = *state_expect_symbol(state, ast->as.fac)->type;
       break;
     case A_GLOBDECL:
     case A_DECL:
@@ -2258,7 +2271,7 @@ void typecheck(ast_t *ast, state_t *state) {
       break;
     case A_FUNCALL:
       {
-        symbol_t *s = state_find_symbol(state, ast->as.funcall.name);
+        symbol_t *s = state_expect_symbol(state, ast->as.funcall.name);
         if (s->type->kind != TY_FUNC) {
           char *foundstr = type_dump_to_string(s->type);
           eprintf(ast->loc, "expected 'TY_FUNC', found '%s'", foundstr);
@@ -2478,7 +2491,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
   switch (ast->kind) {
     case A_SYM:
       {
-        symbol_t *s = state_find_symbol(state, ast->as.fac);
+        symbol_t *s = state_expect_symbol(state, ast->as.fac);
         if (s->kind == INFO_LOCAL) {
           state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - s->info.local}});
         } else if (s->kind == INFO_GLOBAL) {
@@ -2598,10 +2611,21 @@ void compile(ast_t *ast, state_t *state) {
     case A_NONE:
       assert(0);
     case A_GLOBAL:
-    case A_BLOCK:
       compile(ast->as.binary.left, state);
       if (ast->as.binary.right) {
         compile(ast->as.binary.right, state);
+      }
+      break;
+    case A_BLOCK:
+      {
+        state_push_scope(state);
+        int start_sp = state->sp;
+        compile(ast->as.binary.left, state);
+        if (ast->as.binary.right) {
+          compile(ast->as.binary.right, state);
+        }
+        state_change_sp(state, -(state->sp - start_sp));
+        state_drop_scope(state);
       }
       break;
     case A_PARAM:
@@ -2623,7 +2647,7 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.funcdecl.block, state);
       }
       if (state->irs[state->ir_num - 1].kind != IR_FUNCEND) {
-        state_change_sp(state, -state->sp);
+        state_change_sp(state, -state->sp);  // TODO: maybe not needed
         state_add_ir(state, (ir_t){IR_FUNCEND, {.num = 0}});
       }
       state_drop_scope(state);
@@ -2702,7 +2726,7 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_SYM:
       {
-        symbol_t *s = state_find_symbol(state, ast->as.fac);
+        symbol_t *s = state_expect_symbol(state, ast->as.fac);
         if (s->kind == INFO_CONSTANT) {
           state_add_ir(state, (ir_t){IR_INT, {.num = s->info.num}});
           state->sp += 2;
