@@ -1299,6 +1299,7 @@ void ir_dump(ir_t ir) {
 typedef struct {
   scope_t scopes[SCOPE_MAX];
   int scope_num;
+  scope_t *scope;
   int sp;
   int param;
   int uli;  // unique label id
@@ -1314,6 +1315,7 @@ void state_init(state_t *state) {
   assert(state);
   *state = (state_t){0};
   ++state->scope_num;
+  state->scope = &state->scopes[0];
 }
 
 void state_add_ir(state_t *state, ir_t ir) {
@@ -1354,12 +1356,14 @@ void state_push_scope(state_t *state) {
   assert(state->scope_num + 1 < SCOPE_MAX);
   memset(&state->scopes[state->scope_num], 0, sizeof(scope_t));
   ++state->scope_num;
+  state->scope = &state->scopes[state->scope_num - 1];
 }
 
 void state_drop_scope(state_t *state) {
   assert(state);
   assert(state->scope_num > 0);
   --state->scope_num;
+  state->scope = &state->scopes[state->scope_num - 1];
 }
 
 symbol_t *state_find_symbol(state_t *state, token_t name) {
@@ -1373,27 +1377,21 @@ symbol_t *state_find_symbol(state_t *state, token_t name) {
       }
     }
   }
-  return NULL;
-}
-
-symbol_t *state_expect_symbol(state_t *state, token_t name) {
-  symbol_t *s = state_find_symbol(state, name);
-  if (!s) {
-    eprintf(name.loc, "symbol not declared: " SV_FMT, SV_UNPACK(name.image));
-  }
-  return s;
+  eprintf(name.loc, "symbol not declared: " SV_FMT, SV_UNPACK(name.image));
+  assert(0);
 }
 
 void state_add_symbol(state_t *state, symbol_t symbol) {
   assert(state);
 
-  symbol_t *s = state_find_symbol(state, symbol.name);
-  if (s != NULL) {
-    eprintf(symbol.name.loc,
-            "redefinition of symbol '" SV_FMT "', defined at %d:%d",
-            SV_UNPACK(symbol.name.image),
-            s->name.loc.row,
-            s->name.loc.col);
+  for (int i = 0; i < state->scope->symbol_num; ++i) {
+    if (sv_eq(state->scope->symbols[i].name.image, symbol.name.image)) {
+      eprintf(symbol.name.loc,
+              "redefinition of symbol '" SV_FMT "', defined at %d:%d",
+              SV_UNPACK(symbol.name.image),
+              state->scope->symbols[i].name.loc.row,
+              state->scope->symbols[i].name.loc.col);
+    }
   }
 
   scope_t *scope = &state->scopes[state->scope_num - 1];
@@ -1434,7 +1432,7 @@ void state_solve_type_alias(state_t *state, type_t *type) {
       break;
     case TY_ALIAS:
       {
-        symbol_t *s = state_expect_symbol(state, type->as.alias.name);
+        symbol_t *s = state_find_symbol(state, type->as.alias.name);
         if (s->kind == INFO_TYPEINCOMPLETE && !type->as.alias.is_struct) {
           eprintf(type->as.alias.name.loc, "must use 'struct " SV_FMT "'", SV_UNPACK(type->as.alias.name.image));
         }
@@ -2074,7 +2072,9 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
   if (code->kind == A_RETURN) {
     typecheck_expandable(code, state, ret);
   } else if (code->kind == A_BLOCK) {
+    state_push_scope(state);
     typecheck_funcbody(code, state, ret);
+    state_drop_scope(state);
   } else {
     typecheck(code, state);
   }
@@ -2094,9 +2094,9 @@ void typecheck(ast_t *ast, state_t *state) {
 
   switch (ast->kind) {
     case A_NONE:
+    case A_BLOCK:
       assert(0);
     case A_GLOBAL:
-    case A_BLOCK:
       assert(ast->as.binary.left);
       typecheck(ast->as.binary.left, state);
       typecheck(ast->as.binary.right, state);
@@ -2229,7 +2229,7 @@ void typecheck(ast_t *ast, state_t *state) {
       ast->type = (type_t){TY_PTR, 2, {.ptr = type_malloc((type_t){TY_CHAR, 1, {}})}};
       break;
     case A_SYM:
-      ast->type = *state_expect_symbol(state, ast->as.fac)->type;
+      ast->type = *state_find_symbol(state, ast->as.fac)->type;
       break;
     case A_GLOBDECL:
     case A_DECL:
@@ -2271,7 +2271,7 @@ void typecheck(ast_t *ast, state_t *state) {
       break;
     case A_FUNCALL:
       {
-        symbol_t *s = state_expect_symbol(state, ast->as.funcall.name);
+        symbol_t *s = state_find_symbol(state, ast->as.funcall.name);
         if (s->type->kind != TY_FUNC) {
           char *foundstr = type_dump_to_string(s->type);
           eprintf(ast->loc, "expected 'TY_FUNC', found '%s'", foundstr);
@@ -2491,7 +2491,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
   switch (ast->kind) {
     case A_SYM:
       {
-        symbol_t *s = state_expect_symbol(state, ast->as.fac);
+        symbol_t *s = state_find_symbol(state, ast->as.fac);
         if (s->kind == INFO_LOCAL) {
           state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - s->info.local}});
         } else if (s->kind == INFO_GLOBAL) {
@@ -2617,15 +2617,17 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_BLOCK:
-      {
+      if (ast->as.binary.left->kind == A_BLOCK) {
         state_push_scope(state);
         int start_sp = state->sp;
         compile(ast->as.binary.left, state);
-        if (ast->as.binary.right) {
-          compile(ast->as.binary.right, state);
-        }
-        state_change_sp(state, -(state->sp - start_sp));
         state_drop_scope(state);
+        state_change_sp(state, -(state->sp - start_sp));
+      } else {
+        compile(ast->as.binary.left, state);
+      }
+      if (ast->as.binary.right) {
+        compile(ast->as.binary.right, state);
       }
       break;
     case A_PARAM:
@@ -2726,7 +2728,7 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_SYM:
       {
-        symbol_t *s = state_expect_symbol(state, ast->as.fac);
+        symbol_t *s = state_find_symbol(state, ast->as.fac);
         if (s->kind == INFO_CONSTANT) {
           state_add_ir(state, (ir_t){IR_INT, {.num = s->info.num}});
           state->sp += 2;

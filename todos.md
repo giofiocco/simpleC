@@ -22,10 +22,10 @@ emtpy statement `;;`
 
 # Parser
 
-- [ ] code block
+- [x] code block
 - [ ] int a,b;
 - [ ] int \*\*a;
-- [ ] struct point a; only in structdef
+- [ ] struct point a; only in structdef?
 
 # Typechecker
 

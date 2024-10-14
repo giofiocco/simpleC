@@ -1,0 +1,29 @@
+params: -D com
+exitcode: 0
+code:
+int main() {
+  int a;
+  {
+    int a = 2;
+  }
+  a;
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INST         DECSP
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INST         DECSP
+INSTHEX      RAM_AL 0x02
+INST         PUSHA
+INST         INCSP
+INSTHEX      PEEKAR 0x02
+INST         PUSHA
+INST         INCSP
+INST         INCSP
+INST         RET
