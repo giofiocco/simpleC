@@ -12,9 +12,6 @@ test multiple returns
 better documentation for ir
 specify in ast_kind_t which ast_t.as use
 
-add ast opt 3+1
-emtpy statement `;;`
-
 # Tokenizer
 
 - [ ] binary litterals
@@ -22,14 +19,13 @@ emtpy statement `;;`
 
 # Parser
 
-- [x] code block
 - [ ] int a,b;
 - [ ] int \*\*a;
 - [ ] struct point a; only in structdef?
 
 # Typechecker
 
-- [ ] maybe check if code is if or something with a block and then call typecheck_funcbody on it
+- [ ] if cond ptr
 - [ ] warn if no return in some function
 - [ ] return needs type VOID?
 - [ ] alias of alias?
@@ -38,6 +34,10 @@ emtpy statement `;;`
 
 - [ ] compile_data array of str or ptr
 - [ ] array with expression as length
+
+# AST OPT
+
+- [ ] 3+1 and 1 2 B_AH for data (or maybe in data_compile)
 
 # IR OPT
 

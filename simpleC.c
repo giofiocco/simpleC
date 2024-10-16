@@ -75,6 +75,8 @@ typedef enum {
   T_CHAR,
   T_ENUM,
   T_ASM,
+  T_IF,
+  T_ELSE,
 } token_kind_t;
 
 typedef struct {
@@ -334,6 +336,8 @@ token_t token_next(tokenizer_t *tokenizer) {
                             : sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW
                             : sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW
                             : sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM
+                            : sv_eq(image, sv_from_cstr("if"))      ? T_IF
+                            : sv_eq(image, sv_from_cstr("else"))    ? T_ELSE
                                                                     : T_SYM,
                             image,
                             tokenizer->loc,
@@ -423,6 +427,10 @@ char *token_kind_to_string(token_kind_t kind) {
       return "ENUM";
     case T_ASM:
       return "ASM";
+    case T_IF:
+      return "IF";
+    case T_ELSE:
+      return "ELSE";
   }
   assert(0);
 }
@@ -789,7 +797,7 @@ type_t *type_pass_alias(type_t *type) {
 
 typedef enum {
   A_NONE,
-  A_GLOBAL,
+  A_LIST,
   A_FUNCDECL,
   A_PARAMDEF,
   A_BLOCK,
@@ -809,6 +817,7 @@ typedef enum {
   A_TYPEDEF,
   A_CAST,
   A_ASM,
+  A_IF,
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -858,6 +867,11 @@ typedef struct ast_t_ {
       type_t target;
       struct ast_t_ *ast;
     } cast;
+    struct {
+      struct ast_t_ *cond;
+      struct ast_t_ *then;
+      struct ast_t_ *else_;
+    } if_;
     token_t fac;
     struct ast_t_ *ast;
   } as;
@@ -874,8 +888,8 @@ char *ast_kind_to_string(ast_kind_t kind) {
   switch (kind) {
     case A_NONE:
       return "NONE";
-    case A_GLOBAL:
-      return "GLOBAL";
+    case A_LIST:
+      return "LIST";
     case A_FUNCDECL:
       return "FUNCDECL";
     case A_PARAMDEF:
@@ -914,6 +928,8 @@ char *ast_kind_to_string(ast_kind_t kind) {
       return "CAST";
     case A_ASM:
       return "ASM";
+    case A_IF:
+      return "IF";
   }
   assert(0);
 }
@@ -927,8 +943,8 @@ void ast_dump(ast_t *ast, bool dumptype) {
   switch (ast->kind) {
     case A_NONE:
       assert(0);
-    case A_GLOBAL:
-      printf("GLOBAL(");
+    case A_LIST:
+      printf("LIST(");
       ast_dump(ast->as.binary.left, dumptype);
       printf(" ");
       ast_dump(ast->as.binary.right, dumptype);
@@ -956,9 +972,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
       break;
     case A_BLOCK:
       printf("BLOCK(");
-      ast_dump(ast->as.binary.left, dumptype);
-      printf(" ");
-      ast_dump(ast->as.binary.right, dumptype);
+      ast_dump(ast->as.ast, dumptype);
       printf(")");
       break;
     case A_STATEMENT:
@@ -1048,6 +1062,15 @@ void ast_dump(ast_t *ast, bool dumptype) {
     case A_ASM:
       printf("ASM(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
       break;
+    case A_IF:
+      printf("IF(");
+      ast_dump(ast->as.if_.cond, dumptype);
+      printf(", ");
+      ast_dump(ast->as.if_.then, dumptype);
+      printf(", ");
+      ast_dump(ast->as.if_.else_, dumptype);
+      printf(")");
+      break;
   }
   if (dumptype && ast->type.kind != TY_VOID) {
     char *str = type_dump_to_string(&ast->type);
@@ -1062,11 +1085,11 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
   }
 
   if (indent > 0) {
-    assert(indent < 200);
+    assert(indent < 400 / 4);
     printf(
       "%*.*s",
-      indent * 2,
-      indent * 2,
+      indent * 4,
+      indent * 4,
       "                                                                                                             "
       "                                                                                                             "
       "                                                                                                             "
@@ -1087,8 +1110,7 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
     case A_NONE:
       dump_type;
       break;
-    case A_GLOBAL:
-    case A_BLOCK:
+    case A_LIST:
     case A_PARAM:
     case A_ARRAY:
       {
@@ -1122,6 +1144,7 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
       }
       break;
     case A_STATEMENT:
+    case A_BLOCK:
     case A_RETURN:
       dump_type;
       ast_dump_tree(ast->as.ast, dumptype, indent + 1);
@@ -1177,6 +1200,12 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
     case A_CAST:
       dump_type;
       ast_dump_tree(ast->as.cast.ast, dumptype, indent + 1);
+      break;
+    case A_IF:
+      dump_type;
+      ast_dump_tree(ast->as.if_.cond, dumptype, indent + 1);
+      ast_dump_tree(ast->as.if_.then, dumptype, indent + 1);
+      ast_dump_tree(ast->as.if_.else_, dumptype, indent + 1);
       break;
   }
 
@@ -1888,11 +1917,41 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
 }
 
 ast_t *parse_block(tokenizer_t *tokenizer);
+ast_t *parse_if(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  location_t start = tokenizer->loc;
+
+  token_expect(tokenizer, T_IF);
+  token_expect(tokenizer, T_PARO);
+  ast_t *cond = parse_expr(tokenizer);
+  token_expect(tokenizer, T_PARC);
+  ast_t *then = parse_block(tokenizer);
+  ast_t *else_ = NULL;
+  if (token_next_if_kind(tokenizer, T_ELSE)) {
+    if (token_peek(tokenizer).kind == T_IF) {
+      else_ = parse_if(tokenizer);
+    } else {
+      else_ = parse_block(tokenizer);
+    }
+  }
+
+  location_t end = tokenizer->loc;
+
+  return ast_malloc((ast_t){A_IF, location_union(start, end), {}, {.if_ = {cond, then, else_}}});
+}
+
 ast_t *parse_code(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  if (token_peek(tokenizer).kind == T_BRO) {
+  token_t token = token_peek(tokenizer);
+
+  if (token.kind == T_BRO) {
     return parse_block(tokenizer);
+  }
+
+  if (token.kind == T_IF) {
+    return parse_if(tokenizer);
   }
 
   return parse_statement(tokenizer);
@@ -1908,21 +1967,21 @@ ast_t *parse_block(tokenizer_t *tokenizer) {
   }
 
   ast_t *code = parse_code(tokenizer);
-  ast_t *ast = ast_malloc((ast_t){A_BLOCK, location_union(token.loc, code->loc), {0}, {.binary = {code, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_LIST, location_union(token.loc, code->loc), {}, {.binary = {code, NULL}}});
   ast_t *block = ast;
 
   while (token_peek(tokenizer).kind != T_BRC) {
     code = parse_code(tokenizer);
     if (code) {
       block->as.binary.right =
-        ast_malloc((ast_t){A_BLOCK, location_union(ast->loc, code->loc), {0}, {.binary = {code, NULL}}});
+        ast_malloc((ast_t){A_LIST, location_union(ast->loc, code->loc), {}, {.binary = {code, NULL}}});
       block = block->as.binary.right;
     }
   }
 
-  token_expect(tokenizer, T_BRC);
+  token_t end = token_expect(tokenizer, T_BRC);
 
-  return ast;
+  return ast_malloc((ast_t){A_BLOCK, location_union(token.loc, end.loc), {}, {.ast = ast}});
 }
 
 ast_t *parse_paramdef(tokenizer_t *tokenizer) {
@@ -2023,12 +2082,12 @@ ast_t *parse(tokenizer_t *tokenizer) {
   }
 
   ast_t *glob = parse_global(tokenizer);
-  ast_t *ast = ast_malloc((ast_t){A_GLOBAL, glob->loc, {0}, {.binary = {glob, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_LIST, glob->loc, {0}, {.binary = {glob, NULL}}});
   ast_t *asti = ast;
 
   while (token_peek(tokenizer).kind != T_NONE) {
     ast_t *glob = parse_global(tokenizer);
-    asti->as.binary.right = ast_malloc((ast_t){A_GLOBAL, glob->loc, {0}, {.binary = {glob, NULL}}});
+    asti->as.binary.right = ast_malloc((ast_t){A_LIST, glob->loc, {0}, {.binary = {glob, NULL}}});
     asti = asti->as.binary.right;
   }
 
@@ -2064,24 +2123,38 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
   assert(ast);
   assert(state);
   assert(ret.kind != TY_FUNC);
-  assert(ast->kind == A_BLOCK);
 
-  ast_t *code = ast->as.binary.left;
-  assert(code);
-
-  if (code->kind == A_RETURN) {
-    typecheck_expandable(code, state, ret);
-  } else if (code->kind == A_BLOCK) {
-    state_push_scope(state);
-    typecheck_funcbody(code, state, ret);
-    state_drop_scope(state);
-  } else {
-    typecheck(code, state);
+  switch (ast->kind) {
+    case A_BLOCK:
+      state_push_scope(state);
+      assert(ast->as.ast);
+      typecheck_funcbody(ast->as.ast, state, ret);
+      state_drop_scope(state);
+      break;
+    case A_LIST:
+      for (ast_t *asti = ast; asti; asti = asti->as.binary.right) {
+        typecheck_funcbody(asti->as.binary.left, state, ret);
+        asti->type = (type_t){TY_VOID, 0, {}};
+      }
+      break;
+    case A_RETURN:
+      if (ast->as.ast) {
+        typecheck_expect(ast->as.ast, state, ret);
+      }
+      ast->type = (type_t){TY_VOID, 0, {}};
+      break;
+    case A_IF:
+      assert(ast->as.if_.cond);
+      assert(ast->as.if_.then);
+      typecheck_expandable(ast->as.if_.cond, state, (type_t){TY_INT, 2, {}});
+      typecheck_funcbody(ast->as.if_.then, state, ret);
+      if (ast->as.if_.else_) {
+        typecheck_funcbody(ast->as.if_.else_, state, ret);
+      }
+      break;
+    default:
+      typecheck(ast, state);
   }
-  if (ast->as.binary.right) {
-    typecheck_funcbody(ast->as.binary.right, state, ret);
-  }
-
   ast->type = (type_t){TY_VOID, 0, {}};
 }
 
@@ -2094,9 +2167,11 @@ void typecheck(ast_t *ast, state_t *state) {
 
   switch (ast->kind) {
     case A_NONE:
+    case A_IF:
     case A_BLOCK:
+    case A_RETURN:
       assert(0);
-    case A_GLOBAL:
+    case A_LIST:
       assert(ast->as.binary.left);
       typecheck(ast->as.binary.left, state);
       typecheck(ast->as.binary.right, state);
@@ -2108,22 +2183,20 @@ void typecheck(ast_t *ast, state_t *state) {
       ast->type = (type_t){TY_VOID, 0, {}};
       break;
     case A_FUNCDECL:
-      {
-        state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
-        state_push_scope(state);
-        state->param = 0;
-        typecheck(ast->as.funcdecl.params, state);
-        state_solve_type_alias(state, &ast->as.funcdecl.type);
-        ast->type =
-          (type_t){TY_FUNC,
-                   ast->as.funcdecl.type.size,
-                   {.func = {&ast->as.funcdecl.type, ast->as.funcdecl.params ? &ast->as.funcdecl.params->type : NULL}}};
-
-        if (ast->as.funcdecl.block) {
-          typecheck_funcbody(ast->as.funcdecl.block, state, ast->as.funcdecl.type);
-        }
-        state_drop_scope(state);
+      state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
+      state_push_scope(state);
+      state->param = 0;
+      typecheck(ast->as.funcdecl.params, state);
+      state_solve_type_alias(state, &ast->as.funcdecl.type);
+      ast->type =
+        (type_t){TY_FUNC,
+                 ast->as.funcdecl.type.size,
+                 {.func = {&ast->as.funcdecl.type, ast->as.funcdecl.params ? &ast->as.funcdecl.params->type : NULL}}};
+      if (ast->as.funcdecl.block) {
+        assert(ast->as.funcdecl.block->kind == A_BLOCK);
+        typecheck_funcbody(ast->as.funcdecl.block->as.ast, state, ast->as.funcdecl.type);
       }
+      state_drop_scope(state);
       break;
     case A_PARAMDEF:
       {
@@ -2139,14 +2212,6 @@ void typecheck(ast_t *ast, state_t *state) {
           (type_t){TY_PARAM,
                    ast->as.paramdef.type.size,
                    {.list = {&ast->as.paramdef.type, ast->as.paramdef.next ? &ast->as.paramdef.next->type : NULL}}};
-      }
-      break;
-    case A_RETURN:
-      typecheck(ast->as.ast, state);
-      if (ast->as.ast) {
-        ast->type = ast->as.ast->type;
-      } else {
-        ast->type = (type_t){TY_VOID, 0, {}};
       }
       break;
     case A_BINARYOP:
@@ -2390,8 +2455,7 @@ void optimize_ast(ast_t **astp) {
     case A_TYPEDEF:
     case A_ASM:
       break;
-    case A_GLOBAL:
-    case A_BLOCK:
+    case A_LIST:
     case A_ASSIGN:
     case A_PARAM:
     case A_ARRAY:
@@ -2403,11 +2467,16 @@ void optimize_ast(ast_t **astp) {
       break;
     case A_STATEMENT:
     case A_RETURN:
+    case A_BLOCK:
       optimize_ast(&ast->as.ast);
       break;
     case A_BINARYOP:
-      optimize_ast(&ast->as.binaryop.lhs);
-      optimize_ast(&ast->as.binaryop.rhs);
+      {
+        ast_t *a = ast->as.binaryop.lhs;
+        ast_t *b = ast->as.binaryop.rhs;
+        optimize_ast(&a);
+        optimize_ast(&b);
+      }
       break;
     case A_UNARYOP:
       optimize_ast(&ast->as.unaryop.arg);
@@ -2421,6 +2490,13 @@ void optimize_ast(ast_t **astp) {
       break;
     case A_CAST:
       optimize_ast(&ast->as.cast.ast);
+      break;
+    case A_IF:
+      optimize_ast(&ast->as.if_.cond);
+      optimize_ast(&ast->as.if_.then);
+      if (ast->as.if_.else_) {
+        optimize_ast(&ast->as.if_.else_);
+      }
       break;
   }
 }
@@ -2610,24 +2686,19 @@ void compile(ast_t *ast, state_t *state) {
   switch (ast->kind) {
     case A_NONE:
       assert(0);
-    case A_GLOBAL:
+    case A_LIST:
       compile(ast->as.binary.left, state);
       if (ast->as.binary.right) {
         compile(ast->as.binary.right, state);
       }
       break;
     case A_BLOCK:
-      if (ast->as.binary.left->kind == A_BLOCK) {
-        state_push_scope(state);
+      {
         int start_sp = state->sp;
+        state_push_scope(state);
         compile(ast->as.binary.left, state);
         state_drop_scope(state);
         state_change_sp(state, -(state->sp - start_sp));
-      } else {
-        compile(ast->as.binary.left, state);
-      }
-      if (ast->as.binary.right) {
-        compile(ast->as.binary.right, state);
       }
       break;
     case A_PARAM:
@@ -2864,6 +2935,8 @@ void compile(ast_t *ast, state_t *state) {
     case A_ASM:
       TODO;
       break;
+    case A_IF:
+      TODO;
   }
 }
 
