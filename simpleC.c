@@ -2696,7 +2696,7 @@ void compile(ast_t *ast, state_t *state) {
       {
         int start_sp = state->sp;
         state_push_scope(state);
-        compile(ast->as.binary.left, state);
+        compile(ast->as.ast, state);
         state_drop_scope(state);
         state_change_sp(state, -(state->sp - start_sp));
       }
@@ -2717,11 +2717,11 @@ void compile(ast_t *ast, state_t *state) {
       state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
       state->sp = 0;
       if (ast->as.funcdecl.block) {
-        compile(ast->as.funcdecl.block, state);
+        compile(ast->as.funcdecl.block->as.ast, state);
       }
       if (state->irs[state->ir_num - 1].kind != IR_FUNCEND) {
-        state_change_sp(state, -state->sp);  // TODO: maybe not needed
-        state_add_ir(state, (ir_t){IR_FUNCEND, {.num = 0}});
+        state_change_sp(state, -state->sp);
+        state_add_ir(state, (ir_t){IR_FUNCEND, {}});
       }
       state_drop_scope(state);
       break;
