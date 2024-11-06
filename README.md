@@ -50,7 +50,11 @@ Multi-line comments: `/* ... */`
 - code ::= block | if | statement
 - statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm ) SEMICOLON
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
-- expr ::= term ( PLUS term | MINUS term )\*
+
+- expr ::= ( LNOT comp ) | ( comp ( LOR | LAND ) expr ) | comp
+- comp ::= atom ( EQEQ atom )?
+- atom ::= term ( PLUS term | MINUS term )\*
+
 - term ::= unary ( STAR unary | SLASH unary )\*
 - unary ::= PLUS unary | MINUS unary | AND unary | STAR unary | access SQO expr SQC | access
 - access ::= fac DOT SYM | fac

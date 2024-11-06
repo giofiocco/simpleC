@@ -2,8 +2,6 @@ make array access cast to ptr
 
 abstract read function for compile_ir
 
-maybe struct ir_list and bytecode_list
-
 typedef array
 struct with array
 
@@ -48,6 +46,7 @@ specify in ast_kind_t which ast_t.as use
 
 # OPT
 
+- [ ] remove ifs that do nothing
 - [ ] remove dead or unreachable code
 - [ ] A_SP SP_A -> A_SP
 - [ ] ptail opt
