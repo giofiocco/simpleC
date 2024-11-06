@@ -1091,10 +1091,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
 }
 
 void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
-  if (!ast) {
-    return;
-  }
-
   if (indent > 0) {
     assert(indent < 400 / 4);
     printf("%*.*s",
@@ -1109,6 +1105,12 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
            "                                                                   "
            "      ");
   }
+
+  if (!ast) {
+    printf("NULL\n");
+    return;
+  }
+
   printf("%s", ast_kind_to_string(ast->kind));
 
 #define dump_type                                   \
@@ -1993,7 +1995,22 @@ ast_t *parse_if(tokenizer_t *tokenizer) {
 
   location_t end = tokenizer->loc;
 
-  return ast_malloc((ast_t){A_IF, location_union(start, end), {}, {.if_ = {cond, then, else_}}});
+  ast_t *ast =
+      ast_malloc((ast_t){A_IF, location_union(start, end), {}, {.if_ = {cond, then, else_}}});
+
+  if (cond->kind == A_BINARYOP && cond->as.binaryop.op == T_EQEQ) {
+    ast->as.if_.cond =
+        ast_malloc((ast_t){A_BINARYOP,
+                           cond->loc,
+                           {},
+                           {.binaryop = {T_MINUS, cond->as.binaryop.lhs, cond->as.binaryop.rhs}}});
+    ast_t *temp = ast->as.if_.else_;
+    ast->as.if_.else_ = ast->as.if_.then;
+    ast->as.if_.then = temp;
+    free_ptr(cond);
+  }
+
+  return ast;
 }
 
 ast_t *parse_code(tokenizer_t *tokenizer) {
