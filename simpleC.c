@@ -151,6 +151,8 @@ void print_location(location_t location) {
           "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
 }
 
+static bool dev_flag = false;
+
 static bool catch = false;
 static jmp_buf catch_buf;
 #define eprintf(__loc, ...) eprintf_impl((__loc), __LINE__, __FUNCTION__, __VA_ARGS__)
@@ -159,7 +161,7 @@ void eprintf_impl(location_t location, int line, const char *func, char *fmt, ..
     catch = false;
     longjmp(catch_buf, 1);
   }
-  if (true) {
+  if (dev_flag) {
     fprintf(stderr, "ERROR throw at %d in %s\n", line, func);
   }
   fprintf(stderr, "ERROR:%s:%d:%d: ", location.filename, location.row, location.col);
@@ -3384,6 +3386,7 @@ void help(int errorcode) {
           " -O2            enable IR optimization (and ASM)\n"
           " -O3            enable AST optimization (and ASM and IR)\n"
           " -O4            enable all optimization\n"
+          " --dev          print the source code loc where the error is thrown\n"
           " -h | --help    print this page and exit\n\n"
           "Modules:\n"
           "no module name is enables all the modules\n"
@@ -3517,10 +3520,14 @@ int main(int argc, char **argv) {
         case '-':
           if (strcmp(arg + 2, "help") == 0) {
             help(0);
+          } else if (strcmp(arg + 2, "dev") == 0) {
+            dev_flag = true;
+            ++argv;
+            break;
           }
           __attribute__((fallthrough));
         default:
-          fprintf(stderr, "ERROR: unknown flag '%s'", arg);
+          fprintf(stderr, "ERROR: unknown flag '%s'\n", arg);
           help(1);
       }
     } else {
