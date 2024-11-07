@@ -34,6 +34,8 @@ A compiler for a subset of `C`
 - ASM: `__asm__`
 - IF: `if`
 - ELSE: `else`
+- EQ: `==`
+- NEQ: `!=`
 
 ## Comments
 
@@ -52,7 +54,7 @@ Multi-line comments: `/* ... */`
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
 
 - expr ::= ( LNOT comp ) | ( comp ( LOR | LAND ) expr ) | comp
-- comp ::= atom ( EQEQ atom )?
+- comp ::= atom ( ( EQ | NEQ ) atom )?
 - atom ::= term ( PLUS term | MINUS term )\*
 
 - term ::= unary ( STAR unary | SLASH unary )\*

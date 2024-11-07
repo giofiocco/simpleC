@@ -77,7 +77,8 @@ typedef enum {
   T_ASM,
   T_IF,
   T_ELSE,
-  T_EQEQ
+  T_EQ,
+  T_NEQ,
 } token_kind_t;
 
 typedef struct {
@@ -227,12 +228,22 @@ token_t token_next(tokenizer_t *tokenizer) {
       token = (token_t){T_EQUAL, {tokenizer->buffer, 1}, tokenizer->loc, 0};
       if (tokenizer->buffer[1] == '=') {
         tokenizer->loc.len = 2;
-        token = (token_t){T_EQEQ, {tokenizer->buffer, 2}, tokenizer->loc, 0};
+        token = (token_t){T_EQ, {tokenizer->buffer, 2}, tokenizer->loc, 0};
         ++tokenizer->buffer;
         ++tokenizer->loc.col;
       }
       ++tokenizer->buffer;
       ++tokenizer->loc.col;
+      break;
+    case '!':
+      if (tokenizer->buffer[1] == '=') {
+        tokenizer->loc.len = 2;
+        token = (token_t){T_NEQ, {tokenizer->buffer, 2}, tokenizer->loc, 0};
+        tokenizer->buffer += 2;
+        tokenizer->loc.col += 2;
+      } else {
+        eprintf(tokenizer->loc, "unknown char: '%c'", *tokenizer->buffer);
+      }
       break;
     case '/':
       if (tokenizer->buffer[1] == '/') {
@@ -433,8 +444,10 @@ char *token_kind_to_string(token_kind_t kind) {
       return "IF";
     case T_ELSE:
       return "ELSE";
-    case T_EQEQ:
-      return "EQEQ";
+    case T_EQ:
+      return "EQ";
+    case T_NEQ:
+      return "NEQ";
   }
   assert(0);
 }
@@ -1859,10 +1872,11 @@ ast_t *parse_comp(tokenizer_t *tokenizer) {
 
   ast_t *ast = parse_atom(tokenizer);
 
-  if (token_next_if_kind(tokenizer, T_EQEQ)) {
+  token_t t = token_peek(tokenizer);
+  if (token_next_if_kind(tokenizer, T_EQ) || token_next_if_kind(tokenizer, T_NEQ)) {
     ast_t *b = parse_atom(tokenizer);
     ast = ast_malloc(
-        (ast_t){A_BINARYOP, location_union(ast->loc, b->loc), {}, {.binaryop = {T_EQEQ, ast, b}}});
+        (ast_t){A_BINARYOP, location_union(ast->loc, b->loc), {}, {.binaryop = {t.kind, ast, b}}});
   }
 
   return ast;
@@ -1998,7 +2012,7 @@ ast_t *parse_if(tokenizer_t *tokenizer) {
   ast_t *ast =
       ast_malloc((ast_t){A_IF, location_union(start, end), {}, {.if_ = {cond, then, else_}}});
 
-  if (cond->kind == A_BINARYOP && cond->as.binaryop.op == T_EQEQ) {
+  if (cond->kind == A_BINARYOP && cond->as.binaryop.op == T_EQ) {
     ast->as.if_.cond =
         ast_malloc((ast_t){A_BINARYOP,
                            cond->loc,
@@ -2007,6 +2021,13 @@ ast_t *parse_if(tokenizer_t *tokenizer) {
     ast_t *temp = ast->as.if_.else_;
     ast->as.if_.else_ = ast->as.if_.then;
     ast->as.if_.then = temp;
+    free_ptr(cond);
+  } else if (cond->kind == A_BINARYOP && cond->as.binaryop.op == T_NEQ) {
+    ast->as.if_.cond =
+        ast_malloc((ast_t){A_BINARYOP,
+                           cond->loc,
+                           {},
+                           {.binaryop = {T_MINUS, cond->as.binaryop.lhs, cond->as.binaryop.rhs}}});
     free_ptr(cond);
   }
 
@@ -2136,16 +2157,15 @@ ast_t *parse_global(tokenizer_t *tokenizer) {
   tokenizer_t savetok = *tokenizer;
   catch = true;
   if (setjmp(catch_buf) == 0) {
-    ast_t *ast = parse_funcdecl(tokenizer);
+    ast_t *decl = parse_decl(tokenizer);
+    token_expect(tokenizer, T_SEMICOLON);
+    decl->kind = A_GLOBDECL;
     catch = false;
-    return ast;
+    return decl;
   }
   *tokenizer = savetok;
 
-  ast_t *decl = parse_decl(tokenizer);
-  token_expect(tokenizer, T_SEMICOLON);
-  decl->kind = A_GLOBDECL;
-  return decl;
+  return parse_funcdecl(tokenizer);
 }
 
 ast_t *parse(tokenizer_t *tokenizer) {
@@ -2316,7 +2336,7 @@ void typecheck(ast_t *ast, state_t *state) {
         }
 
         ast->type = *f->as.fieldlist.type;
-      } else if (ast->as.binaryop.op == T_EQEQ) {
+      } else if (ast->as.binaryop.op == T_EQ) {
         typecheck_expandable(ast->as.binaryop.rhs, state, ast->as.binaryop.lhs->type);
         if (!type_is_kind(type, TY_INT) && !type_is_kind(type, TY_PTR)) {
           eprintf(ast->loc,
