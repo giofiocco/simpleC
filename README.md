@@ -36,6 +36,7 @@ A compiler for a subset of `C`
 - ELSE: `else`
 - EQ: `==`
 - NEQ: `!=`
+- NOT: `!`
 
 ## Comments
 
@@ -53,7 +54,7 @@ Multi-line comments: `/* ... */`
 - statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm ) SEMICOLON
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
 
-- expr ::= ( LNOT comp ) | ( comp ( LOR | LAND ) expr ) | comp
+- expr ::= NOT ? comp
 - comp ::= atom ( ( EQ | NEQ ) atom )?
 - atom ::= term ( PLUS term | MINUS term )\*
 

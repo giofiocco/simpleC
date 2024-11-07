@@ -6,7 +6,10 @@ int main() {
     2;
   }
   if (2 != 1) {
-  2;
+    2;
+  }
+  if (!2) {
+    2;
   }
 }
 output:
@@ -34,4 +37,11 @@ LIST
                             STATEMENT
                                 INT 2
                     NULL
+                IF
+                    INT 2
+                    NULL
+                    BLOCK
+                        LIST
+                            STATEMENT
+                                INT 2
 

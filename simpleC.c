@@ -79,6 +79,7 @@ typedef enum {
   T_ELSE,
   T_EQ,
   T_NEQ,
+  T_NOT,
 } token_kind_t;
 
 typedef struct {
@@ -198,6 +199,8 @@ token_t token_next(tokenizer_t *tokenizer) {
   table['&'] = T_AND;
   table[','] = T_COMMA;
   table['.'] = T_DOT;
+  table['='] = T_EQUAL;
+  table['!'] = T_NOT;
 
   token_t token = {0};
 
@@ -223,28 +226,6 @@ token_t token_next(tokenizer_t *tokenizer) {
       tokenizer->loc.line.len = row_end - tokenizer->buffer;
       return token_next(tokenizer);
     }
-    case '=':
-      tokenizer->loc.len = 1;
-      token = (token_t){T_EQUAL, {tokenizer->buffer, 1}, tokenizer->loc, 0};
-      if (tokenizer->buffer[1] == '=') {
-        tokenizer->loc.len = 2;
-        token = (token_t){T_EQ, {tokenizer->buffer, 2}, tokenizer->loc, 0};
-        ++tokenizer->buffer;
-        ++tokenizer->loc.col;
-      }
-      ++tokenizer->buffer;
-      ++tokenizer->loc.col;
-      break;
-    case '!':
-      if (tokenizer->buffer[1] == '=') {
-        tokenizer->loc.len = 2;
-        token = (token_t){T_NEQ, {tokenizer->buffer, 2}, tokenizer->loc, 0};
-        tokenizer->buffer += 2;
-        tokenizer->loc.col += 2;
-      } else {
-        eprintf(tokenizer->loc, "unknown char: '%c'", *tokenizer->buffer);
-      }
-      break;
     case '/':
       if (tokenizer->buffer[1] == '/') {
         while (tokenizer->buffer[0] != '\n') {
@@ -274,9 +255,24 @@ token_t token_next(tokenizer_t *tokenizer) {
     case ',':
     case ';':
     case '.':
+    case '=':
+    case '!':
       assert(table[(int)*tokenizer->buffer]);
       tokenizer->loc.len = 1;
       token = (token_t){table[(int)*tokenizer->buffer], {tokenizer->buffer, 1}, tokenizer->loc, 0};
+
+      if (tokenizer->buffer[0] == '=' && tokenizer->buffer[1] == '=') {
+        tokenizer->loc.len = 2;
+        token = (token_t){T_EQ, {tokenizer->buffer, 2}, tokenizer->loc, 0};
+        ++tokenizer->buffer;
+        ++tokenizer->loc.col;
+      } else if (tokenizer->buffer[0] == '!' && tokenizer->buffer[1] == '=') {
+        tokenizer->loc.len = 2;
+        token = (token_t){T_NEQ, {tokenizer->buffer, 2}, tokenizer->loc, 0};
+        ++tokenizer->buffer;
+        ++tokenizer->loc.col;
+      }
+
       ++tokenizer->buffer;
       ++tokenizer->loc.col;
       break;
@@ -448,6 +444,8 @@ char *token_kind_to_string(token_kind_t kind) {
       return "EQ";
     case T_NEQ:
       return "NEQ";
+    case T_NOT:
+      return "NOT";
   }
   assert(0);
 }
@@ -1885,7 +1883,16 @@ ast_t *parse_comp(tokenizer_t *tokenizer) {
 ast_t *parse_expr(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  return parse_comp(tokenizer);
+  location_t start = tokenizer->loc;
+  int not = token_next_if_kind(tokenizer, T_NOT);
+  ast_t *ast = parse_comp(tokenizer);
+
+  if (not) {
+    ast = ast_malloc(
+        (ast_t){A_UNARYOP, location_union(start, ast->loc), {}, {.unaryop = {T_NOT, ast}}});
+  }
+
+  return ast;
 }
 
 ast_t *parse_decl(tokenizer_t *tokenizer) {
@@ -2028,6 +2035,12 @@ ast_t *parse_if(tokenizer_t *tokenizer) {
                            cond->loc,
                            {},
                            {.binaryop = {T_MINUS, cond->as.binaryop.lhs, cond->as.binaryop.rhs}}});
+    free_ptr(cond);
+  } else if (cond->kind == A_UNARYOP && cond->as.unaryop.op == T_NOT) {
+    ast->as.if_.cond = ast->as.if_.cond->as.unaryop.arg;
+    ast_t *temp = ast->as.if_.else_;
+    ast->as.if_.else_ = ast->as.if_.then;
+    ast->as.if_.then = temp;
     free_ptr(cond);
   }
 
@@ -2387,8 +2400,12 @@ void typecheck(ast_t *ast, state_t *state) {
             eprintf(ast->as.unaryop.arg->loc, "cannot dereference non PTR type: '%s'", type);
           }
           break;
+        case T_NOT:
+          typecheck_expect(ast->as.unaryop.arg, state, (type_t){TY_INT, 2, {}});
+          ast->type = (type_t){TY_INT, 2, {}};
+          break;
         default:
-          assert(0);
+          TODO;
       }
       break;
     case A_INT:
