@@ -52,6 +52,7 @@ tests for errors
 - [ ] remove dead or unreachable code
 - [ ] A_SP SP_A -> A_SP
 - [ ] ptail opt
+- [ ] RAM_A A_B RAM_A SUM A_B -> RAM_A RAM_B SUM A_B
 
 # Roadmap
 

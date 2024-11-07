@@ -2797,7 +2797,9 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
       state->is_init = true;
       compile(ast, state);
       state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
-      state_add_ir(state, (ir_t){IR_ADDR_OFFSET, {.num = offset}});
+      if (offset != 0) {
+        state_add_ir(state, (ir_t){IR_ADDR_OFFSET, {.num = offset}});
+      }
       state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
       state->is_init = false;
     }
@@ -3255,35 +3257,8 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       }
       break;
     case IR_ADDR_GLOBAL:
-      if (iri + 1 < ir_num && irs[iri + 1].kind == IR_READ) {
-        int size = irs[iri + 1].arg.num;
-        code(compiled, bytecode_uli(BINSTLABEL, RAM_B, ir.arg.num));
-        if (size == 1) {
-          code(compiled, (bytecode_t){BINST, rB_AL, {}});
-        } else {
-          assert(size % 2 == 0);
-          if (size > 2) {
-            code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = size - 2}});
-            code(compiled, (bytecode_t){BINST, SUM, {}});
-            code(compiled, (bytecode_t){BINST, A_B, {}});
-          }
-          code(compiled, (bytecode_t){BINST, rB_A, {}});
-          for (int i = 2; i < size; i += 2) {
-            code(compiled, (bytecode_t){BINST, PUSHA, {}});
-            code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
-            code(compiled, (bytecode_t){BINST, SUB, {}});
-            code(compiled, (bytecode_t){BINST, A_B, {}});
-            code(compiled, (bytecode_t){BINST, rB_A, {}});
-          }
-        }
-        code(compiled, (bytecode_t){BINST, PUSHA, {}});
-        ++iri;
-      } else if (iri + 1 < ir_num && irs[iri + 1].kind == IR_WRITE) {
-        TODO;
-      } else {
-        code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.num));
-        code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      }
+      code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.num));
+      code(compiled, (bytecode_t){BINST, PUSHA, {}});
       break;
     case IR_ADDR_OFFSET:
       code(compiled, (bytecode_t){BINST, POPA, {}});
