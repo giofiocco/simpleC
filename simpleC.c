@@ -9,7 +9,7 @@
 #include <string.h>
 
 #define SV_IMPLEMENTATION
-#include "jaris/files.h"
+// #include "jaris/files.h"
 #include "jaris/instructions.h"
 
 #define TODO assert(0 && "TODO")
@@ -3409,7 +3409,7 @@ void help(int errorcode) {
           "                (if no module name or module 'all' then it will execute"
           "only the tokenizer)\n"
           " -e <string>    compile the string provided\n"
-          " -o <file>      write output to the file [default is 'out.asm']\n"
+          " -o <file>      write output to the file [default is 'out.o']\n"
           " -O0 | -O       no optimization\n"
           " -O1            enable ASM bytecode optimization\n"
           " -O2            enable IR optimization (and ASM)\n"
@@ -3705,22 +3705,41 @@ int main(int argc, char **argv) {
   }
 
   if (!output) {
-    output = "out.o";
+    output = "out.asm";
   }
 
-  obj_state_t objs = {0};
-  for (int i = 0; i < state.compiled.data_num; ++i) {
-    obj_compile_bytecode(&objs, state.compiled.data[i]);
+  FILE *file = fopen(output, "w");
+  if (!file) {
+    fprintf(stderr, "cannot open file '%s': '%s'", output, strerror(errno));
+    exit(1);
   }
+
+  for (int i = 0; i < state.compiled.data_num; ++i) {
+    bytecode_t bc = state.compiled.data[i];
+    bytecode_kind_t bbckind = i > 0 ? state.compiled.data[i - 1].kind : BNONE;
+    bytecode_kind_t abckind =
+        i + 1 < state.compiled.data_num ? state.compiled.data[i + 1].kind : BNONE;
+    if ((bc.kind == BSETLABEL && bbckind != BALIGN) || (bc.kind == BALIGN && abckind == BSETLABEL)
+        || (i > 0 && (bc.kind == BEXTERN || bc.kind == BGLOBAL))) {
+      putc('\n', file);
+    }
+    bytecode_to_asm(file, bc);
+    putc(' ', file);
+  }
+  putc('\n', file);
   for (int i = 0; i < state.compiled.init_num; ++i) {
-    obj_compile_bytecode(&objs, state.compiled.init[i]);
+    bytecode_to_asm(file, state.compiled.init[i]);
+    putc(' ', file);
   }
   for (int i = 0; i < state.compiled.code_num; ++i) {
-    obj_compile_bytecode(&objs, state.compiled.code[i]);
+    if (state.compiled.code[i].kind == BSETLABEL) {
+      putc('\n', file);
+    }
+    bytecode_to_asm(file, state.compiled.code[i]);
+    putc(' ', file);
   }
-  obj_state_check_obj(&objs);
 
-  obj_encode_file(&objs.obj, output);
+  assert(fclose(file) == 0);
 
   return 0;
 }
