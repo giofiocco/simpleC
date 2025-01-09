@@ -37,6 +37,7 @@ A compiler for a subset of `C`
 - EQ: `==`
 - NEQ: `!=`
 - NOT: `!`
+- FOR: `for`
 
 ## Comments
 
@@ -50,11 +51,11 @@ Multi-line comments: `/* ... */`
 - funcdecl ::= type sym paramdef block
 - paramdef ::= PARO ( type SYM ( COMMA type SYM )\* )? PARC
 - block ::= BRO code\* BRC
-- code ::= block | if | statement
-- statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm ) SEMICOLON
+- code ::= block | if | for | statement
+- statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm )? SEMICOLON
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
 
-- expr ::= NOT ? comp
+- expr ::= NOT? comp
 - comp ::= atom ( ( EQ | NEQ ) atom )?
 - atom ::= term ( PLUS term | MINUS term )\*
 
@@ -69,7 +70,8 @@ Multi-line comments: `/* ... */`
 - structdef ::= STRUCT SYM ? BRO ( type SYM SEMICOLON )\* BRC
 - enumdef ::= ENUM BRO ( SYM COMMA )\* BRC
 - asm ::= ASM PARO STRING PARC
-- if :: IF PARO expr PARC block ( ELSE ( if | block ) )?
+- if ::= IF PARO expr PARC block ( ELSE ( if | block ) )?
+- for ::= FOR PARO statement expr SEMICOLON (expr ( EQUAL expr )?)? PARC block
 
 # Intermidiate Rappresentation
 

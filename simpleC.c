@@ -12,7 +12,11 @@
 // #include "jaris/files.h"
 #include "jaris/instructions.h"
 
-#define TODO assert(0 && "TODO")
+#define TODO                          \
+  do {                                \
+    printf("TODO at %d\n", __LINE__); \
+    exit(1);                          \
+  } while (0);
 
 #define ALLOCED_MAX 2048 * 2048
 void *alloced[ALLOCED_MAX];
@@ -80,6 +84,7 @@ typedef enum {
   T_EQ,
   T_NEQ,
   T_NOT,
+  T_FOR,
 } token_kind_t;
 
 typedef struct {
@@ -347,6 +352,7 @@ token_t token_next(tokenizer_t *tokenizer) {
                           sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM :
                           sv_eq(image, sv_from_cstr("if"))      ? T_IF :
                           sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
+                          sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
                                                                   T_SYM,
                           image,
                           tokenizer->loc,
@@ -446,6 +452,8 @@ char *token_kind_to_string(token_kind_t kind) {
       return "NEQ";
     case T_NOT:
       return "NOT";
+    case T_FOR:
+      return "FOR";
   }
   assert(0);
 }
@@ -845,6 +853,7 @@ typedef enum {
   A_CAST,
   A_ASM,
   A_IF,
+  A_FOR,
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -899,6 +908,12 @@ typedef struct ast_t_ {
       struct ast_t_ *then;
       struct ast_t_ *else_;
     } if_;
+    struct {
+      struct ast_t_ *init;
+      struct ast_t_ *cond;
+      struct ast_t_ *inc;
+      struct ast_t_ *body;
+    } for_;
     token_t fac;
     struct ast_t_ *ast;
   } as;
@@ -957,6 +972,8 @@ char *ast_kind_to_string(ast_kind_t kind) {
       return "ASM";
     case A_IF:
       return "IF";
+    case A_FOR:
+      return "FOR";
   }
   assert(0);
 }
@@ -1093,6 +1110,17 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.if_.else_, dumptype);
       printf(")");
       break;
+    case A_FOR:
+      printf("FOR(");
+      ast_dump(ast->as.for_.init, dumptype);
+      printf(", ");
+      ast_dump(ast->as.for_.cond, dumptype);
+      printf(", ");
+      ast_dump(ast->as.for_.inc, dumptype);
+      printf(", ");
+      ast_dump(ast->as.for_.body, dumptype);
+      printf(")");
+      break;
   }
   if (dumptype && ast->type.kind != TY_VOID) {
     char *str = type_dump_to_string(&ast->type);
@@ -1220,14 +1248,24 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
       dump_type;
     } break;
     case A_CAST:
-      dump_type;
+    {
+      char *str = type_dump_to_string(&ast->as.cast.target);
+      printf(" {%s}\n", str);
+      free_ptr(str);
       ast_dump_tree(ast->as.cast.ast, dumptype, indent + 1);
-      break;
+    } break;
     case A_IF:
       dump_type;
       ast_dump_tree(ast->as.if_.cond, dumptype, indent + 1);
       ast_dump_tree(ast->as.if_.then, dumptype, indent + 1);
       ast_dump_tree(ast->as.if_.else_, dumptype, indent + 1);
+      break;
+    case A_FOR:
+      dump_type;
+      ast_dump_tree(ast->as.for_.init, dumptype, indent + 1);
+      ast_dump_tree(ast->as.for_.cond, dumptype, indent + 1);
+      ast_dump_tree(ast->as.for_.inc, dumptype, indent + 1);
+      ast_dump_tree(ast->as.for_.body, dumptype, indent + 1);
       break;
   }
 
@@ -1946,6 +1984,10 @@ ast_t *parse_asm(tokenizer_t *tokenizer) {
 ast_t *parse_statement(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
+  if (token_next_if_kind(tokenizer, T_SEMICOLON)) {
+    return NULL;
+  }
+
   location_t start = tokenizer->loc;
 
   if (token_next_if_kind(tokenizer, T_RETURN)) {
@@ -1987,6 +2029,7 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
     a = ast_malloc((ast_t){A_ASSIGN, location_union(a->loc, b->loc), {}, {.binary = {a, b}}});
     return ast_malloc((ast_t){A_STATEMENT, a->loc, {}, {.ast = a}});
   }
+
   token_expect(tokenizer, T_SEMICOLON);
 
   a = ast_malloc((ast_t){A_STATEMENT, a->loc, {}, {.ast = a}});
@@ -2019,6 +2062,7 @@ ast_t *parse_if(tokenizer_t *tokenizer) {
   ast_t *ast =
       ast_malloc((ast_t){A_IF, location_union(start, end), {}, {.if_ = {cond, then, else_}}});
 
+  /*
   if (cond->kind == A_BINARYOP && cond->as.binaryop.op == T_EQ) {
     ast->as.if_.cond =
         ast_malloc((ast_t){A_BINARYOP,
@@ -2043,8 +2087,45 @@ ast_t *parse_if(tokenizer_t *tokenizer) {
     ast->as.if_.then = temp;
     free_ptr(cond);
   }
+  */
 
   return ast;
+}
+
+ast_t *parse_for(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  location_t start = tokenizer->loc;
+
+  token_expect(tokenizer, T_FOR);
+  token_expect(tokenizer, T_PARO);
+  ast_t *init = parse_statement(tokenizer);
+
+  ast_t *cond = NULL;
+  if (token_peek(tokenizer).kind != T_SEMICOLON) {
+    cond = parse_expr(tokenizer);
+  }
+  token_expect(tokenizer, T_SEMICOLON);
+
+  ast_t *inc = NULL;
+  if (token_peek(tokenizer).kind != T_PARC) {
+    inc = parse_expr(tokenizer);
+    if (token_peek(tokenizer).kind != T_PARC) {
+      token_expect(tokenizer, T_EQUAL);
+      ast_t *b = parse_expr(tokenizer);
+
+      inc =
+          ast_malloc((ast_t){A_ASSIGN, location_union(inc->loc, b->loc), {}, {.binary = {inc, b}}});
+    }
+  }
+
+  token_expect(tokenizer, T_PARC);
+
+  location_t end = tokenizer->loc;
+  ast_t *body = parse_block(tokenizer);
+
+  return ast_malloc((ast_t){
+      A_FOR, location_union(start, body ? body->loc : end), {}, {.for_ = {init, cond, inc, body}}});
 }
 
 ast_t *parse_code(tokenizer_t *tokenizer) {
@@ -2058,6 +2139,10 @@ ast_t *parse_code(tokenizer_t *tokenizer) {
 
   if (token.kind == T_IF) {
     return parse_if(tokenizer);
+  }
+
+  if (token.kind == T_FOR) {
+    return parse_for(tokenizer);
   }
 
   return parse_statement(tokenizer);
@@ -2260,6 +2345,18 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
         typecheck_funcbody(ast->as.if_.else_, state, ret);
       }
       break;
+    case A_FOR:
+      state_push_scope(state);
+      typecheck(ast->as.for_.init, state);
+      if (ast->as.for_.cond) {
+        typecheck_expandable(ast->as.for_.cond, state, (type_t){TY_INT, 2, {}});
+      }
+      typecheck(ast->as.for_.inc, state);
+      if (ast->as.for_.body) {
+        typecheck_funcbody(ast->as.for_.body, state, ret);
+      }
+      state_drop_scope(state);
+      break;
     default:
       typecheck(ast, state);
   }
@@ -2278,6 +2375,7 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_IF:
     case A_BLOCK:
     case A_RETURN:
+    case A_FOR:
       assert(0);
     case A_LIST:
       assert(ast->as.binary.left);
@@ -2349,7 +2447,7 @@ void typecheck(ast_t *ast, state_t *state) {
         }
 
         ast->type = *f->as.fieldlist.type;
-      } else if (ast->as.binaryop.op == T_EQ) {
+      } else if (ast->as.binaryop.op == T_EQ || ast->as.binaryop.op == T_NEQ) {
         typecheck_expandable(ast->as.binaryop.rhs, state, ast->as.binaryop.lhs->type);
         if (!type_is_kind(type, TY_INT) && !type_is_kind(type, TY_PTR)) {
           eprintf(ast->loc,
@@ -2375,6 +2473,7 @@ void typecheck(ast_t *ast, state_t *state) {
                   type_dump_to_string(&ast->as.binaryop.rhs->type));
         }
       } else {
+        printf("todo op: %s\n", token_kind_to_string(ast->as.binaryop.op));
         TODO;
       }
     } break;
@@ -2553,6 +2652,7 @@ void typecheck(ast_t *ast, state_t *state) {
         if (expr != NULL) {
           eprintf(ast->loc, "too many fields");
         }
+        // } else if (type_is_kind()) {
       } else {
         typecheck_expandable(ast->as.cast.ast, state, ast->as.cast.target);
       }
@@ -2621,6 +2721,20 @@ void optimize_ast(ast_t **astp) {
       optimize_ast(&ast->as.if_.then);
       if (ast->as.if_.else_) {
         optimize_ast(&ast->as.if_.else_);
+      }
+      break;
+    case A_FOR:
+      if (ast->as.for_.init) {
+        optimize_ast(&ast->as.for_.init);
+      }
+      if (ast->as.for_.cond) {
+        optimize_ast(&ast->as.for_.cond);
+      }
+      if (ast->as.for_.inc) {
+        optimize_ast(&ast->as.for_.inc);
+      }
+      if (ast->as.for_.body) {
+        optimize_ast(&ast->as.for_.body);
       }
       break;
   }
@@ -2904,6 +3018,7 @@ void compile(ast_t *ast, state_t *state) {
           }
           break;
         default:
+          printf("BINARYOP %s\n", token_kind_to_string(ast->as.binaryop.op));
           TODO;
       }
       break;
@@ -3082,6 +3197,15 @@ void compile(ast_t *ast, state_t *state) {
         state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
       }
       break;
+    case A_FOR:
+    {
+      compile(ast->as.for_.init, state);
+      int a = state->uli++;
+      int b = state->uli++;
+      state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
+      compile(ast->as.for_.cond, state);
+      state_add_ir(state, (ir_t){IR_SETULI, {.num = b}});
+    } break;
     case A_ASM:
       TODO;
       break;

@@ -1,0 +1,12 @@
+params: -D typ
+exitcode: 256
+code:
+int main() {
+  for (int i = 0;;) {
+  }
+  i;
+}
+output:
+ERROR:cmd:4:3: symbol not declared: i
+  4 |   i;
+        ^

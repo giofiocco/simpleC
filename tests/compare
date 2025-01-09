@@ -1,4 +1,4 @@
-params: -D par
+params: -D com
 exitcode: 0
 code:
 int main() {
@@ -12,36 +12,3 @@ int main() {
     2;
   }
 }
-output:
-AST:
-LIST
-    FUNCDECL {INT} main
-        NULL
-        BLOCK
-            LIST
-                IF
-                    BINARYOP MINUS
-                        INT 2
-                        INT 1
-                    NULL
-                    BLOCK
-                        LIST
-                            STATEMENT
-                                INT 2
-                IF
-                    BINARYOP MINUS
-                        INT 2
-                        INT 1
-                    BLOCK
-                        LIST
-                            STATEMENT
-                                INT 2
-                    NULL
-                IF
-                    INT 2
-                    NULL
-                    BLOCK
-                        LIST
-                            STATEMENT
-                                INT 2
-

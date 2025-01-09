@@ -1,3 +1,5 @@
+compile FOR as a WHILE
+
 make array access cast to ptr
 
 typedef array
@@ -6,7 +8,9 @@ struct with array
 better documentation for ir
 specify in ast_kind_t which ast_t.as use
 
-tests for errors
+tests errors
+
+INCB
 
 # Tokenizer
 
@@ -44,10 +48,10 @@ tests for errors
 
 # OPT
 
+- [ ] ptail opt
 - [ ] remove ifs that do nothing
 - [ ] remove dead or unreachable code
 - [ ] A_SP SP_A -> A_SP
-- [ ] ptail opt
 - [ ] RAM_A A_B RAM_A SUM A_B -> RAM_A RAM_B SUM A_B
 
 # Roadmap
