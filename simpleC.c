@@ -2447,6 +2447,7 @@ void typecheck(ast_t *ast, state_t *state) {
         }
 
         ast->type = *f->as.fieldlist.type;
+
       } else if (ast->as.binaryop.op == T_EQ || ast->as.binaryop.op == T_NEQ) {
         typecheck_expandable(ast->as.binaryop.rhs, state, ast->as.binaryop.lhs->type);
         if (!type_is_kind(type, TY_INT) && !type_is_kind(type, TY_PTR)) {
@@ -2457,6 +2458,7 @@ void typecheck(ast_t *ast, state_t *state) {
                   type_dump_to_string(&ast->as.binaryop.rhs->type));
         }
         ast->type = ast->as.binaryop.lhs->type;
+
       } else if (ast->as.binaryop.op == T_PLUS || ast->as.binaryop.op == T_MINUS) {
         typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
         if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR)) {
@@ -2717,12 +2719,33 @@ void optimize_ast(ast_t **astp) {
       optimize_ast(&ast->as.cast.ast);
       break;
     case A_IF:
-      optimize_ast(&ast->as.if_.cond);
+    {
+      ast_t *cond = ast->as.if_.cond;
+      if (cond->kind == A_BINARYOP
+          && (cond->as.binaryop.op == T_EQ || cond->as.binaryop.op == T_NEQ)) {
+
+        cond->as.binaryop.op = T_MINUS;
+        if (cond->as.binaryop.op == T_EQ) {
+          ast_t *then = ast->as.if_.then;
+          ast->as.if_.then = ast->as.if_.else_;
+          ast->as.if_.else_ = then;
+        }
+
+      } else if (cond->kind == A_UNARYOP && cond->as.unaryop.op == T_NOT) {
+
+        ast->as.if_.cond = cond->as.unaryop.arg;
+        free_ptr(cond);
+
+        ast_t *then = ast->as.if_.then;
+        ast->as.if_.then = ast->as.if_.else_;
+        ast->as.if_.else_ = then;
+      }
+      optimize_ast(&cond);
       optimize_ast(&ast->as.if_.then);
       if (ast->as.if_.else_) {
         optimize_ast(&ast->as.if_.else_);
       }
-      break;
+    } break;
     case A_FOR:
       if (ast->as.for_.init) {
         optimize_ast(&ast->as.for_.init);
@@ -3017,6 +3040,20 @@ void compile(ast_t *ast, state_t *state) {
             state->sp -= 2;
           }
           break;
+        case T_EQ:
+        case T_NEQ:
+        {
+          state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.binaryop.op == T_EQ}});
+          compile(ast->as.binaryop.rhs, state);
+          compile(ast->as.binaryop.lhs, state);
+          state_add_ir(state, (ir_t){IR_OPERATION, {.inst = SUB}});
+
+          int a = state->uli++;
+          state_add_ir(state, (ir_t){IR_JMPZ, {.num = a}});
+          state_change_sp(state, -2);
+          state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.binaryop.op != T_EQ}});
+          state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
+        } break;
         default:
           printf("BINARYOP %s\n", token_kind_to_string(ast->as.binaryop.op));
           TODO;
@@ -3033,8 +3070,19 @@ void compile(ast_t *ast, state_t *state) {
           get_addr_ast(state, ast->as.unaryop.arg);
           state->sp += 2;
           break;
+        case T_NOT:
+        {
+          state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
+          compile(ast->as.unaryop.arg, state);
+          int a = state->uli++;
+          state_add_ir(state, (ir_t){IR_JMPZ, {.num = a}});
+          state_change_sp(state, -2);
+          state_add_ir(state, (ir_t){IR_INT, {.num = 1}});
+          state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
+        } break;
         default:
-          assert(0);
+          printf("UNARYOP: %s\n", token_kind_to_string(ast->as.unaryop.op));
+          TODO;
       }
       break;
     case A_INT:

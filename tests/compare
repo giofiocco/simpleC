@@ -1,14 +1,54 @@
-params: -D com
+params: -D com -O1
 exitcode: 0
 code:
 int main() {
-  if (2 == 1) {
-    2;
-  }
-  if (2 != 1) {
-    2;
-  }
-  if (!2) {
-    2;
-  }
+  2 == 1;
+  3 != 4;
+  !2;
 }
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INST         DECSP
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INSTHEX      RAM_AL 0x01
+INST         PUSHA
+INSTHEX      RAM_AL 0x01
+INST         PUSHA
+INSTHEX      RAM_AL 0x02
+INST         POPB
+INST         SUB
+INSTRELLABEL JMPRZ _000
+INST         INCSP
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+SETLABEL     _000
+INST         INCSP
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTHEX      RAM_AL 0x04
+INST         PUSHA
+INSTHEX      RAM_AL 0x03
+INST         POPB
+INST         SUB
+INSTRELLABEL JMPRZ _001
+INST         INCSP
+INSTHEX      RAM_AL 0x01
+INST         PUSHA
+SETLABEL     _001
+INST         INCSP
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTHEX      RAM_AL 0x02
+INST         CMPA
+INSTRELLABEL JMPRZ _002
+INST         INCSP
+INSTHEX      RAM_AL 0x01
+INST         PUSHA
+SETLABEL     _002
+INST         RET
