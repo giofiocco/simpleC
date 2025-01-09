@@ -2,7 +2,7 @@ params: -D typ
 exitcode: 256
 code:
 int main() {
-  for (int i = 0;;) {
+  for (int i = 0;i;) {
   }
   i;
 }

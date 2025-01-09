@@ -85,6 +85,7 @@ typedef enum {
   T_NEQ,
   T_NOT,
   T_FOR,
+  T_WHILE,
 } token_kind_t;
 
 typedef struct {
@@ -353,6 +354,7 @@ token_t token_next(tokenizer_t *tokenizer) {
                           sv_eq(image, sv_from_cstr("if"))      ? T_IF :
                           sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
                           sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
+                          sv_eq(image, sv_from_cstr("while"))   ? T_WHILE :
                                                                   T_SYM,
                           image,
                           tokenizer->loc,
@@ -454,6 +456,8 @@ char *token_kind_to_string(token_kind_t kind) {
       return "NOT";
     case T_FOR:
       return "FOR";
+    case T_WHILE:
+      return "WHILE";
   }
   assert(0);
 }
@@ -832,28 +836,28 @@ type_t *type_pass_alias(type_t *type) {
 
 typedef enum {
   A_NONE,
-  A_LIST,
-  A_FUNCDECL,
-  A_PARAMDEF,
-  A_BLOCK,
-  A_STATEMENT,
-  A_RETURN,
-  A_BINARYOP,
-  A_UNARYOP,
-  A_INT,
-  A_STRING,
-  A_SYM,
-  A_DECL,
-  A_GLOBDECL,
-  A_ASSIGN,
-  A_FUNCALL,
-  A_PARAM,
-  A_ARRAY,
-  A_TYPEDEF,
-  A_CAST,
-  A_ASM,
-  A_IF,
-  A_FOR,
+  A_LIST,      // binary
+  A_FUNCDECL,  // funcdecl
+  A_PARAMDEF,  // paramdef
+  A_BLOCK,     // ast
+  A_STATEMENT, // ast
+  A_RETURN,    // ast
+  A_BINARYOP,  // binaryop
+  A_UNARYOP,   // unaryop
+  A_INT,       // fac
+  A_STRING,    // fac
+  A_SYM,       // fac
+  A_DECL,      // decl
+  A_GLOBDECL,  // decl
+  A_ASSIGN,    // binary
+  A_FUNCALL,   // funcall
+  A_PARAM,     // binary
+  A_ARRAY,     // binary
+  A_TYPEDEF,   // typedef_
+  A_CAST,      // cast
+  A_ASM,       // fac
+  A_IF,        // if_
+  A_WHILE,     // while_
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -908,12 +912,6 @@ typedef struct ast_t_ {
       struct ast_t_ *then;
       struct ast_t_ *else_;
     } if_;
-    struct {
-      struct ast_t_ *init;
-      struct ast_t_ *cond;
-      struct ast_t_ *inc;
-      struct ast_t_ *body;
-    } for_;
     token_t fac;
     struct ast_t_ *ast;
   } as;
@@ -972,8 +970,8 @@ char *ast_kind_to_string(ast_kind_t kind) {
       return "ASM";
     case A_IF:
       return "IF";
-    case A_FOR:
-      return "FOR";
+    case A_WHILE:
+      return "WHILE";
   }
   assert(0);
 }
@@ -1059,6 +1057,13 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.decl.expr, dumptype);
       printf(")");
     } break;
+    case A_ASSIGN:
+      printf("ASSIGN(");
+      ast_dump(ast->as.binary.left, dumptype);
+      printf(", ");
+      ast_dump(ast->as.binary.right, dumptype);
+      printf(")");
+      break;
     case A_FUNCALL:
       printf("FUNCALL(" SV_FMT " ", SV_UNPACK(ast->as.funcall.name.image));
       ast_dump(ast->as.funcall.params, dumptype);
@@ -1067,14 +1072,14 @@ void ast_dump(ast_t *ast, bool dumptype) {
     case A_PARAM:
       printf("PARAM(");
       ast_dump(ast->as.binary.left, dumptype);
-      printf(" ");
+      printf(", ");
       ast_dump(ast->as.binary.right, dumptype);
       printf(")");
       break;
     case A_ARRAY:
       printf("ARRAY(");
       ast_dump(ast->as.binary.left, dumptype);
-      printf(" ");
+      printf(", ");
       ast_dump(ast->as.binary.right, dumptype);
       printf(")");
       break;
@@ -1091,13 +1096,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.cast.ast, dumptype);
       free_ptr(str);
     } break;
-    case A_ASSIGN:
-      printf("ASSIGN(");
-      ast_dump(ast->as.binary.left, dumptype);
-      printf(", ");
-      ast_dump(ast->as.binary.right, dumptype);
-      printf(")");
-      break;
     case A_ASM:
       printf("ASM(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
       break;
@@ -1110,15 +1108,11 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.if_.else_, dumptype);
       printf(")");
       break;
-    case A_FOR:
-      printf("FOR(");
-      ast_dump(ast->as.for_.init, dumptype);
+    case A_WHILE:
+      printf("WHILE(");
+      ast_dump(ast->as.binary.left, dumptype);
       printf(", ");
-      ast_dump(ast->as.for_.cond, dumptype);
-      printf(", ");
-      ast_dump(ast->as.for_.inc, dumptype);
-      printf(", ");
-      ast_dump(ast->as.for_.body, dumptype);
+      ast_dump(ast->as.binary.right, dumptype);
       printf(")");
       break;
   }
@@ -1232,6 +1226,7 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
       ast_dump_tree(ast->as.decl.expr, dumptype, indent + 1);
     } break;
     case A_ASSIGN:
+    case A_WHILE:
       dump_type;
       ast_dump_tree(ast->as.binary.left, dumptype, indent + 1);
       ast_dump_tree(ast->as.binary.right, dumptype, indent + 1);
@@ -1259,13 +1254,6 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
       ast_dump_tree(ast->as.if_.cond, dumptype, indent + 1);
       ast_dump_tree(ast->as.if_.then, dumptype, indent + 1);
       ast_dump_tree(ast->as.if_.else_, dumptype, indent + 1);
-      break;
-    case A_FOR:
-      dump_type;
-      ast_dump_tree(ast->as.for_.init, dumptype, indent + 1);
-      ast_dump_tree(ast->as.for_.cond, dumptype, indent + 1);
-      ast_dump_tree(ast->as.for_.inc, dumptype, indent + 1);
-      ast_dump_tree(ast->as.for_.body, dumptype, indent + 1);
       break;
   }
 
@@ -2059,37 +2047,7 @@ ast_t *parse_if(tokenizer_t *tokenizer) {
 
   location_t end = tokenizer->loc;
 
-  ast_t *ast =
-      ast_malloc((ast_t){A_IF, location_union(start, end), {}, {.if_ = {cond, then, else_}}});
-
-  /*
-  if (cond->kind == A_BINARYOP && cond->as.binaryop.op == T_EQ) {
-    ast->as.if_.cond =
-        ast_malloc((ast_t){A_BINARYOP,
-                           cond->loc,
-                           {},
-                           {.binaryop = {T_MINUS, cond->as.binaryop.lhs, cond->as.binaryop.rhs}}});
-    ast_t *temp = ast->as.if_.else_;
-    ast->as.if_.else_ = ast->as.if_.then;
-    ast->as.if_.then = temp;
-    free_ptr(cond);
-  } else if (cond->kind == A_BINARYOP && cond->as.binaryop.op == T_NEQ) {
-    ast->as.if_.cond =
-        ast_malloc((ast_t){A_BINARYOP,
-                           cond->loc,
-                           {},
-                           {.binaryop = {T_MINUS, cond->as.binaryop.lhs, cond->as.binaryop.rhs}}});
-    free_ptr(cond);
-  } else if (cond->kind == A_UNARYOP && cond->as.unaryop.op == T_NOT) {
-    ast->as.if_.cond = ast->as.if_.cond->as.unaryop.arg;
-    ast_t *temp = ast->as.if_.else_;
-    ast->as.if_.else_ = ast->as.if_.then;
-    ast->as.if_.then = temp;
-    free_ptr(cond);
-  }
-  */
-
-  return ast;
+  return ast_malloc((ast_t){A_IF, location_union(start, end), {}, {.if_ = {cond, then, else_}}});
 }
 
 ast_t *parse_for(tokenizer_t *tokenizer) {
@@ -2100,11 +2058,7 @@ ast_t *parse_for(tokenizer_t *tokenizer) {
   token_expect(tokenizer, T_FOR);
   token_expect(tokenizer, T_PARO);
   ast_t *init = parse_statement(tokenizer);
-
-  ast_t *cond = NULL;
-  if (token_peek(tokenizer).kind != T_SEMICOLON) {
-    cond = parse_expr(tokenizer);
-  }
+  ast_t *cond = parse_expr(tokenizer);
   token_expect(tokenizer, T_SEMICOLON);
 
   ast_t *inc = NULL;
@@ -2124,8 +2078,57 @@ ast_t *parse_for(tokenizer_t *tokenizer) {
   location_t end = tokenizer->loc;
   ast_t *body = parse_block(tokenizer);
 
-  return ast_malloc((ast_t){
-      A_FOR, location_union(start, body ? body->loc : end), {}, {.for_ = {init, cond, inc, body}}});
+  if (inc && body) {
+    assert(body->kind == A_BLOCK);
+    ast_t *a = body->as.ast;
+    assert(a->kind == A_LIST);
+    while (a->as.binary.right) {
+      a = a->as.binary.right;
+      assert(a->kind == A_LIST);
+    }
+
+    a->as.binary.right = ast_malloc((ast_t){
+        A_LIST,
+        inc->loc,
+        {},
+        {.binary = {inc, NULL}},
+    });
+  } else if (inc) {
+    body = ast_malloc((ast_t){A_BLOCK, inc->loc, {}, {.ast = inc}});
+  }
+
+  location_t loc = location_union(start, end);
+
+  ast_t *ast = ast_malloc((ast_t){A_WHILE, loc, {}, {.binary = {cond, body}}});
+
+  if (init) {
+    ast = ast_malloc((ast_t){
+        A_BLOCK,
+        loc,
+        {},
+        {.ast = ast_malloc((ast_t){
+             A_LIST,
+             loc,
+             {},
+             {.binary = {init, ast_malloc((ast_t){A_LIST, loc, {}, {.binary = {ast, NULL}}})}}})}});
+  }
+
+  return ast;
+}
+
+ast_t *parse_while(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  location_t start = tokenizer->loc;
+
+  token_expect(tokenizer, T_WHILE);
+  token_expect(tokenizer, T_PARO);
+  ast_t *cond = parse_expr(tokenizer);
+  token_expect(tokenizer, T_PARC);
+  ast_t *body = parse_block(tokenizer);
+
+  return ast_malloc(
+      (ast_t){A_WHILE, location_union(start, body->loc), {}, {.binary = {cond, body}}});
 }
 
 ast_t *parse_code(tokenizer_t *tokenizer) {
@@ -2143,6 +2146,10 @@ ast_t *parse_code(tokenizer_t *tokenizer) {
 
   if (token.kind == T_FOR) {
     return parse_for(tokenizer);
+  }
+
+  if (token.kind == T_WHILE) {
+    return parse_while(tokenizer);
   }
 
   return parse_statement(tokenizer);
@@ -2345,17 +2352,12 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
         typecheck_funcbody(ast->as.if_.else_, state, ret);
       }
       break;
-    case A_FOR:
-      state_push_scope(state);
-      typecheck(ast->as.for_.init, state);
-      if (ast->as.for_.cond) {
-        typecheck_expandable(ast->as.for_.cond, state, (type_t){TY_INT, 2, {}});
+    case A_WHILE:
+      assert(ast->as.binary.left);
+      typecheck_expandable(ast->as.binary.left, state, (type_t){TY_INT, 2, {}});
+      if (ast->as.binary.right) {
+        typecheck_funcbody(ast->as.binary.right, state, ret);
       }
-      typecheck(ast->as.for_.inc, state);
-      if (ast->as.for_.body) {
-        typecheck_funcbody(ast->as.for_.body, state, ret);
-      }
-      state_drop_scope(state);
       break;
     default:
       typecheck(ast, state);
@@ -2375,7 +2377,7 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_IF:
     case A_BLOCK:
     case A_RETURN:
-    case A_FOR:
+    case A_WHILE:
       assert(0);
     case A_LIST:
       assert(ast->as.binary.left);
@@ -2687,6 +2689,7 @@ void optimize_ast(ast_t **astp) {
     case A_ASSIGN:
     case A_PARAM:
     case A_ARRAY:
+    case A_WHILE:
       optimize_ast(&ast->as.binary.left);
       optimize_ast(&ast->as.binary.right);
       break;
@@ -2746,20 +2749,6 @@ void optimize_ast(ast_t **astp) {
         optimize_ast(&ast->as.if_.else_);
       }
     } break;
-    case A_FOR:
-      if (ast->as.for_.init) {
-        optimize_ast(&ast->as.for_.init);
-      }
-      if (ast->as.for_.cond) {
-        optimize_ast(&ast->as.for_.cond);
-      }
-      if (ast->as.for_.inc) {
-        optimize_ast(&ast->as.for_.inc);
-      }
-      if (ast->as.for_.body) {
-        optimize_ast(&ast->as.for_.body);
-      }
-      break;
   }
 }
 
@@ -3223,6 +3212,10 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.cast.ast, state);
       }
       break;
+
+    case A_ASM:
+      TODO;
+      break;
     case A_IF:
       compile(ast->as.if_.cond, state);
       if (ast->as.if_.else_) {
@@ -3245,18 +3238,17 @@ void compile(ast_t *ast, state_t *state) {
         state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
       }
       break;
-    case A_FOR:
+    case A_WHILE:
     {
-      compile(ast->as.for_.init, state);
       int a = state->uli++;
       int b = state->uli++;
       state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
-      compile(ast->as.for_.cond, state);
+      compile(ast->as.binary.left, state);
+      state_add_ir(state, (ir_t){IR_JMPZ, {.num = b}});
+      compile(ast->as.binary.right, state);
+      state_add_ir(state, (ir_t){IR_JMP, {.num = a}});
       state_add_ir(state, (ir_t){IR_SETULI, {.num = b}});
     } break;
-    case A_ASM:
-      TODO;
-      break;
   }
 }
 

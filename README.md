@@ -38,6 +38,7 @@ A compiler for a subset of `C`
 - NEQ: `!=`
 - NOT: `!`
 - FOR: `for`
+- WHILE: `while`
 
 ## Comments
 
@@ -51,7 +52,7 @@ Multi-line comments: `/* ... */`
 - funcdecl ::= type sym paramdef block
 - paramdef ::= PARO ( type SYM ( COMMA type SYM )\* )? PARC
 - block ::= BRO code\* BRC
-- code ::= block | if | for | statement
+- code ::= block | if | for | while | statement
 - statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm )? SEMICOLON
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
 
@@ -72,6 +73,7 @@ Multi-line comments: `/* ... */`
 - asm ::= ASM PARO STRING PARC
 - if ::= IF PARO expr PARC block ( ELSE ( if | block ) )?
 - for ::= FOR PARO statement expr SEMICOLON (expr ( EQUAL expr )?)? PARC block
+- while ::= WHILE PARO expr PARC block
 
 # Intermidiate Rappresentation
 
