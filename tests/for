@@ -1,0 +1,46 @@
+params: -D par
+exitcode: 0
+code:
+int main() {
+  for (; 1;) {
+  }
+  for (int i = 0; 1;) {
+  }
+  for (; 1; 3) {
+  }
+  for (; 1; 3) {
+    2;
+  }
+}
+output:
+AST:
+LIST
+    FUNCDECL {INT} main
+        NULL
+        BLOCK
+            LIST
+                WHILE
+                    INT 1
+                    NULL
+                BLOCK
+                    LIST
+                        DECL {INT} i
+                            CAST {INT}
+                                INT 0
+                        WHILE
+                            INT 1
+                            NULL
+                WHILE
+                    INT 1
+                    BLOCK
+                        STATEMENT
+                            INT 3
+                WHILE
+                    INT 1
+                    BLOCK
+                        LIST
+                            STATEMENT
+                                INT 2
+                            STATEMENT
+                                INT 3
+
