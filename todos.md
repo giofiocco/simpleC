@@ -1,6 +1,5 @@
-compile FOR as a WHILE
-
-make array access cast to ptr
+==, != and ! in while
+INCB
 
 typedef array
 struct with array
@@ -9,8 +8,6 @@ better documentation for ir
 specify in ast_kind_t which ast_t.as use
 
 tests errors
-
-INCB
 
 # Tokenizer
 
@@ -45,6 +42,7 @@ INCB
       similar for global decl
 - [ ] ADDR_LOCAL(2) READ(x) ADDR_LOCAL(y) WRITE(x) -> ADDR_LOCAL(y-x) WRITE(x)
       similar for global decl
+- [ ] ADDR INT MUL -> ADDR
 
 # OPT
 

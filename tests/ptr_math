@@ -1,4 +1,4 @@
-params: -D com
+params: -D com -O1
 exitcode: 0
 code:
 typedef struct {
@@ -33,13 +33,24 @@ INSTLABEL    CALL exit
 SETLABEL     main
 INST         DECSP
 INST         DECSP
-INSTHEX      PEEKAR 0x04
+INST         SP_A
+INST         INCA
+INST         INCA
+INST         PUSHA
+INSTHEX      RAM_AL 0x02
+INST         POPB
+INST         SUM
+INST         A_B
+INST         rB_A
 INST         PUSHA
 INST         INCSP
 INSTLABEL    RAM_A _000
 INST         PUSHA
-INST         POPA
-INSTHEX2     RAM_B 0x000A
+INSTHEX      RAM_AL 0x08
+INST         POPB
+INST         SUM
+INST         A_B
+INSTHEX      RAM_AL 0x02
 INST         SUM
 INST         A_B
 INST         rB_A

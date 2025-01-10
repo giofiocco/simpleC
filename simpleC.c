@@ -1765,8 +1765,8 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
     catch = true;
     if (setjmp(catch_buf) == 0) {
       type_t type = parse_type(tokenizer);
-      catch = false;
       token_expect(tokenizer, T_PARC);
+      catch = false;
       ast_t *fac = parse_fac(tokenizer);
       return ast_malloc(
           (ast_t){A_CAST, location_union(token.loc, fac->loc), {0}, {.cast = {type, fac}}});
@@ -1846,15 +1846,15 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
   if (token_next_if_kind(tokenizer, T_SQO)) {
     ast_t *expr = parse_expr(tokenizer);
     token_t sqc = token_expect(tokenizer, T_SQC);
-    ast =
-        ast_malloc((ast_t){A_UNARYOP,
-                           location_union(ast->loc, sqc.loc),
-                           {},
-                           {.unaryop = {T_STAR,
-                                        ast_malloc((ast_t){A_BINARYOP,
-                                                           location_union(ast->loc, sqc.loc),
-                                                           {},
-                                                           {.binaryop = {T_PLUS, ast, expr}}})}}});
+
+    ast->loc = location_union(ast->loc, sqc.loc);
+    ast = ast_malloc((ast_t){
+        A_UNARYOP,
+        ast->loc,
+        {},
+        {.unaryop = {
+             T_STAR,
+             ast_malloc((ast_t){A_BINARYOP, ast->loc, {}, {.binaryop = {T_PLUS, ast, expr}}})}}});
   }
 
   return ast;
@@ -2071,6 +2071,9 @@ ast_t *parse_for(tokenizer_t *tokenizer) {
       inc =
           ast_malloc((ast_t){A_ASSIGN, location_union(inc->loc, b->loc), {}, {.binary = {inc, b}}});
     }
+  }
+  if (inc) {
+    inc = ast_malloc((ast_t){A_STATEMENT, inc->loc, {}, {.ast = inc}});
   }
 
   token_expect(tokenizer, T_PARC);
@@ -2429,56 +2432,66 @@ void typecheck(ast_t *ast, state_t *state) {
       typecheck(ast->as.binaryop.lhs, state);
       type_t *type = &ast->as.binaryop.lhs->type;
 
-      if (ast->as.binaryop.op == T_DOT) {
-        assert(ast->as.binaryop.rhs->kind == A_SYM);
+      switch (ast->as.binaryop.op) {
+        case T_DOT:
+        {
+          assert(ast->as.binaryop.rhs->kind == A_SYM);
 
-        if (!type_is_kind(type, TY_STRUCT)) {
-          eprintf(ast->as.binaryop.lhs->loc,
-                  "expected a 'STRUCT', found '%s'",
-                  type_dump_to_string(type));
-        }
+          if (!type_is_kind(type, TY_STRUCT)) {
+            eprintf(ast->as.binaryop.lhs->loc,
+                    "expected a 'STRUCT', found '%s'",
+                    type_dump_to_string(type));
+          }
 
-        type_t *f = type->as.alias.type->as.struct_.fieldlist;
-        while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
-          f = f->as.fieldlist.next;
-        };
-        if (!f) {
-          eprintf(ast->as.binaryop.rhs->loc,
-                  "member not found in '%s'",
-                  type_dump_to_string(type->as.alias.type));
-        }
+          type_t *f = type->as.alias.type->as.struct_.fieldlist;
+          while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
+            f = f->as.fieldlist.next;
+          };
+          if (!f) {
+            eprintf(ast->as.binaryop.rhs->loc,
+                    "member not found in '%s'",
+                    type_dump_to_string(type->as.alias.type));
+          }
 
-        ast->type = *f->as.fieldlist.type;
+          ast->type = *f->as.fieldlist.type;
 
-      } else if (ast->as.binaryop.op == T_EQ || ast->as.binaryop.op == T_NEQ) {
-        typecheck_expandable(ast->as.binaryop.rhs, state, ast->as.binaryop.lhs->type);
-        if (!type_is_kind(type, TY_INT) && !type_is_kind(type, TY_PTR)) {
-          eprintf(ast->loc,
-                  "invalid operation '%s' between '%s' and '%s'",
-                  token_kind_to_string(ast->as.binaryop.op),
-                  type_dump_to_string(&ast->as.binaryop.lhs->type),
-                  type_dump_to_string(&ast->as.binaryop.rhs->type));
-        }
-        ast->type = ast->as.binaryop.lhs->type;
+        } break;
+        case T_EQ:
+        case T_NEQ:
+        {
+          typecheck_expandable(ast->as.binaryop.rhs, state, ast->as.binaryop.lhs->type);
+          if (!type_is_kind(type, TY_INT) && !type_is_kind(type, TY_PTR)) {
+            eprintf(ast->loc,
+                    "invalid operation '%s' between '%s' and '%s'",
+                    token_kind_to_string(ast->as.binaryop.op),
+                    type_dump_to_string(&ast->as.binaryop.lhs->type),
+                    type_dump_to_string(&ast->as.binaryop.rhs->type));
+          }
+          ast->type = ast->as.binaryop.lhs->type;
 
-      } else if (ast->as.binaryop.op == T_PLUS || ast->as.binaryop.op == T_MINUS) {
-        typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
-        if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR)) {
-          ast->type = *type;
-        } else if (type->kind == TY_ARRAY) {
-          ast->type = (type_t){TY_PTR, 2, {.ptr = type->as.array.type}};
-          ast_t *lhs = ast->as.binaryop.lhs;
-          lhs = ast_malloc((ast_t){A_CAST, lhs->loc, {}, {.cast = {ast->type, lhs}}});
-        } else {
-          eprintf(ast->loc,
-                  "invalid operation '%s' between '%s' and '%s'",
-                  token_kind_to_string(ast->as.binaryop.op),
-                  type_dump_to_string(&ast->as.binaryop.lhs->type),
-                  type_dump_to_string(&ast->as.binaryop.rhs->type));
-        }
-      } else {
-        printf("todo op: %s\n", token_kind_to_string(ast->as.binaryop.op));
-        TODO;
+        } break;
+        case T_PLUS:
+        case T_MINUS:
+        {
+          typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
+          if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR)) {
+            ast->type = *type;
+          } else if (type->kind == TY_ARRAY) {
+            ast->type = (type_t){TY_PTR, 2, {.ptr = type->as.array.type}};
+            ast_t *lhs = ast->as.binaryop.lhs;
+            ast->as.binaryop.lhs =
+                ast_malloc((ast_t){A_CAST, lhs->loc, {}, {.cast = {ast->type, lhs}}});
+          } else {
+            eprintf(ast->loc,
+                    "invalid operation '%s' between '%s' and '%s'",
+                    token_kind_to_string(ast->as.binaryop.op),
+                    type_dump_to_string(&ast->as.binaryop.lhs->type),
+                    type_dump_to_string(&ast->as.binaryop.rhs->type));
+          }
+        } break;
+        default:
+          printf("todo op: %s\n", token_kind_to_string(ast->as.binaryop.op));
+          TODO;
       }
     } break;
     case A_UNARYOP:
@@ -2656,7 +2669,6 @@ void typecheck(ast_t *ast, state_t *state) {
         if (expr != NULL) {
           eprintf(ast->loc, "too many fields");
         }
-        // } else if (type_is_kind()) {
       } else {
         typecheck_expandable(ast->as.cast.ast, state, ast->as.cast.target);
       }
@@ -3019,8 +3031,11 @@ void compile(ast_t *ast, state_t *state) {
         case T_PLUS:
         case T_MINUS:
           if (type_is_kind(&ast->type, TY_PTR)) {
-            get_addr_ast(state, ast);
-            state->sp += 2;
+            compile(ast->as.binaryop.lhs, state);
+            compile(ast->as.binaryop.rhs, state);
+            state_add_ir(state, (ir_t){IR_MUL, {.num = ast->type.as.ptr->size}});
+            state_add_ir(state,
+                         (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
           } else {
             compile(ast->as.binaryop.lhs, state);
             compile(ast->as.binaryop.rhs, state);
@@ -3085,6 +3100,9 @@ void compile(ast_t *ast, state_t *state) {
         state_add_ir(state, (ir_t){IR_INT, {.num = s->info.num}});
         state->sp += 2;
       } else {
+        if (type_is_kind(&ast->type, TY_ARRAY)) {
+          eprintf(ast->loc, "cannot access ARRAY, maybe wanna cast it to PTR");
+        }
         get_addr_ast(state, ast);
         assert(s->type);
         state_add_ir(state, (ir_t){IR_READ, {.num = s->type->size}});
@@ -3199,10 +3217,13 @@ void compile(ast_t *ast, state_t *state) {
             compile(asts[ast_num], state);
           }
         }
+      } else if (type_is_kind(&ast->as.cast.target, TY_PTR)
+                 && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
+        get_addr_ast(state, ast->as.cast.ast);
       } else {
         int tsize = type_size_aligned(&ast->as.cast.target);
         int size = type_size_aligned(&ast->as.cast.ast->type);
-        if (tsize - size < 0) { // TODO: needed?
+        if (tsize - size < 0) {
           eprintf(ast->loc,
                   "cannot cast '%s' to smaller size type '%s' ",
                   type_dump_to_string(&ast->as.cast.ast->type),
@@ -3497,13 +3518,19 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       compile_change_sp(state, ir.arg.num);
       break;
     case IR_INT:
-      if (0 <= ir.arg.num && ir.arg.num < 256) {
-        code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = ir.arg.num}});
+    {
+      int num = ir.arg.num;
+      if (iri + 1 < ir_num && irs[iri + 1].kind == IR_MUL) {
+        num *= irs[iri + 1].arg.num;
+        ++iri;
+      }
+      if (0 <= num && num < 256) {
+        code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = num}});
       } else {
-        code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = ir.arg.num}});
+        code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = num}});
       }
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      break;
+    } break;
     case IR_STRING:
       code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.num));
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
