@@ -86,6 +86,7 @@ typedef enum {
   T_NOT,
   T_FOR,
   T_WHILE,
+  T_EXTERN,
 } token_kind_t;
 
 typedef struct {
@@ -355,6 +356,7 @@ token_t token_next(tokenizer_t *tokenizer) {
                           sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
                           sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
                           sv_eq(image, sv_from_cstr("while"))   ? T_WHILE :
+                          sv_eq(image, sv_from_cstr("extern"))  ? T_EXTERN :
                                                                   T_SYM,
                           image,
                           tokenizer->loc,
@@ -458,6 +460,8 @@ char *token_kind_to_string(token_kind_t kind) {
       return "FOR";
     case T_WHILE:
       return "WHILE";
+    case T_EXTERN:
+      return "EXTERN";
   }
   assert(0);
 }
@@ -838,6 +842,7 @@ typedef enum {
   A_NONE,
   A_LIST,      // binary
   A_FUNCDECL,  // funcdecl
+  A_FUNCDEF,   // funcdef
   A_PARAMDEF,  // paramdef
   A_BLOCK,     // ast
   A_STATEMENT, // ast
@@ -858,6 +863,7 @@ typedef enum {
   A_ASM,       // fac
   A_IF,        // if_
   A_WHILE,     // while_
+  A_EXTERN,    // ast
 } ast_kind_t;
 
 typedef struct ast_t_ {
@@ -875,6 +881,11 @@ typedef struct ast_t_ {
       struct ast_t_ *params;
       struct ast_t_ *block;
     } funcdecl;
+    struct {
+      type_t type;
+      token_t name;
+      struct ast_t_ *params;
+    } funcdef;
     struct {
       type_t type;
       token_t name;
@@ -932,6 +943,8 @@ char *ast_kind_to_string(ast_kind_t kind) {
       return "LIST";
     case A_FUNCDECL:
       return "FUNCDECL";
+    case A_FUNCDEF:
+      return "FUNCDEF";
     case A_PARAMDEF:
       return "PARAMDEF";
     case A_BLOCK:
@@ -972,6 +985,8 @@ char *ast_kind_to_string(ast_kind_t kind) {
       return "IF";
     case A_WHILE:
       return "WHILE";
+    case A_EXTERN:
+      return "EXTERN";
   }
   assert(0);
 }
@@ -982,6 +997,9 @@ void ast_dump(ast_t *ast, bool dumptype) {
     return;
   }
 
+  TODO;
+
+  /*
   switch (ast->kind) {
     case A_NONE:
       assert(0);
@@ -1116,6 +1134,7 @@ void ast_dump(ast_t *ast, bool dumptype) {
       printf(")");
       break;
   }
+*/
   if (dumptype && ast->type.kind != TY_VOID) {
     char *str = type_dump_to_string(&ast->type);
     printf(" {%s <%d>}", str, ast->type.size);
@@ -1181,6 +1200,14 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
       ast_dump_tree(ast->as.funcdecl.params, dumptype, indent + 1);
       ast_dump_tree(ast->as.funcdecl.block, dumptype, indent + 1);
     } break;
+    case A_FUNCDEF:
+    {
+      char *str = type_dump_to_string(&ast->as.funcdef.type);
+      printf(" {%s} " SV_FMT, str, SV_UNPACK(ast->as.funcdef.name.image));
+      free_ptr(str);
+      dump_type;
+      ast_dump_tree(ast->as.funcdef.params, dumptype, indent + 1);
+    } break;
     case A_PARAMDEF:
     {
       char *str = type_dump_to_string(&ast->as.paramdef.type);
@@ -1192,6 +1219,7 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
     case A_STATEMENT:
     case A_BLOCK:
     case A_RETURN:
+    case A_EXTERN:
       dump_type;
       ast_dump_tree(ast->as.ast, dumptype, indent + 1);
       break;
@@ -1232,6 +1260,7 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
       ast_dump_tree(ast->as.binary.right, dumptype, indent + 1);
       break;
     case A_FUNCALL:
+      printf(" " SV_FMT, SV_UNPACK(ast->as.funcall.name.image));
       dump_type;
       ast_dump_tree(ast->as.funcall.params, dumptype, indent + 1);
       break;
@@ -1317,6 +1346,7 @@ typedef enum {
   IR_OPERATION,   // + inst
   IR_MUL,         // + num
   IR_CALL,        // + sv
+  IR_EXTERN,      // + sv
 } ir_kind_t;
 
 typedef struct {
@@ -1380,6 +1410,9 @@ void ir_dump(ir_t ir) {
       break;
     case IR_CALL:
       printf("CALL " SV_FMT, SV_UNPACK(ir.arg.sv));
+      break;
+    case IR_EXTERN:
+      printf("EXTERN " SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
   }
   printf("\n");
@@ -2216,7 +2249,8 @@ ast_t *parse_paramdef(tokenizer_t *tokenizer) {
 ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  token_t token = token_peek(tokenizer);
+  location_t start = tokenizer->loc;
+
   type_t type = parse_type(tokenizer);
   token_t name = token_expect(tokenizer, T_SYM);
 
@@ -2226,9 +2260,27 @@ ast_t *parse_funcdecl(tokenizer_t *tokenizer) {
 
   return ast_malloc(
       (ast_t){A_FUNCDECL,
-              location_union(token.loc, block ? block->loc : (param ? param->loc : name.loc)),
+              location_union(start, block ? block->loc : (param ? param->loc : name.loc)),
               {0},
               {.funcdecl = {type, name, param, block}}});
+}
+
+ast_t *parse_funcdef(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  location_t start = tokenizer->loc;
+
+  type_t type = parse_type(tokenizer);
+  token_t name = token_expect(tokenizer, T_SYM);
+
+  ast_t *param = parse_paramdef(tokenizer);
+
+  token_expect(tokenizer, T_SEMICOLON);
+
+  return ast_malloc((ast_t){A_FUNCDECL,
+                            location_union(start, param ? param->loc : name.loc),
+                            {0},
+                            {.funcdef = {type, name, param}}});
 }
 
 ast_t *parse_typedef(tokenizer_t *tokenizer) {
@@ -2255,11 +2307,26 @@ ast_t *parse_typedef(tokenizer_t *tokenizer) {
   return ast_malloc((ast_t){A_TYPEDEF, td.loc, {0}, {.typedef_ = {type, name}}});
 }
 
+ast_t *parse_extern(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  location_t start = tokenizer->loc;
+
+  token_expect(tokenizer, T_EXTERN);
+  ast_t *funcdef = parse_funcdef(tokenizer);
+
+  return ast_malloc((ast_t){A_EXTERN, location_union(start, funcdef->loc), {}, {.ast = funcdef}});
+}
+
 ast_t *parse_global(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   if (token_peek(tokenizer).kind == T_TYPEDEF) {
     return parse_typedef(tokenizer);
+  }
+
+  if (token_peek(tokenizer).kind == T_EXTERN) {
+    return parse_extern(tokenizer);
   }
 
   tokenizer_t savetok = *tokenizer;
@@ -2408,6 +2475,19 @@ void typecheck(ast_t *ast, state_t *state) {
         assert(ast->as.funcdecl.block->kind == A_BLOCK);
         typecheck_funcbody(ast->as.funcdecl.block->as.ast, state, ast->as.funcdecl.type);
       }
+      state_drop_scope(state);
+      break;
+    case A_FUNCDEF:
+      state_add_symbol(state, (symbol_t){ast->as.funcdef.name, &ast->type, 0, {}});
+      state_push_scope(state);
+      state->param = 0;
+      typecheck(ast->as.funcdef.params, state);
+      state_solve_type_alias(state, &ast->as.funcdef.type);
+      ast->type =
+          (type_t){TY_FUNC,
+                   ast->as.funcdef.type.size,
+                   {.func = {&ast->as.funcdef.type,
+                             ast->as.funcdef.params ? &ast->as.funcdef.params->type : NULL}}};
       state_drop_scope(state);
       break;
     case A_PARAMDEF:
@@ -2677,6 +2757,10 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_ASM:
       ast->type = (type_t){TY_VOID, 0, {}};
       break;
+    case A_EXTERN:
+      typecheck(ast->as.ast, state);
+      ast->type = (type_t){TY_VOID, 0, {}};
+      break;
   }
 }
 
@@ -2696,6 +2780,8 @@ void optimize_ast(ast_t **astp) {
     case A_STRING:
     case A_TYPEDEF:
     case A_ASM:
+    case A_FUNCDEF:
+    case A_EXTERN:
       break;
     case A_LIST:
     case A_ASSIGN:
@@ -2991,6 +3077,9 @@ void compile(ast_t *ast, state_t *state) {
       }
       state_drop_scope(state);
       break;
+    case A_FUNCDEF:
+      state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
+      break;
     case A_PARAMDEF:
       state_add_symbol(
           state,
@@ -3270,6 +3359,10 @@ void compile(ast_t *ast, state_t *state) {
       state_add_ir(state, (ir_t){IR_JMP, {.num = a}});
       state_add_ir(state, (ir_t){IR_SETULI, {.num = b}});
     } break;
+    case A_EXTERN:
+      assert(ast->as.ast->kind == A_FUNCDEF);
+      state_add_ir(state, (ir_t){IR_EXTERN, {.sv = ast->as.ast->as.funcdef.name.image}});
+      compile(ast->as.ast, state);
   }
 }
 
@@ -3546,6 +3639,9 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       break;
     case IR_CALL:
       code(compiled, bytecode_with_sv(BINSTRELLABEL, CALLR, ir.arg.sv));
+      break;
+    case IR_EXTERN:
+      code(compiled, bytecode_with_sv(BEXTERN, 0, ir.arg.sv));
       break;
   }
 

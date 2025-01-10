@@ -39,6 +39,7 @@ A compiler for a subset of `C`
 - NOT: `!`
 - FOR: `for`
 - WHILE: `while`
+- EXTERN: `extern`
 
 ## Comments
 
@@ -48,8 +49,9 @@ Multi-line comments: `/* ... */`
 
 # Grammar
 
-- global ::= ( funcdecl | typedef | decl )\*
+- global ::= ( funcdecl | typedef | decl SEMICOLON | extern )\*
 - funcdecl ::= type sym paramdef block
+- funcdef ::= type sym paramdef SEMICOLON
 - paramdef ::= PARO ( type SYM ( COMMA type SYM )\* )? PARC
 - block ::= BRO code\* BRC
 - code ::= block | if | for | while | statement
@@ -74,6 +76,7 @@ Multi-line comments: `/* ... */`
 - if ::= IF PARO expr PARC block ( ELSE ( if | block ) )?
 - for ::= FOR PARO statement expr SEMICOLON (expr ( EQUAL expr )?)? PARC block
 - while ::= WHILE PARO expr PARC block
+- extern ::= EXTERN funcdef
 
 # Intermidiate Rappresentation
 

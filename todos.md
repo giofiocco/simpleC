@@ -16,6 +16,7 @@ tests errors
 
 # Parser
 
+- [ ] in funcdef etc sv_t instead of token?
 - [ ] int a,b;
 - [ ] int \*\*a;
 - [ ] struct point a; only in structdef?
