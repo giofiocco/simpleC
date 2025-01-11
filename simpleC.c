@@ -9,7 +9,6 @@
 #include <string.h>
 
 #define SV_IMPLEMENTATION
-// #include "jaris/files.h"
 #include "jaris/instructions.h"
 
 #define TODO                          \
@@ -1304,6 +1303,7 @@ typedef enum {
   IR_MUL,         // + num
   IR_CALL,        // + sv
   IR_EXTERN,      // + sv
+  IR_SIMPLE_CALL, // + sv
 } ir_kind_t;
 
 typedef struct {
@@ -1370,6 +1370,9 @@ void ir_dump(ir_t ir) {
       break;
     case IR_EXTERN:
       printf("EXTERN " SV_FMT, SV_UNPACK(ir.arg.sv));
+      break;
+    case IR_SIMPLE_CALL:
+      printf("SIMPLE_CALL " SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
   }
   printf("\n");
@@ -2987,6 +2990,21 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
   }
 }
 
+bool is_simple_func(type_t *type) {
+  assert(type);
+
+  assert(type->kind == TY_FUNC);
+
+  type_t *params = type->as.func.params;
+
+  return (type->as.func.ret == NULL || type->as.func.ret->size <= 2)
+         && (params == NULL
+             || (params->as.list.type->size <= 2
+                 && (params->as.list.next == NULL
+                     || (params->as.list.next->as.list.type->size <= 2
+                         && params->as.list.next->as.list.next == NULL))));
+}
+
 void compile(ast_t *ast, state_t *state) {
   assert(state);
   assert(ast);
@@ -3019,10 +3037,36 @@ void compile(ast_t *ast, state_t *state) {
     case A_FUNCDECL:
       state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
       state_push_scope(state);
-      state->param = 4 + type_size_aligned(&ast->as.funcdecl.type);
-      if (ast->as.funcdecl.params) {
-        compile(ast->as.funcdecl.params, state);
+
+      ast_t *params = ast->as.funcdecl.params;
+
+      if (is_simple_func(&ast->type)) {
+        if (params) {
+          state_add_symbol(state,
+                           (symbol_t){params->as.paramdef.name,
+                                      &params->as.paramdef.type,
+                                      INFO_LOCAL,
+                                      {.local = state->sp}});
+          state->sp += 2;
+          if (params->as.paramdef.next) {
+            state_add_symbol(state,
+                             (symbol_t){params->as.paramdef.next->as.paramdef.name,
+                                        &params->as.paramdef.next->as.paramdef.type,
+                                        INFO_LOCAL,
+                                        {.local = state->sp}});
+            state->sp += 2;
+          }
+        }
+      } else {
+        state->param = 4 + type_size_aligned(&ast->as.funcdecl.type);
+        compile(params, state);
       }
+
+      for (int i = 0; i < state->scopes[state->scope_num - 1].symbol_num; ++i) {
+        symbol_t s = state->scopes[state->scope_num - 1].symbols[i];
+        printf(SV_FMT " %d\n", SV_UNPACK(s.name.image), s.info.local);
+      }
+
       state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
       state->sp = 0;
       if (ast->as.funcdecl.block) {
@@ -3201,11 +3245,25 @@ void compile(ast_t *ast, state_t *state) {
       state->sp -= size;
     } break;
     case A_FUNCALL:
-      if (ast->as.funcall.params) {
-        compile(ast->as.funcall.params, state);
+      if (is_simple_func(state_find_symbol(state, ast->as.funcall.name)->type)) {
+        state_change_sp(state, type_size_aligned(&ast->type));
+        if (ast->as.funcall.params == NULL) {
+          state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
+          state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
+        } else if (ast->as.funcall.params->as.binary.right == NULL) {
+          state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
+          compile(ast->as.funcall.params, state);
+        } else {
+          compile(ast->as.funcall.params, state);
+        }
+        state_add_ir(state, (ir_t){IR_SIMPLE_CALL, {.sv = ast->as.funcall.name.image}});
+      } else {
+        if (ast->as.funcall.params) {
+          compile(ast->as.funcall.params, state);
+        }
+        state_change_sp(state, type_size_aligned(&ast->type));
+        state_add_ir(state, (ir_t){IR_CALL, {.sv = ast->as.funcall.name.image}});
       }
-      state_change_sp(state, type_size_aligned(&ast->type));
-      state_add_ir(state, (ir_t){IR_CALL, {.sv = ast->as.funcall.name.image}});
       break;
     case A_ARRAY:
       assert(ast->type.as.array.len.kind != ARRAY_LEN_EXPR);
@@ -3599,6 +3657,11 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       break;
     case IR_EXTERN:
       code(compiled, bytecode_with_sv(BEXTERN, 0, ir.arg.sv));
+      break;
+    case IR_SIMPLE_CALL:
+      code(compiled, (bytecode_t){BINST, POPB, {}});
+      code(compiled, (bytecode_t){BINST, POPA, {}});
+      code(compiled, bytecode_with_sv(BINSTRELLABEL, CALLR, ir.arg.sv));
       break;
   }
 
