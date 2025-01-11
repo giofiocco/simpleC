@@ -997,144 +997,101 @@ void ast_dump(ast_t *ast, bool dumptype) {
     return;
   }
 
-  TODO;
-
-  /*
+  printf("%s(", ast_kind_to_string(ast->kind));
   switch (ast->kind) {
     case A_NONE:
       assert(0);
     case A_LIST:
-      printf("LIST(");
+    case A_ASSIGN:
+    case A_PARAM:
+    case A_ARRAY:
+    case A_WHILE:
       ast_dump(ast->as.binary.left, dumptype);
-      printf(" ");
+      printf(", ");
       ast_dump(ast->as.binary.right, dumptype);
-      printf(")");
       break;
     case A_FUNCDECL:
     {
       char *str = type_dump_to_string(&ast->as.funcdecl.type);
-      printf("FUNCDECL(%s " SV_FMT " ", str, SV_UNPACK(ast->as.funcdecl.name.image));
+      printf("%s, " SV_FMT ", ", str, SV_UNPACK(ast->as.funcdecl.name.image));
       free_ptr(str);
       ast_dump(ast->as.funcdecl.params, dumptype);
-      printf(" ");
+      printf(", ");
       ast_dump(ast->as.funcdecl.block, dumptype);
-      printf(")");
+    } break;
+    case A_FUNCDEF:
+    {
+      char *str = type_dump_to_string(&ast->as.funcdef.type);
+      printf("%s, " SV_FMT ", ", str, SV_UNPACK(ast->as.funcdef.name.image));
+      free_ptr(str);
+      ast_dump(ast->as.funcdef.params, dumptype);
     } break;
     case A_PARAMDEF:
     {
       char *str = type_dump_to_string(&ast->as.paramdef.type);
-      printf("PARAMDEF(%s " SV_FMT " ", str, SV_UNPACK(ast->as.paramdef.name.image));
+      printf("%s, " SV_FMT ", ", str, SV_UNPACK(ast->as.paramdef.name.image));
       free_ptr(str);
       ast_dump(ast->as.paramdef.next, dumptype);
-      printf(")");
     } break;
     case A_BLOCK:
-      printf("BLOCK(");
-      ast_dump(ast->as.ast, dumptype);
-      printf(")");
-      break;
     case A_STATEMENT:
-      printf("STATEMENT(");
-      ast_dump(ast->as.ast, dumptype);
-      printf(")");
-      break;
     case A_RETURN:
-      printf("RETURN(");
+    case A_EXTERN:
       ast_dump(ast->as.ast, dumptype);
-      printf(")");
       break;
     case A_BINARYOP:
-      printf("BINARYOP(%s ", token_kind_to_string(ast->as.binaryop.op));
+      printf("%s, ", token_kind_to_string(ast->as.binaryop.op));
       ast_dump(ast->as.binaryop.lhs, dumptype);
-      printf(" ");
+      printf(", ");
       ast_dump(ast->as.binaryop.rhs, dumptype);
-      printf(")");
       break;
     case A_UNARYOP:
-      printf("UNARYOP(%s ", token_kind_to_string(ast->as.unaryop.op));
+      printf("%s, ", token_kind_to_string(ast->as.unaryop.op));
       ast_dump(ast->as.unaryop.arg, dumptype);
-      printf(")");
       break;
     case A_INT:
-      printf("INT(%d)", ast->as.fac.asint);
-      break;
     case A_STRING:
-      printf("STRING(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
-      break;
     case A_SYM:
-      printf("SYM(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
+    case A_ASM:
+      printf(SV_FMT, SV_UNPACK(ast->as.fac.image));
       break;
-    case A_GLOBDECL:
-      printf("GLOB");
-      __attribute__((fallthrough));
     case A_DECL:
+    case A_GLOBDECL:
     {
       char *str = type_dump_to_string(&ast->as.decl.type);
-      printf("DECL(%s " SV_FMT " ", str, SV_UNPACK(ast->as.decl.name.image));
+      printf("%s, " SV_FMT ", ", str, SV_UNPACK(ast->as.decl.name.image));
       free_ptr(str);
       ast_dump(ast->as.decl.expr, dumptype);
-      printf(")");
+      printf(", ");
+      ast_dump(ast->as.decl.array_len, dumptype);
     } break;
-    case A_ASSIGN:
-      printf("ASSIGN(");
-      ast_dump(ast->as.binary.left, dumptype);
-      printf(", ");
-      ast_dump(ast->as.binary.right, dumptype);
-      printf(")");
-      break;
     case A_FUNCALL:
-      printf("FUNCALL(" SV_FMT " ", SV_UNPACK(ast->as.funcall.name.image));
+      printf(SV_FMT ", ", SV_UNPACK(ast->as.funcall.name.image));
       ast_dump(ast->as.funcall.params, dumptype);
-      printf(")");
-      break;
-    case A_PARAM:
-      printf("PARAM(");
-      ast_dump(ast->as.binary.left, dumptype);
-      printf(", ");
-      ast_dump(ast->as.binary.right, dumptype);
-      printf(")");
-      break;
-    case A_ARRAY:
-      printf("ARRAY(");
-      ast_dump(ast->as.binary.left, dumptype);
-      printf(", ");
-      ast_dump(ast->as.binary.right, dumptype);
-      printf(")");
       break;
     case A_TYPEDEF:
     {
       char *str = type_dump_to_string(&ast->as.typedef_.type);
-      printf("TYPEDEF(%s " SV_FMT ")", str, SV_UNPACK(ast->as.typedef_.name.image));
+      printf("%s, " SV_FMT ", ", str, SV_UNPACK(ast->as.typedef_.name.image));
       free_ptr(str);
     } break;
     case A_CAST:
     {
       char *str = type_dump_to_string(&ast->as.cast.target);
-      printf("CAST(%s ", str);
-      ast_dump(ast->as.cast.ast, dumptype);
+      printf("%s, ", str);
       free_ptr(str);
+      ast_dump(ast->as.cast.ast, dumptype);
     } break;
-    case A_ASM:
-      printf("ASM(" SV_FMT ")", SV_UNPACK(ast->as.fac.image));
-      break;
     case A_IF:
-      printf("IF(");
       ast_dump(ast->as.if_.cond, dumptype);
       printf(", ");
       ast_dump(ast->as.if_.then, dumptype);
       printf(", ");
       ast_dump(ast->as.if_.else_, dumptype);
-      printf(")");
-      break;
-    case A_WHILE:
-      printf("WHILE(");
-      ast_dump(ast->as.binary.left, dumptype);
-      printf(", ");
-      ast_dump(ast->as.binary.right, dumptype);
-      printf(")");
       break;
   }
-*/
+  printf(")");
+
   if (dumptype && ast->type.kind != TY_VOID) {
     char *str = type_dump_to_string(&ast->type);
     printf(" {%s <%d>}", str, ast->type.size);
