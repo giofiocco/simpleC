@@ -3595,7 +3595,7 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       TODO;
       break;
     case IR_CALL:
-      code(compiled, bytecode_with_sv(BINSTRELLABEL, CALLR, ir.arg.sv));
+      code(compiled, bytecode_with_sv(BINSTLABEL, CALL, ir.arg.sv));
       break;
     case IR_EXTERN:
       code(compiled, bytecode_with_sv(BEXTERN, 0, ir.arg.sv));
@@ -3653,7 +3653,7 @@ void help(int errorcode) {
           "                (if no module name or module 'all' then it will execute"
           "only the tokenizer)\n"
           " -e <string>    compile the string provided\n"
-          " -o <file>      write output to the file [default is 'out.o']\n"
+          " -o <file>      write output to the file [default is 'out.asm']\n"
           " -O0 | -O       no optimization\n"
           " -O1            enable ASM bytecode optimization\n"
           " -O2            enable IR optimization (and ASM)\n"
