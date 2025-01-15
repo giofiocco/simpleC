@@ -1315,61 +1315,75 @@ typedef struct {
   } arg;
 } ir_t;
 
+char *ir_kind_to_string(ir_kind_t kind) {
+  switch (kind) {
+    case IR_NONE:
+      return "NONE";
+    case IR_SETLABEL:
+      return "SETLABEL";
+    case IR_SETULI:
+      return "SETULI";
+    case IR_JMPZ:
+      return "JMPZ";
+    case IR_JMP:
+      return "JMP";
+    case IR_FUNCEND:
+      return "FUNCEND";
+    case IR_ADDR_LOCAL:
+      return "ADDR_LOCAL";
+    case IR_ADDR_GLOBAL:
+      return "ADDR_GLOBAL";
+    case IR_ADDR_OFFSET:
+      return "ADDR_OFFSET";
+    case IR_READ:
+      return "READ";
+    case IR_WRITE:
+      return "WRITE";
+    case IR_CHANGE_SP:
+      return "CHANGE_SP";
+    case IR_INT:
+      return "INT";
+    case IR_STRING:
+      return "STRING";
+    case IR_OPERATION:
+      return "OPERATION";
+    case IR_MUL:
+      return "MUL";
+    case IR_CALL:
+      return "CALL";
+    case IR_EXTERN:
+      return "EXTERN";
+  }
+  assert(0);
+}
+
 void ir_dump(ir_t ir) {
+  printf("%s ", ir_kind_to_string(ir.kind));
   switch (ir.kind) {
     case IR_NONE:
-      printf("NONE");
+    case IR_FUNCEND:
       break;
     case IR_SETLABEL:
-      printf("SETLABEL " SV_FMT, SV_UNPACK(ir.arg.sv));
+    case IR_CALL:
+    case IR_EXTERN:
+      printf(SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
     case IR_SETULI:
-      printf("SETULI %d", ir.arg.num);
-      break;
     case IR_JMPZ:
-      printf("JMPZ %d", ir.arg.num);
-      break;
     case IR_JMP:
-      printf("JMP %d", ir.arg.num);
-      break;
-    case IR_FUNCEND:
-      printf("FUNCEND");
-      break;
     case IR_ADDR_LOCAL:
-      printf("ADDR LOCAL %d", ir.arg.num);
-      break;
     case IR_ADDR_GLOBAL:
-      printf("ADDR GLOBAL %d", ir.arg.num);
-      break;
     case IR_ADDR_OFFSET:
-      printf("ADDR OFFSET %d", ir.arg.num);
-      break;
     case IR_READ:
-      printf("READ %d", ir.arg.num);
-      break;
     case IR_WRITE:
-      printf("WRITE %d", ir.arg.num);
-      break;
     case IR_CHANGE_SP:
-      printf("CHANGE SP %d", ir.arg.num);
-      break;
     case IR_INT:
-      printf("INT %d", ir.arg.num);
-      break;
     case IR_STRING:
-      printf("STRING %d", ir.arg.num);
+    case IR_MUL:
+      printf("%d", ir.arg.num);
       break;
     case IR_OPERATION:
-      printf("OPERATION %s", instruction_to_string(ir.arg.inst));
-      break;
-    case IR_MUL:
-      printf("MUL %d", ir.arg.num);
-      break;
-    case IR_CALL:
-      printf("CALL " SV_FMT, SV_UNPACK(ir.arg.sv));
-      break;
-    case IR_EXTERN:
-      printf("EXTERN " SV_FMT, SV_UNPACK(ir.arg.sv));
+      printf("%s", instruction_to_string(ir.arg.inst));
       break;
   }
   printf("\n");
