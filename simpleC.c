@@ -1286,24 +1286,26 @@ typedef struct {
 
 typedef enum {
   IR_NONE,
-  IR_SETLABEL,    // + sv
-  IR_SETULI,      // + num
-  IR_JMPZ,        // + num
-  IR_JMP,         // + num
-  IR_FUNCEND,     //
-  IR_ADDR_LOCAL,  // + num
-  IR_ADDR_GLOBAL, // + num
-  IR_ADDR_OFFSET, // + num
-  IR_READ,        // + num
-  IR_WRITE,       // + num
-  IR_CHANGE_SP,   // + num
-  IR_INT,         // + num
-  IR_STRING,      // + num
-  IR_OPERATION,   // + inst
-  IR_MUL,         // + num
-  IR_CALL,        // + sv
-  IR_EXTERN,      // + sv
-  IR_SIMPLE_CALL, // + sv
+  IR_SETLABEL,           // + sv
+  IR_SETULI,             // + num
+  IR_JMPZ,               // + num
+  IR_JMP,                // + num
+  IR_FUNCEND,            //
+  IR_ADDR_LOCAL,         // + num
+  IR_ADDR_GLOBAL,        // + num
+  IR_ADDR_OFFSET,        // + num
+  IR_READ,               // + num
+  IR_WRITE,              // + num
+  IR_CHANGE_SP,          // + num
+  IR_INT,                // + num
+  IR_STRING,             // + num
+  IR_OPERATION,          // + inst
+  IR_MUL,                // + num
+  IR_CALL,               // + sv
+  IR_EXTERN,             // + sv
+  IR_SMALLFUNC_CALL,     // + sv
+  IR_SMALLFUNC_END,      // + num
+  IR_SMALLFUNC_SETLABEL, // + sv
 } ir_kind_t;
 
 typedef struct {
@@ -1315,66 +1317,88 @@ typedef struct {
   } arg;
 } ir_t;
 
+char *ir_kind_to_string(ir_kind_t kind) {
+  switch (kind) {
+    case IR_NONE:
+      return "NONE";
+    case IR_SETLABEL:
+      return "SETLABEL";
+    case IR_SETULI:
+      return "SETULI";
+    case IR_JMPZ:
+      return "JMPZ";
+    case IR_JMP:
+      return "JMP";
+    case IR_FUNCEND:
+      return "FUNCEND";
+    case IR_ADDR_LOCAL:
+      return "ADDR_LOCAL";
+    case IR_ADDR_GLOBAL:
+      return "ADDR_GLOBAL";
+    case IR_ADDR_OFFSET:
+      return "ADDR_OFFSET";
+    case IR_READ:
+      return "READ";
+    case IR_WRITE:
+      return "WRITE";
+    case IR_CHANGE_SP:
+      return "CHANGE_SP";
+    case IR_INT:
+      return "INT";
+    case IR_STRING:
+      return "STRING";
+    case IR_OPERATION:
+      return "OPERATION";
+    case IR_MUL:
+      return "MUL";
+    case IR_CALL:
+      return "CALL";
+    case IR_EXTERN:
+      return "EXTERN";
+    case IR_SMALLFUNC_CALL:
+      return "SMALLFUNC_CALL";
+    case IR_SMALLFUNC_END:
+      return "SMALLFUNC_END";
+    case IR_SMALLFUNC_SETLABEL:
+      return "SMALLFUNC_SETLABEL";
+  }
+  assert(0);
+}
+
 void ir_dump(ir_t ir) {
+  printf("%s ", ir_kind_to_string(ir.kind));
+
   switch (ir.kind) {
     case IR_NONE:
-      printf("NONE");
+    case IR_FUNCEND:
       break;
     case IR_SETLABEL:
-      printf("SETLABEL " SV_FMT, SV_UNPACK(ir.arg.sv));
+    case IR_CALL:
+    case IR_EXTERN:
+    case IR_SMALLFUNC_CALL:
+    case IR_SMALLFUNC_SETLABEL:
+      printf(SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
     case IR_SETULI:
-      printf("SETULI %d", ir.arg.num);
-      break;
     case IR_JMPZ:
-      printf("JMPZ %d", ir.arg.num);
-      break;
     case IR_JMP:
-      printf("JMP %d", ir.arg.num);
-      break;
-    case IR_FUNCEND:
-      printf("FUNCEND");
-      break;
     case IR_ADDR_LOCAL:
-      printf("ADDR LOCAL %d", ir.arg.num);
-      break;
     case IR_ADDR_GLOBAL:
-      printf("ADDR GLOBAL %d", ir.arg.num);
-      break;
     case IR_ADDR_OFFSET:
-      printf("ADDR OFFSET %d", ir.arg.num);
-      break;
     case IR_READ:
-      printf("READ %d", ir.arg.num);
-      break;
     case IR_WRITE:
-      printf("WRITE %d", ir.arg.num);
-      break;
     case IR_CHANGE_SP:
-      printf("CHANGE SP %d", ir.arg.num);
-      break;
     case IR_INT:
-      printf("INT %d", ir.arg.num);
-      break;
     case IR_STRING:
-      printf("STRING %d", ir.arg.num);
+    case IR_MUL:
+    case IR_SMALLFUNC_END:
+      printf("%d", ir.arg.num);
       break;
     case IR_OPERATION:
-      printf("OPERATION %s", instruction_to_string(ir.arg.inst));
-      break;
-    case IR_MUL:
-      printf("MUL %d", ir.arg.num);
-      break;
-    case IR_CALL:
-      printf("CALL " SV_FMT, SV_UNPACK(ir.arg.sv));
-      break;
-    case IR_EXTERN:
-      printf("EXTERN " SV_FMT, SV_UNPACK(ir.arg.sv));
-      break;
-    case IR_SIMPLE_CALL:
-      printf("SIMPLE_CALL " SV_FMT, SV_UNPACK(ir.arg.sv));
+      printf("%s", instruction_to_string(ir.arg.inst));
       break;
   }
+
   printf("\n");
 }
 
@@ -1384,6 +1408,7 @@ typedef struct {
   scope_t *scope;
   int sp;
   int param;
+  bool is_small_func;
   int uli; // unique label id
   compiled_t compiled;
   ir_t irs[IR_MAX];
@@ -2990,7 +3015,7 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
   }
 }
 
-bool is_simple_func(type_t *type) {
+bool is_small_function(type_t *type) {
   assert(type);
 
   assert(type->kind == TY_FUNC);
@@ -3040,7 +3065,7 @@ void compile(ast_t *ast, state_t *state) {
 
       ast_t *params = ast->as.funcdecl.params;
 
-      if (is_simple_func(&ast->type)) {
+      if (is_small_function(&ast->type)) {
         if (params) {
           state_add_symbol(state,
                            (symbol_t){params->as.paramdef.name,
@@ -3057,22 +3082,21 @@ void compile(ast_t *ast, state_t *state) {
             state->sp += 2;
           }
         }
+        state->is_small_func = true;
+        state_add_ir(state, (ir_t){IR_SMALLFUNC_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
       } else {
         state->param = 4 + type_size_aligned(&ast->as.funcdecl.type);
         compile(params, state);
+        state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
+        state->sp = 0;
       }
 
-      for (int i = 0; i < state->scopes[state->scope_num - 1].symbol_num; ++i) {
-        symbol_t s = state->scopes[state->scope_num - 1].symbols[i];
-        printf(SV_FMT " %d\n", SV_UNPACK(s.name.image), s.info.local);
-      }
-
-      state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
-      state->sp = 0;
       if (ast->as.funcdecl.block) {
         compile(ast->as.funcdecl.block->as.ast, state);
       }
-      if (state->irs[state->ir_num - 1].kind != IR_FUNCEND) {
+      state->is_small_func = false;
+      if (state->irs[state->ir_num - 1].kind != IR_FUNCEND
+          && state->irs[state->ir_num - 1].kind != IR_SMALLFUNC_END) {
         state_change_sp(state, -state->sp);
         state_add_ir(state, (ir_t){IR_FUNCEND, {}});
       }
@@ -3102,15 +3126,21 @@ void compile(ast_t *ast, state_t *state) {
       }
     } break;
     case A_RETURN:
-    {
-      compile(ast->as.ast, state);
-      int size = type_size_aligned(&ast->as.ast->type);
-      state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp + 2}});
-      state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
-      state->sp -= size;
-      state_change_sp(state, -state->sp);
-      state_add_ir(state, (ir_t){IR_FUNCEND, {}});
-    } break;
+      if (ast->as.ast) {
+        compile(ast->as.ast, state);
+        int size = type_size_aligned(&ast->as.ast->type);
+        state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp + 2}});
+        state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
+        state->sp -= size;
+        state_change_sp(state, -state->sp);
+        if (state->is_small_func) {
+          state_add_ir(state, (ir_t){IR_SMALLFUNC_END, {.num = ast->as.ast->type.size}});
+        }
+      } else {
+        state_change_sp(state, -state->sp);
+        state_add_ir(state, (ir_t){IR_FUNCEND, {}});
+      }
+      break;
     case A_BINARYOP:
       switch (ast->as.binaryop.op) {
         case T_DOT:
@@ -3245,7 +3275,7 @@ void compile(ast_t *ast, state_t *state) {
       state->sp -= size;
     } break;
     case A_FUNCALL:
-      if (is_simple_func(state_find_symbol(state, ast->as.funcall.name)->type)) {
+      if (is_small_function(state_find_symbol(state, ast->as.funcall.name)->type)) {
         state_change_sp(state, type_size_aligned(&ast->type));
         if (ast->as.funcall.params == NULL) {
           state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
@@ -3256,7 +3286,7 @@ void compile(ast_t *ast, state_t *state) {
         } else {
           compile(ast->as.funcall.params, state);
         }
-        state_add_ir(state, (ir_t){IR_SIMPLE_CALL, {.sv = ast->as.funcall.name.image}});
+        state_add_ir(state, (ir_t){IR_SMALLFUNC_CALL, {.sv = ast->as.funcall.name.image}});
       } else {
         if (ast->as.funcall.params) {
           compile(ast->as.funcall.params, state);
@@ -3658,10 +3688,21 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
     case IR_EXTERN:
       code(compiled, bytecode_with_sv(BEXTERN, 0, ir.arg.sv));
       break;
-    case IR_SIMPLE_CALL:
+    case IR_SMALLFUNC_CALL:
       code(compiled, (bytecode_t){BINST, POPB, {}});
       code(compiled, (bytecode_t){BINST, POPA, {}});
       code(compiled, bytecode_with_sv(BINSTRELLABEL, CALLR, ir.arg.sv));
+      break;
+    case IR_SMALLFUNC_END:
+      if (ir.arg.num > 0) {
+        code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = 4}});
+      }
+      code(compiled, (bytecode_t){BINST, RET, {}});
+      break;
+    case IR_SMALLFUNC_SETLABEL:
+      code(compiled, bytecode_with_sv(BSETLABEL, 0, ir.arg.sv));
+      code(compiled, (bytecode_t){BINST, PUSHB, {}});
+      code(compiled, (bytecode_t){BINST, PUSHA, {}});
       break;
   }
 
@@ -3702,6 +3743,15 @@ void optimize_asm(bytecode_t *bs, int *b_count) {
                && is_inst(bs, b_count, i + 1, CMPA)) {
       *b_count -= 1;
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
+      i = 0;
+    } else if (is_inst(bs, b_count, i, PUSHA)
+               && (is_inst(bs, b_count, i + 1, RAM_A) || is_inst(bs, b_count, i + 1, RAM_AL))
+               && is_inst(bs, b_count, i + 2, POPB)
+               && (is_inst(bs, b_count, i + 3, SUM) || is_inst(bs, b_count, i + 3, SUB))) {
+      // TODO: expand to other options
+      *b_count -= 1;
+      bs[i] = (bytecode_t){BINST, A_B, {}};
+      memcpy(bs + i + 2, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     }
   }

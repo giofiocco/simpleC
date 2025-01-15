@@ -1,6 +1,25 @@
 # Simple C
 
-A compiler for a subset of `C`
+A subset of `C` compiler for [Jaris](https://github.com/giofiocco/jaris) assembly.
+
+The file will be tokenized, white spaces are skipped (tabs are treated as single space), tokens that can be either SYM or a keyword are assigned to the keyword.
+
+Tokens ar then parsed to an AST with the grammar defined in the Grammar section.
+The grammar of the recursive parser, each rule are defined as `- rule-name ::= match`
+Where the match can contain another rule or tokens (uppercase as in the Token section) and the other symbols works as follows:
+
+- parenthesis for groupping
+- `a | b`: rule `a` or rule `b`
+- `a*` rule a zero or multiple times
+- `a?` rule `a` zero or one time
+
+The parser will look for `global` untill it reaches the end of the file.
+
+Each node of the AST is then assigned a type (coherent with the rest) through the typecheck phase.
+
+The AST is compiled to IR (intermediate rappresentation) to be able to generate better assembly code easier.
+
+Is possible to enable optimizzation to the AST (after typecheck), to the IR or to the ASM code.
 
 # Tokens
 
@@ -57,11 +76,9 @@ Multi-line comments: `/* ... */`
 - code ::= block | if | for | while | statement
 - statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm )? SEMICOLON
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
-
 - expr ::= NOT? comp
 - comp ::= atom ( ( EQ | NEQ ) atom )?
 - atom ::= term ( PLUS term | MINUS term )\*
-
 - term ::= unary ( STAR unary | SLASH unary )\*
 - unary ::= PLUS unary | MINUS unary | AND unary | STAR unary | access SQO expr SQC | access
 - access ::= fac DOT SYM | fac
@@ -95,6 +112,12 @@ Multi-line comments: `/* ... */`
 - MUL
 - CALL
 
+# AST Optimization
+
+- IF(BINARYOP(EQ,a,b), then, else) -> IF(BINARYOP(MINUS,a,b), else, then)
+- IF(BINARYOP(NEQ,a,b), then, else) -> IF(BINARYOP(MINUS,a,b), then, else)
+- IF(UNARYOP(NOT,a), then, else) -> IF(a, else, then)
+
 # IR Optimization
 
 - CHANGE_SP(0) -> nothing
@@ -105,3 +128,12 @@ Multi-line comments: `/* ... */`
 - INT(x) INT(y) OPERATION(SUM) -> INT(x + y)
 - INT(x) INT(y) OPERATION(SUB) -> INT(x - y)
 - ADDR_LOCAL(2) READ(x) ADDR_LOCAL(y) WRITE(x) CHANGE_SP(z) if -z >= x -> ADDR_LOCAL(y-x) WRITE(x) CHANGE_SP(z+x)
+
+# ASM Optimization
+
+- PEEKAR 2 -> PEEKA
+- PUSHA POPA -> nothing
+- PUSHA POPB -> A_B
+- RAM_A/B x (x < 256) -> RAM_AL/BL x
+- (SUM|SUB) CMPA -> SUM|SUB
+- PUSHA RAM_A/AL POPB (SUM|SUB) -> A_B RAM_A/AL (SUM|SUB)
