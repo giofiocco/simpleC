@@ -30,6 +30,7 @@ tests errors
 
 # Compiler
 
+- [ ] proper compilation for CALL vs CALLR
 - [ ] compile_data array of str or ptr
 - [ ] array with expression as length
 
@@ -51,7 +52,7 @@ tests errors
 - [ ] remove ifs that do nothing
 - [ ] remove dead or unreachable code
 - [ ] A_SP SP_A -> A_SP
-- [ ] RAM_A A_B RAM_A SUM A_B -> RAM_A RAM_B SUM A_B
+- [ ] RAM_A A_B -> RAM_B
 
 # Roadmap
 

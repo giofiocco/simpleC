@@ -9,7 +9,6 @@
 #include <string.h>
 
 #define SV_IMPLEMENTATION
-// #include "jaris/files.h"
 #include "jaris/instructions.h"
 
 #define TODO                          \
@@ -2248,7 +2247,7 @@ ast_t *parse_funcdef(tokenizer_t *tokenizer) {
 
   token_expect(tokenizer, T_SEMICOLON);
 
-  return ast_malloc((ast_t){A_FUNCDECL,
+  return ast_malloc((ast_t){A_FUNCDEF,
                             location_union(start, param ? param->loc : name.loc),
                             {0},
                             {.funcdef = {type, name, param}}});
@@ -3293,7 +3292,6 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.cast.ast, state);
       }
       break;
-
     case A_ASM:
       TODO;
       break;
@@ -3653,6 +3651,15 @@ void optimize_asm(bytecode_t *bs, int *b_count) {
                && is_inst(bs, b_count, i + 1, CMPA)) {
       *b_count -= 1;
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
+      i = 0;
+    } else if (is_inst(bs, b_count, i, PUSHA)
+               && (is_inst(bs, b_count, i + 1, RAM_A) || is_inst(bs, b_count, i + 1, RAM_AL))
+               && is_inst(bs, b_count, i + 2, POPB)
+               && (is_inst(bs, b_count, i + 3, SUM) || is_inst(bs, b_count, i + 3, SUB))) {
+      // TODO: expand to other operations
+      *b_count -= 1;
+      bs[i] = (bytecode_t){BINST, A_B, {}};
+      memcpy(bs + i + 2, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     }
   }

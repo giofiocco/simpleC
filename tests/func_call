@@ -41,7 +41,7 @@ INST         POPB
 INST         SUM
 INST         PUSHA
 INST         DECSP
-INSTRELLABEL CALLR add
+INSTLABEL    CALL add
 INST         INCSP
 INST         INCSP
 INST         INCSP
