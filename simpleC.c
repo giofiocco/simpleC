@@ -2388,7 +2388,13 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
       break;
     case A_IF:
       assert(ast->as.if_.cond);
-      typecheck_expandable(ast->as.if_.cond, state, (type_t){TY_INT, 2, {}});
+      typecheck(ast->as.if_.cond, state);
+      ast_dump(ast, 1);
+      if (ast->as.if_.cond->type.kind != TY_INT && ast->as.if_.cond->type.kind != TY_PTR) {
+        eprintf(ast->as.if_.cond->loc,
+                "expected INT or PTR, found '%s'",
+                type_dump_to_string(&ast->as.if_.cond->type));
+      }
       if (ast->as.if_.then) {
         typecheck_funcbody(ast->as.if_.then, state, ret);
       }

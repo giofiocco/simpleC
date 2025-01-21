@@ -1,5 +1,3 @@
-INCB
-
 typedef array
 struct with array
 
@@ -23,7 +21,6 @@ tests optimizzations
 
 # Typechecker
 
-- [ ] if cond ptr
 - [ ] warn if no return in some function
 - [ ] return needs type VOID?
 - [ ] alias of alias?
