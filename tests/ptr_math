@@ -36,18 +36,16 @@ INST         DECSP
 INST         SP_A
 INST         INCA
 INST         INCA
-INST         PUSHA
+INST         A_B
 INSTHEX      RAM_AL 0x02
-INST         POPB
 INST         SUM
 INST         A_B
 INST         rB_A
 INST         PUSHA
 INST         INCSP
 INSTLABEL    RAM_A _000
-INST         PUSHA
+INST         A_B
 INSTHEX      RAM_AL 0x08
-INST         POPB
 INST         SUM
 INST         A_B
 INSTHEX      RAM_AL 0x02

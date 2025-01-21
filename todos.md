@@ -1,4 +1,3 @@
-==, != and ! in while
 INCB
 
 typedef array
@@ -8,6 +7,7 @@ better documentation for ir
 specify in ast_kind_t which ast_t.as use
 
 tests errors
+tests optimizzations
 
 # Tokenizer
 
@@ -48,11 +48,17 @@ tests errors
 
 # OPT
 
+- [ ] condition with constants (like if (2) {} else {})
 - [ ] ptail opt
 - [ ] remove ifs that do nothing
 - [ ] remove dead or unreachable code
 - [ ] A_SP SP_A -> A_SP
 - [ ] RAM_A A_B -> RAM_B
+
+# README
+
+- [ ] add ast
+- [ ] add ir args
 
 # Roadmap
 

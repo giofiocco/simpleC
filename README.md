@@ -117,6 +117,8 @@ Multi-line comments: `/* ... */`
 - IF(BINARYOP(EQ,a,b), then, else) -> IF(BINARYOP(MINUS,a,b), else, then)
 - IF(BINARYOP(NEQ,a,b), then, else) -> IF(BINARYOP(MINUS,a,b), then, else)
 - IF(UNARYOP(NOT,a), then, else) -> IF(a, else, then)
+- WHILE(BINARYOP(EQ,a,b), then, else) -> WHILE(UNARY(NOT, BINARYOP(MINUS,a,b), else, then))
+- WHILE(BINARYOP(NEQ,a,b), then, else) -> WHILE(BINARYOP(MINUS,a,b), then, else)
 
 # IR Optimization
 
@@ -135,5 +137,5 @@ Multi-line comments: `/* ... */`
 - PUSHA POPA -> nothing
 - PUSHA POPB -> A_B
 - RAM_A/B x (x < 256) -> RAM_AL/BL x
-- (SUM|SUB) CMPA -> SUM|SUB
-- PUSHA RAM_A/AL POPB (SUM|SUB) -> A_B RAM_A/AL (SUM|SUB)
+- (SUM | SUB) CMPA -> (SUM | SUB)
+- PUSHA (RAM_A | RAM_AL | PEEKAR) POPB -> A_B (RAM_A | RAM_LA | PEEAKR)

@@ -1,0 +1,43 @@
+params: -D com -O3
+exitcode: 0
+code:
+int main() {
+  while (3 != 1) {
+  }
+  while (!2) {
+  }
+  while (1 == 5) {
+  }
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INST         DECSP
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+SETLABEL     _000
+INSTHEX      RAM_AL 0x02
+INST         CMPA
+INSTRELLABEL JMPRZ _001
+INSTRELLABEL JMPR _000
+SETLABEL     _001
+SETLABEL     _002
+INSTHEX      RAM_AL 0x02
+INST         CMPA
+INSTRELLABEL JMPRNZ _003
+INSTRELLABEL JMPR _002
+SETLABEL     _003
+SETLABEL     _004
+INSTHEX2     RAM_A 0xFFFC
+INST         CMPA
+INSTRELLABEL JMPRZ _005
+INSTRELLABEL JMPR _004
+SETLABEL     _005
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         RET

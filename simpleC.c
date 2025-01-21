@@ -1289,6 +1289,7 @@ typedef enum {
   IR_SETLABEL,    // + sv
   IR_SETULI,      // + num
   IR_JMPZ,        // + num
+  IR_JMPNZ,       // + num
   IR_JMP,         // + num
   IR_FUNCEND,     //
   IR_ADDR_LOCAL,  // + num
@@ -1324,6 +1325,8 @@ char *ir_kind_to_string(ir_kind_t kind) {
       return "SETULI";
     case IR_JMPZ:
       return "JMPZ";
+    case IR_JMPNZ:
+      return "JMPNZ";
     case IR_JMP:
       return "JMP";
     case IR_FUNCEND:
@@ -1369,6 +1372,7 @@ void ir_dump(ir_t ir) {
       break;
     case IR_SETULI:
     case IR_JMPZ:
+    case IR_JMPNZ:
     case IR_JMP:
     case IR_ADDR_LOCAL:
     case IR_ADDR_GLOBAL:
@@ -2134,7 +2138,7 @@ ast_t *parse_while(tokenizer_t *tokenizer) {
   ast_t *body = parse_block(tokenizer);
 
   return ast_malloc(
-      (ast_t){A_WHILE, location_union(start, body->loc), {}, {.binary = {cond, body}}});
+      (ast_t){A_WHILE, location_union(start, tokenizer->loc), {}, {.binary = {cond, body}}});
 }
 
 ast_t *parse_code(tokenizer_t *tokenizer) {
@@ -2755,9 +2759,8 @@ void optimize_ast(ast_t **astp) {
       break;
     case A_LIST:
     case A_ASSIGN:
-    case A_PARAM:
     case A_ARRAY:
-    case A_WHILE:
+    case A_PARAM:
       optimize_ast(&ast->as.binary.left);
       optimize_ast(&ast->as.binary.right);
       break;
@@ -2816,6 +2819,21 @@ void optimize_ast(ast_t **astp) {
       if (ast->as.if_.else_) {
         optimize_ast(&ast->as.if_.else_);
       }
+    } break;
+    case A_WHILE:
+    {
+      ast_t *cond = ast->as.binary.left;
+      if (cond->kind == A_BINARYOP
+          && (cond->as.binaryop.op == T_EQ || cond->as.binaryop.op == T_NEQ)) {
+
+        cond->as.binaryop.op = T_MINUS;
+        if (cond->as.binaryop.op == T_EQ) {
+          ast->as.binary.left =
+              ast_malloc((ast_t){A_UNARYOP, cond->loc, cond->type, {.unaryop = {T_NOT, cond}}});
+        }
+      }
+      optimize_ast(&cond);
+      optimize_ast(&ast->as.binary.right);
     } break;
   }
 }
@@ -3322,9 +3340,16 @@ void compile(ast_t *ast, state_t *state) {
       int a = state->uli++;
       int b = state->uli++;
       state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
-      compile(ast->as.binary.left, state);
-      state_add_ir(state, (ir_t){IR_JMPZ, {.num = b}});
-      compile(ast->as.binary.right, state);
+      if (ast->as.binary.left->kind == A_UNARYOP && ast->as.binary.left->as.unaryop.op == T_NOT) {
+        compile(ast->as.binary.left->as.unaryop.arg, state);
+        state_add_ir(state, (ir_t){IR_JMPNZ, {.num = b}});
+      } else {
+        compile(ast->as.binary.left, state);
+        state_add_ir(state, (ir_t){IR_JMPZ, {.num = b}});
+      }
+      if (ast->as.binary.right) {
+        compile(ast->as.binary.right, state);
+      }
       state_add_ir(state, (ir_t){IR_JMP, {.num = a}});
       state_add_ir(state, (ir_t){IR_SETULI, {.num = b}});
     } break;
@@ -3447,9 +3472,10 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       code(compiled, bytecode_uli(BSETLABEL, 0, ir.arg.num));
       break;
     case IR_JMPZ:
+    case IR_JMPNZ:
       code(compiled, (bytecode_t){BINST, POPA, {}});
       code(compiled, (bytecode_t){BINST, CMPA, {}});
-      code(compiled, bytecode_uli(BINSTRELLABEL, JMPRZ, ir.arg.num));
+      code(compiled, bytecode_uli(BINSTRELLABEL, ir.kind == IR_JMPZ ? JMPRZ : JMPRNZ, ir.arg.num));
       break;
     case IR_JMP:
       code(compiled, bytecode_uli(BINSTRELLABEL, JMPR, ir.arg.num));
@@ -3604,7 +3630,14 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
       break;
     case IR_MUL:
-      TODO;
+      if (ir.arg.num != 1) {
+        code(compiled, (bytecode_t){BINST, POPA, {}});
+        assert(ir.arg.num % 2 == 0);
+        for (int i = 0; i < ir.arg.num; i += 2) {
+          code(compiled, (bytecode_t){BINST, SHL, {}});
+        }
+        code(compiled, (bytecode_t){BINST, PUSHA, {}});
+      }
       break;
     case IR_CALL:
       code(compiled, bytecode_with_sv(BINSTLABEL, CALL, ir.arg.sv));
@@ -3653,10 +3686,9 @@ void optimize_asm(bytecode_t *bs, int *b_count) {
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     } else if (is_inst(bs, b_count, i, PUSHA)
-               && (is_inst(bs, b_count, i + 1, RAM_A) || is_inst(bs, b_count, i + 1, RAM_AL))
-               && is_inst(bs, b_count, i + 2, POPB)
-               && (is_inst(bs, b_count, i + 3, SUM) || is_inst(bs, b_count, i + 3, SUB))) {
-      // TODO: expand to other operations
+               && (is_inst(bs, b_count, i + 1, RAM_A) || is_inst(bs, b_count, i + 1, RAM_AL)
+                   || is_inst(bs, b_count, i + 1, PEEKAR))
+               && is_inst(bs, b_count, i + 2, POPB)) {
       *b_count -= 1;
       bs[i] = (bytecode_t){BINST, A_B, {}};
       memcpy(bs + i + 2, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
