@@ -7,6 +7,8 @@ specify in ast_kind_t which ast_t.as use
 tests errors
 tests optimizzations
 
+maybe do better ir and keep track of SP in compile_ir?
+
 # Tokenizer
 
 - [ ] binary litterals
@@ -14,7 +16,7 @@ tests optimizzations
 
 # Parser
 
-- [ ] in funcdef etc sv_t instead of token?
+- [ ] in funcdef etc sv_t instead of token? (maybe not)
 - [ ] int a,b;
 - [ ] int \*\*a;
 - [ ] struct point a; only in structdef?
@@ -22,7 +24,6 @@ tests optimizzations
 # Typechecker
 
 - [ ] warn if no return in some function
-- [ ] return needs type VOID?
 - [ ] alias of alias?
 
 # Compiler

@@ -95,6 +95,9 @@ typedef struct {
   unsigned int len;
 } location_t;
 
+#define LOCATION_FMT             "%s:%d:%d"
+#define LOCATION_UNPACK(__loc__) (__loc__).filename, (__loc__).row, (__loc__).col
+
 location_t location_union(location_t a, location_t b) {
   location_t c = a;
   if (a.row != b.row) {
@@ -1484,10 +1487,9 @@ void state_add_symbol(state_t *state, symbol_t symbol) {
   for (int i = 0; i < state->scope->symbol_num; ++i) {
     if (sv_eq(state->scope->symbols[i].name.image, symbol.name.image)) {
       eprintf(symbol.name.loc,
-              "redefinition of symbol '" SV_FMT "', defined at %d:%d",
+              "redefinition of symbol '" SV_FMT "', defined at " LOCATION_FMT,
               SV_UNPACK(symbol.name.image),
-              state->scope->symbols[i].name.loc.row,
-              state->scope->symbols[i].name.loc.col);
+              LOCATION_UNPACK(state->scope->symbols[i].name.loc));
     }
   }
 
@@ -2389,7 +2391,6 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
     case A_IF:
       assert(ast->as.if_.cond);
       typecheck(ast->as.if_.cond, state);
-      ast_dump(ast, 1);
       if (ast->as.if_.cond->type.kind != TY_INT && ast->as.if_.cond->type.kind != TY_PTR) {
         eprintf(ast->as.if_.cond->loc,
                 "expected INT or PTR, found '%s'",
