@@ -1564,7 +1564,7 @@ void state_solve_type_alias(state_t *state, type_t *type) {
   }
 }
 
-void code_dump(compiled_t *compiled) {
+void dump_code(compiled_t *compiled) {
   assert(compiled);
 
   for (int i = 0; i < compiled->data_num; ++i) {
@@ -2994,6 +2994,16 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
       }
     } break;
     case A_ARRAY:
+      if (type_is_kind(ast->type.as.array.type, TY_PTR)) {
+        TODO;
+        // int element_uli = state->uli++;
+        // data(compiled, bytecode_uli(BLABEL, 0, element_uli));
+        // if (ast->as.binary.right) {
+        //   compile_data(ast->as.binary.right, state, uli, offset +
+        //   ast->as.binary.left->type.size);
+        // }
+        // compile_data(ast->as.binary.left, state, element_uli, offset);
+      }
       compile_data(ast->as.binary.left, state, uli, offset);
       if (ast->as.binary.right) {
         compile_data(ast->as.binary.right, state, uli, offset + ast->as.binary.left->type.size);
@@ -3997,7 +4007,7 @@ int main(int argc, char **argv) {
     }
     if ((debug >> M_COM) & 1) {
       printf("ASSEMBLY:\n");
-      code_dump(&state.compiled);
+      dump_code(&state.compiled);
     }
     if ((exitat >> M_COM) & 1) {
       exit(0);
