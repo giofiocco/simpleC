@@ -1,12 +1,9 @@
 params: -D com
 exitcode: 0
 code:
-int add(int a, int b) {
-  return a + b;
-}
-
 int main() {
-  add(2 + 3, 1);
+  -10;
+  1+2 << 3;
 }
 output:
 ASSEMBLY:
@@ -18,32 +15,26 @@ INST         PUSHA
 INSTRELLABEL CALLR main
 INST         POPA
 INSTLABEL    CALL exit
-SETLABEL     add
-INSTHEX      PEEKAR 0x06
-INST         PUSHA
-INSTHEX      PEEKAR 0x0A
-INST         PUSHA
-INST         POPA
-INST         POPB
-INST         SUM
-INST         PUSHA
-INST         POPA
-INSTHEX      PUSHAR 0x04
-INST         RET
 SETLABEL     main
+INSTHEX2     RAM_A 0xFFF6
+INST         PUSHA
+INST         INCSP
 INSTHEX      RAM_AL 0x01
 INST         PUSHA
 INSTHEX      RAM_AL 0x02
 INST         PUSHA
-INSTHEX      RAM_AL 0x03
-INST         PUSHA
 INST         POPA
 INST         POPB
 INST         SUM
 INST         PUSHA
-INST         DECSP
-INSTLABEL    CALL add
-INST         INCSP
-INST         INCSP
+INST         POPA
+INST         SHL
+INST         PUSHA
+INST         POPA
+INST         SHL
+INST         PUSHA
+INST         POPA
+INST         SHL
+INST         PUSHA
 INST         INCSP
 INST         RET

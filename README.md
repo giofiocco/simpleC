@@ -59,6 +59,8 @@ Is possible to enable optimizzation to the AST (after typecheck), to the IR or t
 - FOR: `for`
 - WHILE: `while`
 - EXTERN: `extern`
+- SHL: `<<`
+- SHR: `>>`
 
 ## Comments
 
@@ -78,7 +80,8 @@ Multi-line comments: `/* ... */`
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )?
 - expr ::= NOT? comp
 - comp ::= atom ( ( EQ | NEQ ) atom )?
-- atom ::= term ( PLUS term | MINUS term )\*
+- atom ::= atom1 ( ( SHL | SHR ) atom1 )?
+- atom1 ::= term ( PLUS term | MINUS term )\*
 - term ::= unary ( STAR unary | SLASH unary )\*
 - unary ::= PLUS unary | MINUS unary | AND unary | STAR unary | access SQO expr SQC | access
 - access ::= fac DOT SYM | fac

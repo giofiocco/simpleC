@@ -14,7 +14,8 @@ ASSEMBLY:
 EXTERN       exit
 GLOBAL       _start
 SETLABEL     _start
-INST         DECSP
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
 INSTRELLABEL CALLR main
 INST         POPA
 INSTLABEL    CALL exit

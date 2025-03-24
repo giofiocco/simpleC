@@ -86,6 +86,8 @@ typedef enum {
   T_FOR,
   T_WHILE,
   T_EXTERN,
+  T_SHL,
+  T_SHR,
 } token_kind_t;
 
 typedef struct {
@@ -235,6 +237,17 @@ token_t token_next(tokenizer_t *tokenizer) {
       tokenizer->loc.line.len = row_end - tokenizer->buffer;
       return token_next(tokenizer);
     }
+    case '<':
+    case '>':
+      if (tokenizer->buffer[1] == tokenizer->buffer[0]) {
+        tokenizer->loc.len = 2;
+        token = (token_t){tokenizer->buffer[0] == '<' ? T_SHL : T_SHR, {tokenizer->buffer, 2}, tokenizer->loc, 0};
+        tokenizer->buffer += 2;
+        tokenizer->loc.col += 2;
+      } else {
+        TODO;
+      }
+      break;
     case '/':
       if (tokenizer->buffer[1] == '/') {
         while (tokenizer->buffer[0] != '\n') {
@@ -464,6 +477,10 @@ char *token_kind_to_string(token_kind_t kind) {
       return "WHILE";
     case T_EXTERN:
       return "EXTERN";
+    case T_SHL:
+      return "SHL";
+    case T_SHR:
+      return "SHR";
   }
   assert(0);
 }
@@ -1894,7 +1911,7 @@ ast_t *parse_term(tokenizer_t *tokenizer) {
   return a;
 }
 
-ast_t *parse_atom(tokenizer_t *tokenizer) {
+ast_t *parse_atom1(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   ast_t *a = parse_term(tokenizer);
@@ -1905,6 +1922,21 @@ ast_t *parse_atom(tokenizer_t *tokenizer) {
     ast_t *b = parse_term(tokenizer);
     a = ast_malloc(
         (ast_t){A_BINARYOP, location_union(a->loc, b->loc), {0}, {.binaryop = {token.kind, a, b}}});
+  }
+
+  return a;
+}
+
+ast_t *parse_atom(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  ast_t *a = parse_atom1(tokenizer);
+
+  token_t t = token_peek(tokenizer);
+  if (token_next_if_kind(tokenizer, T_SHL) || token_next_if_kind(tokenizer, T_SHR)) {
+    ast_t *b = parse_atom1(tokenizer);
+    a = ast_malloc(
+        (ast_t){A_BINARYOP, location_union(a->loc, b->loc), {}, {.binaryop = {t.kind, a, b}}});
   }
 
   return a;
@@ -2560,6 +2592,12 @@ void typecheck(ast_t *ast, state_t *state) {
                     type_dump_to_string(&ast->as.binaryop.rhs->type));
           }
         } break;
+        case T_SHR:
+        case T_SHL:
+          typecheck_expandable(ast->as.binaryop.lhs, state, (type_t){TY_INT, 2, {}});
+          typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
+          ast->type = (type_t){TY_INT, 2, {}};
+          break;
         default:
           printf("todo op: %s\n", token_kind_to_string(ast->as.binaryop.op));
           TODO;
@@ -3176,6 +3214,16 @@ void compile(ast_t *ast, state_t *state) {
           state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.binaryop.op != T_EQ}});
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
         } break;
+        case T_SHL:
+        case T_SHR:
+        {
+          assert(ast->as.binaryop.rhs->kind == A_INT);
+          compile(ast->as.binaryop.lhs, state);
+          ir_t ir = {IR_OPERATION, {.inst = ast->as.binaryop.op == T_SHL ? SHL : SHR}};
+          for (int i = 0; i < ast->as.binaryop.rhs->as.fac.asint; ++i) {
+            state_add_ir(state, ir);
+          }
+        } break;
         default:
           printf("BINARYOP %s\n", token_kind_to_string(ast->as.binaryop.op));
           TODO;
@@ -3665,10 +3713,25 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
       break;
     case IR_OPERATION:
-      code(compiled, (bytecode_t){BINST, POPA, {}});
-      code(compiled, (bytecode_t){BINST, POPB, {}});
-      code(compiled, (bytecode_t){BINST, ir.arg.inst, {}});
-      code(compiled, (bytecode_t){BINST, PUSHA, {}});
+      switch (ir.arg.inst) {
+        case SUM:
+        case SUB:
+        case B_AH:
+          code(compiled, (bytecode_t){BINST, POPA, {}});
+          code(compiled, (bytecode_t){BINST, POPB, {}});
+          code(compiled, (bytecode_t){BINST, ir.arg.inst, {}});
+          code(compiled, (bytecode_t){BINST, PUSHA, {}});
+          break;
+        case SHL:
+        case SHR:
+          code(compiled, (bytecode_t){BINST, POPA, {}});
+          code(compiled, (bytecode_t){BINST, ir.arg.inst, {}});
+          code(compiled, (bytecode_t){BINST, PUSHA, {}});
+          break;
+        default:
+          printf("%s\n", instruction_to_string(ir.arg.inst));
+          TODO;
+      }
       break;
     case IR_MUL:
       if (ir.arg.num != 1) {
