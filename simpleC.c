@@ -1844,6 +1844,16 @@ ast_t *parse_unary(tokenizer_t *tokenizer) {
     case T_STAR:
       token_next(tokenizer);
       ast_t *arg = parse_unary(tokenizer);
+
+      if (arg->kind == A_INT) {
+        if (token.kind == T_MINUS) {
+          arg->as.fac.asint = 0xFFFF - arg->as.fac.asint + 1;
+          return arg;
+        } else if (token.kind == T_PLUS) {
+          return arg;
+        }
+      }
+
       return ast_malloc((ast_t){
           A_UNARYOP, location_union(token.loc, arg->loc), {0}, {.unaryop = {token.kind, arg}}});
     default:
@@ -1919,7 +1929,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   location_t start = tokenizer->loc;
-  int not = token_next_if_kind(tokenizer, T_NOT);
+  int not= token_next_if_kind(tokenizer, T_NOT);
   ast_t *ast = parse_comp(tokenizer);
 
   if (not) {
@@ -2969,6 +2979,9 @@ void get_addr_ast(state_t *state, ast_t *ast) {
           assert(0);
       }
       break;
+    case A_CAST:
+      get_addr_ast(state, ast->as.cast.ast);
+      break;
     default:
       printf("TODO: %s at %d of ", __FUNCTION__, __LINE__);
       ast_dump(ast, false);
@@ -2996,13 +3009,24 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
     case A_ARRAY:
       if (type_is_kind(ast->type.as.array.type, TY_PTR)) {
         TODO;
-        // int element_uli = state->uli++;
-        // data(compiled, bytecode_uli(BLABEL, 0, element_uli));
-        // if (ast->as.binary.right) {
-        //   compile_data(ast->as.binary.right, state, uli, offset +
-        //   ast->as.binary.left->type.size);
+        // ast_t *node = ast;
+        // int i = 0;
+        // while (node) {
+        //   i++;
+        // ;
+        // data(compiled,bytecode_uli() );
+        //   ast_dump_tree(node->as.binary.left, 0, 0);
+        //   compile_data(node->as.binary.left, state, element_uli, 0);
+        //   node = node->as.binary.right;
         // }
-        // compile_data(ast->as.binary.left, state, element_uli, offset);
+        ast_t *node = ast;
+        while (node) {
+          int element_uli = datauli(state);
+          ast_dump_tree(node->as.binary.left, 0, 0);
+          compile_data(node->as.binary.left, state, element_uli, 0);
+          node = node->as.binary.right;
+        }
+        break;
       }
       compile_data(ast->as.binary.left, state, uli, offset);
       if (ast->as.binary.right) {
@@ -3206,7 +3230,7 @@ void compile(ast_t *ast, state_t *state) {
     case A_STRING:
     {
       int uli = datauli(state);
-      compile_data(ast, state, 0, 0);
+      compile_data(ast, state, 0, 0); // TODO: maybe compile_data(ast, state, uli, 0);
       state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
       state->sp += 2;
     } break;
