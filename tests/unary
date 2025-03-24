@@ -1,0 +1,20 @@
+params: -D com
+exitcode: 0
+code:
+int main() {
+  -10;
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INST         DECSP
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INSTHEX2     RAM_A 0xFFF6
+INST         PUSHA
+INST         INCSP
+INST         RET
