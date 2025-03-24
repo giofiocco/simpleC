@@ -836,7 +836,12 @@ void type_expect(location_t loc, type_t *found, type_t *expect) {
   eprintf(loc, "expected '%s', found '%s'", expectstr, foundstr);
 }
 
-bool type_is_kind(type_t *type, type_kind_t kind) {
+#define type_is_kind(__type, __kind) type_is_kind_impl(__type, __kind, __LINE__)
+bool type_is_kind_impl(type_t *type, type_kind_t kind, int line) {
+  if (!type) {
+    printf("type %d\n", line);
+    TODO;
+  }
   assert(type);
   assert(kind != TY_ALIAS);
 
@@ -3045,7 +3050,7 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
       }
     } break;
     case A_ARRAY:
-      if (type_is_kind(ast->type.as.array.type, TY_PTR)) {
+      if (type_is_kind(&ast->type, TY_ARRAY) && type_is_kind(ast->type.as.array.type, TY_PTR)) {
         TODO;
         // ast_t *node = ast;
         // int i = 0;
