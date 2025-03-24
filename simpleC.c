@@ -1251,7 +1251,7 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
 #define SYMBOL_MAX 128
 #define SCOPE_MAX  32
 #define DATA_MAX   128
-#define CODE_MAX   128
+#define CODE_MAX   512
 #define IR_MAX     128
 
 typedef struct {
@@ -4019,7 +4019,8 @@ int main(int argc, char **argv) {
     compile_ir(&state, state.irs, state.ir_num, 0);
 
     state.compiled.is_init = true;
-    code(&state.compiled, (bytecode_t){BINST, DECSP, {}});
+    code(&state.compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 0}});
+    code(&state.compiled, (bytecode_t){BINST, PUSHA, {}});
     code(&state.compiled, bytecode_with_string(BINSTRELLABEL, CALLR, "main"));
     code(&state.compiled, (bytecode_t){BINST, POPA, {}});
     code(&state.compiled, bytecode_with_string(BINSTLABEL, CALL, "exit"));
