@@ -1,0 +1,12 @@
+params: -D com -O1
+exitcode: 0
+code:
+int main() {
+  int *a;
+  int *b;
+  char *c;
+
+  b - a;
+  b - 2;
+  c - 5;
+}

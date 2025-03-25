@@ -836,12 +836,7 @@ void type_expect(location_t loc, type_t *found, type_t *expect) {
   eprintf(loc, "expected '%s', found '%s'", expectstr, foundstr);
 }
 
-#define type_is_kind(__type, __kind) type_is_kind_impl(__type, __kind, __LINE__)
-bool type_is_kind_impl(type_t *type, type_kind_t kind, int line) {
-  if (!type) {
-    printf("type %d\n", line);
-    TODO;
-  }
+bool type_is_kind(type_t *type, type_kind_t kind) {
   assert(type);
   assert(kind != TY_ALIAS);
 
@@ -1270,11 +1265,11 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
 #undef dump_type
 }
 
-#define SYMBOL_MAX 128
+#define SYMBOL_MAX 256
 #define SCOPE_MAX  32
-#define DATA_MAX   128
+#define DATA_MAX   256
 #define CODE_MAX   512
-#define IR_MAX     128
+#define IR_MAX     256
 
 typedef struct {
   token_t name;
@@ -1327,6 +1322,7 @@ typedef enum {
   IR_STRING,      // + num
   IR_OPERATION,   // + inst
   IR_MUL,         // + num
+  IR_DIV,         // + num
   IR_CALL,        // + sv
   IR_EXTERN,      // + sv
 } ir_kind_t;
@@ -1376,6 +1372,8 @@ char *ir_kind_to_string(ir_kind_t kind) {
       return "OPERATION";
     case IR_MUL:
       return "MUL";
+    case IR_DIV:
+      return "DIV";
     case IR_CALL:
       return "CALL";
     case IR_EXTERN:
@@ -1408,6 +1406,7 @@ void ir_dump(ir_t ir) {
     case IR_INT:
     case IR_STRING:
     case IR_MUL:
+    case IR_DIV:
       printf("%d", ir.arg.num);
       break;
     case IR_OPERATION:
@@ -2566,7 +2565,6 @@ void typecheck(ast_t *ast, state_t *state) {
         } break;
         case T_EQ:
         case T_NEQ:
-        {
           typecheck_expandable(ast->as.binaryop.rhs, state, ast->as.binaryop.lhs->type);
           if (!type_is_kind(type, TY_INT) && !type_is_kind(type, TY_PTR)) {
             eprintf(ast->loc,
@@ -2576,27 +2574,41 @@ void typecheck(ast_t *ast, state_t *state) {
                     type_dump_to_string(&ast->as.binaryop.rhs->type));
           }
           ast->type = ast->as.binaryop.lhs->type;
-
-        } break;
+          break;
         case T_PLUS:
         case T_MINUS:
-        {
-          typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
-          if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR)) {
-            ast->type = *type;
-          } else if (type->kind == TY_ARRAY) {
-            ast->type = (type_t){TY_PTR, 2, {.ptr = type->as.array.type}};
-            ast_t *lhs = ast->as.binaryop.lhs;
-            ast->as.binaryop.lhs =
-                ast_malloc((ast_t){A_CAST, lhs->loc, {}, {.cast = {ast->type, lhs}}});
+          if (type_is_kind(type, TY_PTR) && ast->as.binaryop.op == T_MINUS) {
+            typecheck(ast->as.binaryop.rhs, state);
+            if (type_is_kind(&ast->as.binaryop.rhs->type, TY_INT)) {
+              ast->type = *type;
+            } else if (type_is_kind(&ast->as.binaryop.rhs->type, TY_PTR)) {
+              type_expect(ast->as.binaryop.lhs->loc, &ast->as.binaryop.lhs->type, type);
+              ast->type = (type_t){TY_INT, 2, {}};
+            } else {
+              eprintf(ast->loc,
+                      "invalid operation '%s' between '%s' and '%s'",
+                      token_kind_to_string(ast->as.binaryop.op),
+                      type_dump_to_string(&ast->as.binaryop.lhs->type),
+                      type_dump_to_string(&ast->as.binaryop.rhs->type));
+            }
           } else {
-            eprintf(ast->loc,
-                    "invalid operation '%s' between '%s' and '%s'",
-                    token_kind_to_string(ast->as.binaryop.op),
-                    type_dump_to_string(&ast->as.binaryop.lhs->type),
-                    type_dump_to_string(&ast->as.binaryop.rhs->type));
+            typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
+            if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR)) {
+              ast->type = *type;
+            } else if (type->kind == TY_ARRAY) {
+              ast->type = (type_t){TY_PTR, 2, {.ptr = type->as.array.type}};
+              ast_t *lhs = ast->as.binaryop.lhs;
+              ast->as.binaryop.lhs =
+                  ast_malloc((ast_t){A_CAST, lhs->loc, {}, {.cast = {ast->type, lhs}}});
+            } else {
+              eprintf(ast->loc,
+                      "invalid operation '%s' between '%s' and '%s'",
+                      token_kind_to_string(ast->as.binaryop.op),
+                      type_dump_to_string(&ast->as.binaryop.lhs->type),
+                      type_dump_to_string(&ast->as.binaryop.rhs->type));
+            }
           }
-        } break;
+          break;
         case T_SHR:
         case T_SHL:
           typecheck_expandable(ast->as.binaryop.lhs, state, (type_t){TY_INT, 2, {}});
@@ -3191,19 +3203,18 @@ void compile(ast_t *ast, state_t *state) {
           break;
         case T_PLUS:
         case T_MINUS:
+          compile(ast->as.binaryop.lhs, state);
+          compile(ast->as.binaryop.rhs, state);
           if (type_is_kind(&ast->type, TY_PTR)) {
-            compile(ast->as.binaryop.lhs, state);
-            compile(ast->as.binaryop.rhs, state);
             state_add_ir(state, (ir_t){IR_MUL, {.num = ast->type.as.ptr->size}});
-            state_add_ir(state,
-                         (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
-          } else {
-            compile(ast->as.binaryop.lhs, state);
-            compile(ast->as.binaryop.rhs, state);
-            state_add_ir(state,
-                         (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
+          } else if (ast->as.binaryop.op == T_MINUS && ast->type.kind == TY_INT && type_is_kind(&ast->as.binaryop.lhs->type, TY_PTR) && type_is_kind(&ast->as.binaryop.rhs->type, TY_PTR)) {
+            state_add_ir(state, (ir_t){IR_OPERATION, {.inst = SUB}});
+            state_add_ir(state, (ir_t){IR_DIV, {.num = ast->as.binaryop.lhs->type.as.ptr->size}});
             state->sp -= 2;
+            break;
           }
+          state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
+          state->sp -= 2;
           break;
         case T_EQ:
         case T_NEQ:
@@ -3739,11 +3750,12 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       }
       break;
     case IR_MUL:
+    case IR_DIV:
       if (ir.arg.num != 1) {
         code(compiled, (bytecode_t){BINST, POPA, {}});
         assert(ir.arg.num % 2 == 0);
         for (int i = 0; i < ir.arg.num; i += 2) {
-          code(compiled, (bytecode_t){BINST, SHL, {}});
+          code(compiled, (bytecode_t){BINST, ir.kind == IR_MUL ? SHL : SHR, {}});
         }
         code(compiled, (bytecode_t){BINST, PUSHA, {}});
       }

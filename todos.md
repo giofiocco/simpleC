@@ -31,6 +31,7 @@ maybe do better ir and keep track of SP in compile_ir?
 - [ ] proper compilation for CALL vs CALLR
 - [ ] compile_data array of str or ptr
 - [ ] array with expression as length
+- [ ] maybe merge \_start and main
 
 # AST OPT
 
