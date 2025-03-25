@@ -10,3 +10,40 @@ int main() {
   b - 2;
   c - 5;
 }
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INST         DECSP
+INST         DECSP
+INST         DECSP
+INSTHEX      PEEKAR 0x04
+INST         A_B
+INSTHEX      PEEKAR 0x08
+INST         SUB
+INST         SHR
+INST         PUSHA
+INST         INCSP
+INSTHEX      PEEKAR 0x04
+INST         A_B
+INSTHEX      RAM_AL 0x04
+INST         SUB
+INST         PUSHA
+INST         INCSP
+INST         PEEKA
+INST         A_B
+INSTHEX      RAM_AL 0x05
+INST         SUB
+INST         PUSHA
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         RET
