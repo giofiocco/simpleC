@@ -2006,10 +2006,37 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
   if (expr && array_len.kind != ARRAY_LEN_UNSET) {
     expr = ast_malloc((ast_t){A_CAST, expr->loc, {}, {.cast = {type, expr}}});
   }
-  return ast_malloc((ast_t){A_DECL,
-                            location_union(start, expr ? expr->loc : name.loc),
-                            {},
-                            {.decl = {type, name, expr, array_len_expr}}});
+  ast_t *ast = ast_malloc((ast_t){A_DECL,
+                                  location_union(start, expr ? expr->loc : name.loc),
+                                  {},
+                                  {.decl = {type, name, expr, array_len_expr}}});
+  if (array_len.kind == ARRAY_LEN_NOTARRAY) {
+    if (token_next_if_kind(tokenizer, T_COMMA)) {
+      ast = ast_malloc((ast_t){A_LIST, ast->loc, {}, {.binary = {ast, NULL}}});
+      ast_t **asti = &ast->as.binary.right;
+
+      do {
+        start = tokenizer->loc;
+        bool ptr = token_next_if_kind(tokenizer, T_STAR);
+        name = token_expect(tokenizer, T_SYM);
+        expr = NULL;
+        if (token_next_if_kind(tokenizer, T_EQUAL)) {
+          expr = parse_expr(tokenizer);
+        }
+        type_t _type = type;
+        if (ptr) {
+          _type = (type_t){TY_PTR, 2, {.ptr = type_malloc(type)}};
+        }
+        ast_t *_ast = ast_malloc((ast_t){A_DECL,
+                                         location_union(start, expr ? expr->loc : name.loc),
+                                         {},
+                                         {.decl = {_type, name, expr, array_len_expr}}});
+        *asti = ast_malloc((ast_t){A_LIST, _ast->loc, {}, {.binary = {_ast, NULL}}});
+        asti = &(*asti)->as.binary.right;
+      } while (token_next_if_kind(tokenizer, T_COMMA));
+    }
+  }
+  return ast;
 }
 
 ast_t *parse_asm(tokenizer_t *tokenizer) {
