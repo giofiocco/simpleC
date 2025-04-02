@@ -2837,7 +2837,7 @@ void typecheck(ast_t *ast, state_t *state) {
   }
 }
 
-void optimize_ast(ast_t **astp) {
+void optimize_ast(ast_t **astp, bool debug_opt) {
   assert(astp);
   ast_t *ast = *astp;
   if (!ast) {
@@ -2860,42 +2860,46 @@ void optimize_ast(ast_t **astp) {
     case A_ASSIGN:
     case A_ARRAY:
     case A_PARAM:
-      optimize_ast(&ast->as.binary.left);
-      optimize_ast(&ast->as.binary.right);
+      optimize_ast(&ast->as.binary.left, debug_opt);
+      optimize_ast(&ast->as.binary.right, debug_opt);
       break;
     case A_FUNCDECL:
-      optimize_ast(&ast->as.funcdecl.block);
+      optimize_ast(&ast->as.funcdecl.block, debug_opt);
       break;
     case A_STATEMENT:
     case A_RETURN:
     case A_BLOCK:
-      optimize_ast(&ast->as.ast);
+      optimize_ast(&ast->as.ast, debug_opt);
       break;
     case A_BINARYOP:
     {
       ast_t *a = ast->as.binaryop.lhs;
       ast_t *b = ast->as.binaryop.rhs;
-      optimize_ast(&a);
-      optimize_ast(&b);
+      optimize_ast(&a, debug_opt);
+      optimize_ast(&b, debug_opt);
     } break;
     case A_UNARYOP:
-      optimize_ast(&ast->as.unaryop.arg);
+      optimize_ast(&ast->as.unaryop.arg, debug_opt);
       break;
     case A_DECL:
     case A_GLOBDECL:
-      optimize_ast(&ast->as.decl.expr);
+      optimize_ast(&ast->as.decl.expr, debug_opt);
       break;
     case A_FUNCALL:
-      optimize_ast(&ast->as.funcall.params);
+      optimize_ast(&ast->as.funcall.params, debug_opt);
       break;
     case A_CAST:
-      optimize_ast(&ast->as.cast.ast);
+      optimize_ast(&ast->as.cast.ast, debug_opt);
       break;
     case A_IF:
     {
+      if (debug_opt) {
+        ast_dump(ast, 0);
+        printf(" -> ");
+      }
+
       ast_t *cond = ast->as.if_.cond;
-      if (cond->kind == A_BINARYOP
-          && (cond->as.binaryop.op == T_EQ || cond->as.binaryop.op == T_NEQ)) {
+      if (cond->kind == A_BINARYOP && (cond->as.binaryop.op == T_EQ || cond->as.binaryop.op == T_NEQ)) {
 
         cond->as.binaryop.op = T_MINUS;
         if (cond->as.binaryop.op == T_EQ) {
@@ -2913,14 +2917,25 @@ void optimize_ast(ast_t **astp) {
         ast->as.if_.then = ast->as.if_.else_;
         ast->as.if_.else_ = then;
       }
-      optimize_ast(&cond);
-      optimize_ast(&ast->as.if_.then);
+
+      if (debug_opt) {
+        ast_dump(ast, 0);
+        printf("\n");
+      }
+
+      optimize_ast(&cond, debug_opt);
+      optimize_ast(&ast->as.if_.then, debug_opt);
       if (ast->as.if_.else_) {
-        optimize_ast(&ast->as.if_.else_);
+        optimize_ast(&ast->as.if_.else_, debug_opt);
       }
     } break;
     case A_WHILE:
     {
+      if (debug_opt) {
+        ast_dump(ast, 0);
+        printf(" -> ");
+      }
+
       ast_t *cond = ast->as.binary.left;
       if (cond->kind == A_BINARYOP
           && (cond->as.binaryop.op == T_EQ || cond->as.binaryop.op == T_NEQ)) {
@@ -2931,8 +2946,14 @@ void optimize_ast(ast_t **astp) {
               ast_malloc((ast_t){A_UNARYOP, cond->loc, cond->type, {.unaryop = {T_NOT, cond}}});
         }
       }
-      optimize_ast(&cond);
-      optimize_ast(&ast->as.binary.right);
+
+      if (debug_opt) {
+        ast_dump(ast, 0);
+        printf("\n");
+      }
+
+      optimize_ast(&cond, debug_opt);
+      optimize_ast(&ast->as.binary.right, debug_opt);
     } break;
   }
 }
@@ -3497,17 +3518,25 @@ bool is_ir_kind(ir_t *irs, int *ir_count, int i, ir_kind_t kind) {
   return i < *ir_count && irs[i].kind == kind;
 }
 
-void optimize_ir(ir_t *irs, int *ir_count) {
+void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
   assert(irs);
   assert(ir_count);
 
   for (int i = 0; i < *ir_count; ++i) {
     if (is_ir_kind(irs, ir_count, i, IR_CHANGE_SP) && irs[i].arg.num == 0) {
+      if (debug_opt) {
+        printf("  %03d | CHANGE_SP(0) -> nothing\n", i);
+      }
+
       *ir_count -= 1;
       memcpy(irs + i, irs + i + 1, (*ir_count - i) * sizeof(ir_t));
       i = 0;
     } else if (is_ir_kind(irs, ir_count, i, IR_CHANGE_SP)
                && is_ir_kind(irs, ir_count, i + 1, IR_CHANGE_SP)) {
+      if (debug_opt) {
+        printf("  %03d | CHANGE_SP(x) CHANGE_SP(y) -> CHANGE_SP(x+y)\n", i);
+      }
+
       irs[i + 1].arg.num += irs[i].arg.num;
       *ir_count -= 1;
       memcpy(irs + i, irs + i + 1, (*ir_count - i) * sizeof(ir_t));
@@ -3516,6 +3545,10 @@ void optimize_ir(ir_t *irs, int *ir_count) {
                && is_ir_kind(irs, ir_count, i + 1, IR_READ)
                && is_ir_kind(irs, ir_count, i + 2, IR_CHANGE_SP)
                && irs[i + 1].arg.num <= -irs[i + 2].arg.num) {
+      if (debug_opt) {
+        printf("  %03d | ADDR_LOCAL READ(x) CHANGE_SP(y) if x <= -y -> CHANGE_SP(x+y)\n", i);
+      }
+
       irs[i + 2].arg.num += irs[i + 1].arg.num;
       *ir_count -= 2;
       memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
@@ -3525,6 +3558,10 @@ void optimize_ir(ir_t *irs, int *ir_count) {
                && is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL)
                && is_ir_kind(irs, ir_count, i + 3, IR_READ)
                && irs[i].arg.num - irs[i + 3].arg.num == irs[i + 2].arg.num - irs[i + 1].arg.num) {
+      if (debug_opt) {
+        printf("  %03d | ADDR_LOCAL(x+z) READ(y) ADDR_LOCAL(y+z) READ(z) -> ADDR_LOCAL(z) READ(x+y)\n", i);
+      }
+
       irs[i + 2].arg.num = irs[i].arg.num - irs[i + 3].arg.num;
       irs[i + 3].arg.num += irs[i + 1].arg.num;
       *ir_count -= 2;
@@ -3532,6 +3569,10 @@ void optimize_ir(ir_t *irs, int *ir_count) {
       i = 0;
     } else if (is_ir_kind(irs, ir_count, i, IR_INT) && is_ir_kind(irs, ir_count, i + 1, IR_INT)
                && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION) && irs[i + 2].arg.inst == B_AH) {
+      if (debug_opt) {
+        printf("  %03d | INT(x) INT(y) OPERATION(B_AH) -> INT((x << 8) | y)\n", i);
+      }
+
       irs[i].arg.num = (irs[i].arg.num << 8) | irs[i + 1].arg.num;
       *ir_count -= 2;
       memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
@@ -3539,6 +3580,10 @@ void optimize_ir(ir_t *irs, int *ir_count) {
     } else if (is_ir_kind(irs, ir_count, i, IR_INT) && is_ir_kind(irs, ir_count, i + 1, IR_INT)
                && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION)
                && (irs[i + 2].arg.inst == SUM || irs[i + 2].arg.inst == SUB)) {
+      if (debug_opt) {
+        printf("  %03d | INT(x) INT(y) OPERATION(SUM|SUB) -> INT(x+y | x-y)\n", i);
+      }
+
       irs[i].arg.num += (irs[i + 2].arg.inst == SUB ? -1 : 1) * irs[i + 1].arg.num;
       *ir_count -= 2;
       memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
@@ -3550,6 +3595,10 @@ void optimize_ir(ir_t *irs, int *ir_count) {
                && is_ir_kind(irs, ir_count, i + 4, IR_CHANGE_SP) && irs[i].arg.num == 2
                && irs[i + 1].arg.num == irs[i + 3].arg.num
                && -irs[i + 4].arg.num >= irs[i + 1].arg.num) {
+      if (debug_opt) {
+        printf("  %03d | ADDR_LOCAL(2) READ(x) ADDR_LOCAL(y) WRITE(x) CHANGE_SP(z) if -z>=x -> ADDR_LOCAL(y-x) WRITE(x) CHANGE_SP(z+x)\n", i);
+      }
+
       irs[i + 2].arg.num -= irs[i + 1].arg.num;
       irs[i + 4].arg.num += irs[i + 1].arg.num;
       *ir_count -= 2;
@@ -3803,7 +3852,7 @@ bool is_inst(bytecode_t *bs, int *b_count, int i, instruction_t inst) {
   return i < *b_count && bs[i].inst == inst;
 }
 
-void optimize_asm(bytecode_t *bs, int *b_count) {
+void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
   assert(bs);
   assert(b_count);
 
@@ -3814,22 +3863,42 @@ void optimize_asm(bytecode_t *bs, int *b_count) {
     //   memcpy(bs + i + 1, bs + i + 2, (b_count - i - 1) * sizeof(bs[0]));
     // }
     if (is_inst(bs, b_count, i, PEEKAR) && bs[i].arg.num == 2) {
+      if (debug_opt) {
+        printf("  %03d | PEEKAR 2 -> PEEKA\n", i);
+      }
+
       bs[i] = (bytecode_t){BINST, PEEKA, {}};
     } else if (is_inst(bs, b_count, i, PUSHA) && is_inst(bs, b_count, i + 1, POPA)) {
+      if (debug_opt) {
+        printf("  %03d | PUSHA POPA -> nothing\n", i);
+      }
+
       memcpy(bs + i, bs + i + 2, (*b_count - i - 2) * sizeof(bytecode_t));
       *b_count -= 2;
       i = 0;
     } else if (is_inst(bs, b_count, i, PUSHA) && is_inst(bs, b_count, i + 1, POPB)) {
+      if (debug_opt) {
+        printf("  %03d | PUHSA POPB -> A_B\n", i);
+      }
+
       bs[i].inst = A_B;
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i - 2) * sizeof(bs[0]));
       *b_count -= 1;
       i = 0;
     } else if ((is_inst(bs, b_count, i, RAM_A) || is_inst(bs, b_count, i, RAM_B))
                && bs[i].arg.num < 256) {
+      if (debug_opt) {
+        printf("  %03d | RAM_A x | RAM_B x if x<256 -> RAM_AL x | RAM_BL x\n", i);
+      }
+
       bs[i].inst = bs[i].inst == RAM_A ? RAM_AL : RAM_BL;
       bs[i].kind = BINSTHEX;
     } else if ((is_inst(bs, b_count, i, SUM) || is_inst(bs, b_count, i, SUB))
                && is_inst(bs, b_count, i + 1, CMPA)) {
+      if (debug_opt) {
+        printf("  %03d | SUM|SUB CMPA -> SUM|SUB\n", i);
+      }
+
       *b_count -= 1;
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
@@ -3837,6 +3906,10 @@ void optimize_asm(bytecode_t *bs, int *b_count) {
                && (is_inst(bs, b_count, i + 1, RAM_A) || is_inst(bs, b_count, i + 1, RAM_AL)
                    || is_inst(bs, b_count, i + 1, PEEKAR))
                && is_inst(bs, b_count, i + 2, POPB)) {
+      if (debug_opt) {
+        printf("  %03d | PUSHA RAM_A|RAM_AL|PEEKAR POPB -> A_B RAM_A|RAM_AL|PEEKAR\n", i);
+      }
+
       *b_count -= 1;
       bs[i] = (bytecode_t){BINST, A_B, {}};
       memcpy(bs + i + 2, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
@@ -3849,19 +3922,18 @@ void help(int errorcode) {
   fprintf(stderr,
           "Usage: simpleC [options] [files]\n\n"
           "Options:\n"
-          " -d [<module>]  enable debug options for a module\n"
-          " -D [<module>]  stop the execution after a module and print the output\n"
-          "                (if no module name or module 'all' then it will execute"
-          "only the tokenizer)\n"
-          " -e <string>    compile the string provided\n"
-          " -o <file>      write output to the file [default is 'out.asm']\n"
-          " -O0 | -O       no optimization\n"
-          " -O1            enable ASM bytecode optimization\n"
-          " -O2            enable IR optimization (and ASM)\n"
-          " -O3            enable AST optimization (and ASM and IR)\n"
-          " -O4            enable all optimization\n"
-          " --dev          print the source code loc where the error is thrown\n"
-          " -h | --help    print this page and exit\n\n"
+          " -d <module> | opt    enable debug options for a module or optimizers\n"
+          " -D <module>          stop the execution after a module and print the output\n"
+          "                          if module 'all' then it will execute only the tokenizer\n"
+          " -e <string>          compile the string provided\n"
+          " -o <file>            write output to the file [default is 'out.asm']\n"
+          " -O0 | -O             no optimization\n"
+          " -O1                  enable ASM bytecode optimization\n"
+          " -O2                  enable IR optimization (and ASM)\n"
+          " -O3                  enable AST optimization (and ASM and IR)\n"
+          " -O4                  enable all optimization\n"
+          " --dev                print the source code loc where the error is thrown\n"
+          " -h | --help          print this page and exit\n\n"
           "Modules:\n"
           "no module name is enables all the modules\n"
           "  all           all the modules\n"
@@ -3931,6 +4003,7 @@ int main(int argc, char **argv) {
   int input_num = 0;
 
   uint8_t opt = 0;
+  uint8_t debug_opt = 0;
   assert(M_COUNT < 8);
   uint8_t debug = 0;
   uint8_t exitat = 0;
@@ -3942,10 +4015,14 @@ int main(int argc, char **argv) {
     if (arg[0] == '-') {
       switch (arg[1]) {
         case 'd':
-          if (!*(argv + 1)) {
-            debug = (1 << M_COUNT) - 1;
+          ++argv;
+          if (!*argv) {
+            fprintf(stderr, "ERROR: -d expects a module name or 'opt'\n");
+            help(1);
+          }
+          if (strcmp(*argv, "opt") == 0) {
+            debug_opt = 1;
           } else {
-            ++argv;
             debug |= parse_module(*argv);
           }
           ++argv;
@@ -4067,7 +4144,10 @@ int main(int argc, char **argv) {
     state_init(&state);
     typecheck(ast, &state);
     if (opt >= OL_AST) {
-      optimize_ast(&ast);
+      if (debug_opt) {
+        printf("OPTIMIZE AST:\n");
+      }
+      optimize_ast(&ast, debug_opt);
     }
     if ((debug >> M_TYP) & 1) {
       printf("TYPED AST:\n");
@@ -4100,8 +4180,11 @@ int main(int argc, char **argv) {
     compile(ast, &state);
 
     if (opt >= OL_IR) {
-      optimize_ir(state.irs_init, &state.ir_init_num);
-      optimize_ir(state.irs, &state.ir_num);
+      if (debug_opt) {
+        printf("OPTIMIZE IR\n");
+      }
+      optimize_ir(state.irs_init, &state.ir_init_num, debug_opt);
+      optimize_ir(state.irs, &state.ir_num, debug_opt);
     }
     if ((debug >> M_IR) & 1) {
       printf("IR INIT:\n");
@@ -4134,8 +4217,11 @@ int main(int argc, char **argv) {
     state.compiled.is_init = false;
 
     if (opt >= OL_ASM) {
-      optimize_asm(state.compiled.code, &state.compiled.code_num);
-      optimize_asm(state.compiled.init, &state.compiled.init_num);
+      if (debug_opt) {
+        printf("OPTIMIZE_ASM\n");
+      }
+      optimize_asm(state.compiled.code, &state.compiled.code_num, debug_opt);
+      optimize_asm(state.compiled.init, &state.compiled.init_num, debug_opt);
     }
     if ((debug >> M_COM) & 1) {
       printf("ASSEMBLY:\n");
