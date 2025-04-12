@@ -61,6 +61,7 @@ Is possible to enable optimizzation to the AST (after typecheck), to the IR or t
 - EXTERN: `extern`
 - SHL: `<<`
 - SHR: `>>`
+- BREAK: `break`
 
 ## Comments
 
@@ -76,7 +77,7 @@ Multi-line comments: `/* ... */`
 - paramdef ::= PARO ( type SYM ( COMMA type SYM )\* )? PARC
 - block ::= BRO code\* BRC
 - code ::= block | if | for | while | statement
-- statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm )? SEMICOLON
+- statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm | BREAK )? SEMICOLON
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )? | type SYM ( EQUAL expr )? ( COMMA STAR SYM ( EQUAL expr )? )\*
 - expr ::= NOT? comp
 - comp ::= atom ( ( EQ | NEQ ) atom )?

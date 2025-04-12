@@ -1,0 +1,55 @@
+params: -D tok
+exitcode: 0
+code:
+_asd_123 012 0x12 0x1322 0XaBcD
+"aaa" 'a'
+()[]{}
+return typedef struct enum __asm__
+; + - * / = & , . == != !
+void int char
+if else for while break
+extern
+<< >>
+output:
+TOKENS:
+SYM '_asd_123' @ 1:1
+INT '012' @ 1:10
+HEX '0x12' @ 1:14
+HEX '0x1322' @ 1:19
+HEX '0XaBcD' @ 1:26
+STRING '"aaa"' @ 2:1
+CHAR ''a'' @ 2:7
+PARO '(' @ 3:1
+PARC ')' @ 3:2
+SQO '[' @ 3:3
+SQC ']' @ 3:4
+BRO '{' @ 3:5
+BRC '}' @ 3:6
+RETURN 'return' @ 4:1
+TYPEDEF 'typedef' @ 4:8
+STRUCT 'struct' @ 4:16
+ENUM 'enum' @ 4:23
+ASM '__asm__' @ 4:28
+SEMICOLON ';' @ 5:1
+PLUS '+' @ 5:3
+MINUS '-' @ 5:5
+STAR '*' @ 5:7
+SLASH '/' @ 5:9
+EQUAL '=' @ 5:11
+AND '&' @ 5:13
+COLON ',' @ 5:15
+DOT '.' @ 5:17
+EQ '==' @ 5:19
+NEQ '!=' @ 5:22
+NOT '!' @ 5:25
+VOIDKW 'void' @ 6:1
+INTKW 'int' @ 6:6
+CHARKW 'char' @ 6:10
+IF 'if' @ 7:1
+ELSE 'else' @ 7:4
+FOR 'for' @ 7:9
+WHILE 'while' @ 7:13
+BREAK 'break' @ 7:19
+EXTERN 'extern' @ 8:1
+SHL '<<' @ 9:1
+SHR '>>' @ 9:4
