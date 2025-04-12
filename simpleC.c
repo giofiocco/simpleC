@@ -182,13 +182,15 @@ void eprintf_impl(location_t location, int line, const char *func, char *fmt, ..
   exit(1);
 }
 
-// TODO: maybe add tokenizer->buffer and loc.col += len;
-token_t token_new(token_kind_t kind, char *image_start, int image_len, tokenizer_t *tok, int asint) {
-  assert(image_len);
+token_t token_new_and_consume_from_buffer(token_kind_t kind, int len, tokenizer_t *tok, int asint) {
+  assert(len);
   assert(tok);
   location_t loc = tok->loc;
-  loc.len = image_len;
-  return (token_t){kind, {image_start, image_len}, loc, asint};
+  loc.len = len;
+  token_t token = (token_t){kind, {tok->buffer, len}, loc, asint};
+  tok->loc.col += len;
+  tok->buffer += len;
+  return token;
 }
 
 token_t token_next(tokenizer_t *tokenizer) {
@@ -244,9 +246,7 @@ token_t token_next(tokenizer_t *tokenizer) {
     case '<':
     case '>':
       if (tokenizer->buffer[1] == tokenizer->buffer[0]) {
-        token = token_new(tokenizer->buffer[0] == '<' ? T_SHL : T_SHR, tokenizer->buffer, 2, tokenizer, 0);
-        tokenizer->buffer += 2;
-        tokenizer->loc.col += 2;
+        token = token_new_and_consume_from_buffer(tokenizer->buffer[0] == '<' ? T_SHL : T_SHR, 2, tokenizer, 0);
       } else {
         TODO;
       }
@@ -283,18 +283,12 @@ token_t token_next(tokenizer_t *tokenizer) {
     case '=':
     case '!':
       if (tokenizer->buffer[0] == '=' && tokenizer->buffer[1] == '=') {
-        token = token_new(T_EQ, tokenizer->buffer, 2, tokenizer, 0);
-        tokenizer->buffer += 2;
-        tokenizer->loc.col += 2;
+        token = token_new_and_consume_from_buffer(T_EQ, 2, tokenizer, 0);
       } else if (tokenizer->buffer[0] == '!' && tokenizer->buffer[1] == '=') {
-        token = token_new(T_NEQ, tokenizer->buffer, 2, tokenizer, 0);
-        tokenizer->buffer += 2;
-        tokenizer->loc.col += 2;
+        token = token_new_and_consume_from_buffer(T_NEQ, 2, tokenizer, 0);
       } else {
         assert(table[(int)*tokenizer->buffer]);
-        token = token_new(table[(int)*tokenizer->buffer], tokenizer->buffer, 1, tokenizer, 0);
-        ++tokenizer->buffer;
-        ++tokenizer->loc.col;
+        token = token_new_and_consume_from_buffer(table[(int)*tokenizer->buffer], 1, tokenizer, 0);
       }
       break;
     case '"':
@@ -304,17 +298,13 @@ token_t token_next(tokenizer_t *tokenizer) {
         ++len;
       } while (tokenizer->buffer[len] != '"');
       ++len;
-      token = token_new(T_STRING, tokenizer->buffer, len, tokenizer, 0);
-      tokenizer->loc.col += len;
-      tokenizer->buffer += len;
+      token = token_new_and_consume_from_buffer(T_STRING, len, tokenizer, 0);
     } break;
     case '\'':
-      token = token_new(T_CHAR, tokenizer->buffer, 3, tokenizer, *(tokenizer->buffer + 1));
-      if (tokenizer->buffer[2] != '\'') {
+      token = token_new_and_consume_from_buffer(T_CHAR, 3, tokenizer, *(tokenizer->buffer + 1));
+      if (token.image.start[2] != '\'') {
         eprintf(token.loc, "CHAR can have only one char");
       }
-      tokenizer->buffer += 3;
-      tokenizer->loc.col += 3;
       break;
     case '0':
       if (tokenizer->buffer[1] == 'x' || tokenizer->buffer[1] == 'X') {
@@ -324,12 +314,10 @@ token_t token_next(tokenizer_t *tokenizer) {
                || ('A' <= tokenizer->buffer[len] && tokenizer->buffer[len] <= 'F')) {
           ++len;
         }
-        token = token_new(T_HEX, tokenizer->buffer, len, tokenizer, strtol(tokenizer->buffer + 2, NULL, 16));
+        token = token_new_and_consume_from_buffer(T_HEX, len, tokenizer, strtol(tokenizer->buffer + 2, NULL, 16));
         if (len - 2 != 2 && len - 2 != 4) {
           eprintf(token.loc, "HEX can be 1 or 2 bytes");
         }
-        tokenizer->loc.col += len;
-        tokenizer->buffer += len;
         break;
       }
       __attribute__((fallthrough));
@@ -349,31 +337,28 @@ token_t token_next(tokenizer_t *tokenizer) {
           asint = atoi(tokenizer->buffer);
         }
         sv_t image = {tokenizer->buffer, len};
-        token = token_new(is_int                                ? T_INT :
-                          sv_eq(image, sv_from_cstr("return"))  ? T_RETURN :
-                          sv_eq(image, sv_from_cstr("typedef")) ? T_TYPEDEF :
-                          sv_eq(image, sv_from_cstr("struct"))  ? T_STRUCT :
-                          sv_eq(image, sv_from_cstr("enum"))    ? T_ENUM :
-                          sv_eq(image, sv_from_cstr("int"))     ? T_INTKW :
-                          sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW :
-                          sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW :
-                          sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM :
-                          sv_eq(image, sv_from_cstr("if"))      ? T_IF :
-                          sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
-                          sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
-                          sv_eq(image, sv_from_cstr("while"))   ? T_WHILE :
-                          sv_eq(image, sv_from_cstr("extern"))  ? T_EXTERN :
-                          sv_eq(image, sv_from_cstr("break"))   ? T_BREAK :
-                                                                  T_SYM,
-                          tokenizer->buffer,
-                          len,
-                          tokenizer,
-                          asint);
+        token = token_new_and_consume_from_buffer(is_int                                ? T_INT :
+                                                  sv_eq(image, sv_from_cstr("return"))  ? T_RETURN :
+                                                  sv_eq(image, sv_from_cstr("typedef")) ? T_TYPEDEF :
+                                                  sv_eq(image, sv_from_cstr("struct"))  ? T_STRUCT :
+                                                  sv_eq(image, sv_from_cstr("enum"))    ? T_ENUM :
+                                                  sv_eq(image, sv_from_cstr("int"))     ? T_INTKW :
+                                                  sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW :
+                                                  sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW :
+                                                  sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM :
+                                                  sv_eq(image, sv_from_cstr("if"))      ? T_IF :
+                                                  sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
+                                                  sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
+                                                  sv_eq(image, sv_from_cstr("while"))   ? T_WHILE :
+                                                  sv_eq(image, sv_from_cstr("extern"))  ? T_EXTERN :
+                                                  sv_eq(image, sv_from_cstr("break"))   ? T_BREAK :
+                                                                                          T_SYM,
+                                                  len,
+                                                  tokenizer,
+                                                  asint);
         if (!is_int && isdigit(image.start[0])) {
           eprintf(token.loc, "SYM cannot start with digit");
         }
-        tokenizer->loc.col += len;
-        tokenizer->buffer += len;
       } else {
         eprintf(tokenizer->loc, "unknown char: '%c'", *tokenizer->buffer);
       }
