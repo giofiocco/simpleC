@@ -322,47 +322,47 @@ token_t token_next(tokenizer_t *tokenizer) {
       }
       __attribute__((fallthrough));
     default:
-    {
-      if (isalpha(*tokenizer->buffer) || isdigit(*tokenizer->buffer) || *tokenizer->buffer == '_') {
-        bool is_int = isdigit(*tokenizer->buffer) ? true : false;
+      if (isdigit(*tokenizer->buffer)) {
         int len = 1;
-        do {
-          if (!isdigit(tokenizer->buffer[len])) {
-            is_int = false;
-          }
+        while (isdigit(tokenizer->buffer[len])) {
           ++len;
-        } while (isalpha(tokenizer->buffer[len]) || isdigit(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_');
-        int asint = 0;
-        if (is_int) {
-          asint = atoi(tokenizer->buffer);
+        }
+        if (isalpha(tokenizer->buffer[len + 1]) || tokenizer->buffer[len + 1] == '_') {
+          tokenizer->loc.len = len + 1;
+          eprintf(tokenizer->loc, "invalid integer");
+          tokenizer->loc.len = 1;
+        }
+        token = token_new_and_consume_from_buffer(T_INT, len, tokenizer, atoi(tokenizer->buffer));
+
+      } else if (isalpha(*tokenizer->buffer) || *tokenizer->buffer == '_') {
+        int len = 1;
+        while (isalpha(tokenizer->buffer[len]) || isdigit(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
+          ++len;
         }
         sv_t image = {tokenizer->buffer, len};
-        token = token_new_and_consume_from_buffer(is_int                                ? T_INT :
-                                                  sv_eq(image, sv_from_cstr("return"))  ? T_RETURN :
-                                                  sv_eq(image, sv_from_cstr("typedef")) ? T_TYPEDEF :
-                                                  sv_eq(image, sv_from_cstr("struct"))  ? T_STRUCT :
-                                                  sv_eq(image, sv_from_cstr("enum"))    ? T_ENUM :
-                                                  sv_eq(image, sv_from_cstr("int"))     ? T_INTKW :
-                                                  sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW :
-                                                  sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW :
-                                                  sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM :
-                                                  sv_eq(image, sv_from_cstr("if"))      ? T_IF :
-                                                  sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
-                                                  sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
-                                                  sv_eq(image, sv_from_cstr("while"))   ? T_WHILE :
-                                                  sv_eq(image, sv_from_cstr("extern"))  ? T_EXTERN :
-                                                  sv_eq(image, sv_from_cstr("break"))   ? T_BREAK :
-                                                                                          T_SYM,
-                                                  len,
-                                                  tokenizer,
-                                                  asint);
-        if (!is_int && isdigit(image.start[0])) {
-          eprintf(token.loc, "SYM cannot start with digit");
-        }
+        token = token_new_and_consume_from_buffer(
+            sv_eq(image, sv_from_cstr("return"))  ? T_RETURN :
+            sv_eq(image, sv_from_cstr("typedef")) ? T_TYPEDEF :
+            sv_eq(image, sv_from_cstr("struct"))  ? T_STRUCT :
+            sv_eq(image, sv_from_cstr("enum"))    ? T_ENUM :
+            sv_eq(image, sv_from_cstr("int"))     ? T_INTKW :
+            sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW :
+            sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW :
+            sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM :
+            sv_eq(image, sv_from_cstr("if"))      ? T_IF :
+            sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
+            sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
+            sv_eq(image, sv_from_cstr("while"))   ? T_WHILE :
+            sv_eq(image, sv_from_cstr("extern"))  ? T_EXTERN :
+            sv_eq(image, sv_from_cstr("break"))   ? T_BREAK :
+                                                    T_SYM,
+            len,
+            tokenizer,
+            0);
+
       } else {
         eprintf(tokenizer->loc, "unknown char: '%c'", *tokenizer->buffer);
       }
-    }
   }
 
   tokenizer->last_token = token;
@@ -1345,6 +1345,11 @@ void ir_dump(ir_t ir) {
 }
 
 typedef struct {
+  int uli; // uli to jump to if break
+  int sp;  // sp before the loop, to correctly out of scope the variables
+} break_target_info_t;
+
+typedef struct {
   scope_t scopes[SCOPE_MAX];
   int scope_num;
   scope_t *scope;
@@ -1357,7 +1362,7 @@ typedef struct {
   ir_t irs_init[IR_MAX];
   int ir_init_num;
   bool is_init;
-  int break_target[BREAK_TARGET_MAX];
+  break_target_info_t break_target[BREAK_TARGET_MAX];
   int break_target_num;
 } state_t;
 
@@ -1393,14 +1398,13 @@ void state_add_addr_offset(state_t *state, int offset) {
 void state_push_break_target(state_t *state, int target) {
   assert(state);
   assert(state->break_target_num + 1 < BREAK_TARGET_MAX);
-  state->break_target[state->break_target_num++] = target;
+  state->break_target[state->break_target_num++] = (break_target_info_t){target, state->sp};
 }
 
-int state_pop_break_target(state_t *state) {
+void state_drop_break_target(state_t *state) {
   assert(state);
   assert(state->break_target_num > 0);
   state->break_target_num--;
-  return state->break_target[state->break_target_num];
 }
 
 void data(compiled_t *, bytecode_t);
@@ -1758,7 +1762,7 @@ ast_t *parse_array(tokenizer_t *tokenizer) {
     token_t brc = token_expect(tokenizer, T_BRC);
     catch = false;
     // TODO: why not empty array?
-    eprintf(location_union(bro.loc, brc.loc), "unvalid empty array");
+    eprintf(location_union(bro.loc, brc.loc), "invalid empty array");
   }
 
   ast_t *expr = parse_expr(tokenizer);
@@ -1821,7 +1825,7 @@ ast_t *parse_fac(tokenizer_t *tokenizer) {
   } else if (token.kind == T_SYM) {
     return ast_malloc((ast_t){A_SYM, token.loc, {}, {.fac = token}});
   } else {
-    eprintf(token.loc, "unvalid token for fac: '%s'", token_kind_to_string(token.kind));
+    eprintf(token.loc, "invalid token for fac: '%s'", token_kind_to_string(token.kind));
   }
   assert(0);
 }
@@ -2931,25 +2935,24 @@ void optimize_ast(ast_t **astp, bool debug_opt) {
     } break;
     case A_WHILE:
     {
-      if (debug_opt) {
-        ast_dump(ast, 0);
-        printf(" -> ");
-      }
-
       ast_t *cond = ast->as.binary.left;
       if (cond->kind == A_BINARYOP
           && (cond->as.binaryop.op == T_EQ || cond->as.binaryop.op == T_NEQ)) {
+        if (debug_opt) {
+          ast_dump(ast, 0);
+          printf(" -> ");
+        }
 
         cond->as.binaryop.op = T_MINUS;
         if (cond->as.binaryop.op == T_EQ) {
           ast->as.binary.left =
               ast_malloc((ast_t){A_UNARYOP, cond->loc, cond->type, {.unaryop = {T_NOT, cond}}});
         }
-      }
 
-      if (debug_opt) {
-        ast_dump(ast, 0);
-        printf("\n");
+        if (debug_opt) {
+          ast_dump(ast, 0);
+          printf("\n");
+        }
       }
 
       optimize_ast(&cond, debug_opt);
@@ -3279,6 +3282,8 @@ void compile(ast_t *ast, state_t *state) {
           state_change_sp(state, -2);
           state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.binaryop.op != T_EQ}});
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
+          printf("test EQ/NEQ sp\n");
+          TODO;
         } break;
         case T_SHL:
         case T_SHR:
@@ -3499,16 +3504,18 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.binary.left->kind == A_UNARYOP && ast->as.binary.left->as.unaryop.op == T_NOT) {
         compile(ast->as.binary.left->as.unaryop.arg, state);
         state_add_ir(state, (ir_t){IR_JMPNZ, {.num = b}});
+        state->sp -= 2;
       } else {
         compile(ast->as.binary.left, state);
         state_add_ir(state, (ir_t){IR_JMPZ, {.num = b}});
+        state->sp -= 2;
       }
       if (ast->as.binary.right) {
         compile(ast->as.binary.right, state);
       }
       state_add_ir(state, (ir_t){IR_JMP, {.num = a}});
       state_add_ir(state, (ir_t){IR_SETULI, {.num = b}});
-      state_pop_break_target(state);
+      state_drop_break_target(state);
     } break;
     case A_EXTERN:
       assert(ast->as.ast->kind == A_FUNCDEF);
@@ -3519,9 +3526,9 @@ void compile(ast_t *ast, state_t *state) {
       if (state->break_target_num == 0) {
         eprintf(ast->loc, "break statement not within loop or switch");
       }
-      state_add_ir(state, (ir_t){IR_JMP, {.num = state_pop_break_target(state)}});
-      // TODO: change sp
-      TODO;
+      break_target_info_t info = state->break_target[state->break_target_num - 1];
+      state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -(state->sp - info.sp)}});
+      state_add_ir(state, (ir_t){IR_JMP, {.num = info.uli}});
   }
 }
 

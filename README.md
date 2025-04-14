@@ -78,7 +78,7 @@ Multi-line comments: `/* ... */`
 - block ::= BRO code\* BRC
 - code ::= block | if | for | while | statement
 - statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm | BREAK )? SEMICOLON
-- decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )? | type SYM ( EQUAL expr )? ( COMMA STAR SYM ( EQUAL expr )? )\*
+- decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )? | type SYM ( EQUAL expr )? ( COMMA STAR\* SYM ( EQUAL expr )? )\*
 - expr ::= NOT? comp
 - comp ::= atom ( ( EQ | NEQ ) atom )?
 - atom ::= atom1 ( ( SHL | SHR ) atom1 )?
