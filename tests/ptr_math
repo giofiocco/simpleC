@@ -1,4 +1,4 @@
-params: -D com -O3
+params: -D com -O1
 exitcode: 0
 code:
 typedef struct {
@@ -44,8 +44,7 @@ INST         A_B
 INST         rB_A
 INST         PUSHA
 INST         INCSP
-INSTLABEL    RAM_A _000
-INST         A_B
+INSTLABEL    RAM_B _000
 INSTHEX      RAM_AL 0x08
 INST         SUM
 INST         A_B

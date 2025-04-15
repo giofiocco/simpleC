@@ -3625,6 +3625,28 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
+    } else if (is_ir_kind(irs, ir_count, i, IR_INT)
+               && is_ir_kind(irs, ir_count, i + 1, IR_MUL)) {
+      if (debug_opt) {
+        printf("  %03d | INT(x) MUL(y) -> INT(x * y)\n", i);
+      }
+
+      irs[i].arg.num *= irs[i + 1].arg.num;
+      *ir_count -= 1;
+      memcpy(irs + i + 1, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
+      i = 0;
+    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
+               && is_ir_kind(irs, ir_count, i + 1, IR_INT)
+               && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION)
+               && irs[i + 2].arg.inst == SUM) {
+      if (debug_opt) {
+        printf("  %03d | ADDR_LOCAL(x) INT(y) OPERATION(SUM) -> ADDR_LOCAL(x + y)\n", i);
+      }
+
+      irs[i].arg.num += irs[i + 1].arg.num;
+      *ir_count -= 2;
+      memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
+      i = 0;
     }
   }
 }
