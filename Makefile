@@ -1,10 +1,10 @@
 all: simpleC 
 
-CFLAGS=-Wall -Wextra -Werror -std=c99
+CFLAGS=-Wall -Wextra -std=c99
 
 .PHONY: test clean
 
-simpleC: simpleC.c 
+simpleC: simpleC.c
 	cc -Wno-infinite-recursion $(CFLAGS) -o $@ $(filter %.c,$^) jaris/instructions.c jaris/files.c
 
 test: all
@@ -17,4 +17,4 @@ record-test-%: all
 	perl test.pl -r $(patsubst record-test-%,tests/%,$@)
 
 clean:
-	rm simpleC test-file
+	rm simpleC

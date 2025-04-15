@@ -3260,14 +3260,17 @@ void compile(ast_t *ast, state_t *state) {
           compile(ast->as.binaryop.rhs, state);
           if (type_is_kind(&ast->type, TY_PTR)) {
             state_add_ir(state, (ir_t){IR_MUL, {.num = ast->type.as.ptr->size}});
+            state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
+            state->sp -= 2;
           } else if (ast->as.binaryop.op == T_MINUS && ast->type.kind == TY_INT && type_is_kind(&ast->as.binaryop.lhs->type, TY_PTR) && type_is_kind(&ast->as.binaryop.rhs->type, TY_PTR)) {
             state_add_ir(state, (ir_t){IR_OPERATION, {.inst = SUB}});
             state_add_ir(state, (ir_t){IR_DIV, {.num = ast->as.binaryop.lhs->type.as.ptr->size}});
             state->sp -= 2;
             break;
+          } else {
+            state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
+            state->sp -= 2;
           }
-          state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
-          state->sp -= 2;
           break;
         case T_EQ:
         case T_NEQ:
@@ -3282,8 +3285,6 @@ void compile(ast_t *ast, state_t *state) {
           state_change_sp(state, -2);
           state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.binaryop.op != T_EQ}});
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
-          printf("test EQ/NEQ sp\n");
-          TODO;
         } break;
         case T_SHL:
         case T_SHR:
@@ -3457,6 +3458,7 @@ void compile(ast_t *ast, state_t *state) {
       } else if (type_is_kind(&ast->as.cast.target, TY_PTR)
                  && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
         get_addr_ast(state, ast->as.cast.ast);
+        state->sp += 2; // TODO: to test
       } else {
         int tsize = type_size_aligned(&ast->as.cast.target);
         int size = type_size_aligned(&ast->as.cast.ast->type);
@@ -3932,6 +3934,15 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
       *b_count -= 1;
       bs[i] = (bytecode_t){BINST, A_B, {}};
       memcpy(bs + i + 2, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
+      i = 0;
+    } else if ((is_inst(bs, b_count, i, RAM_A) || is_inst(bs, b_count, i, RAM_AL)) && is_inst(bs, b_count, i + 1, A_B)) {
+      if (debug_opt) {
+        printf("  %03d | RAM_A|RAM_AL A_B -> RAM_B|RAM_BL\n", i);
+      }
+
+      *b_count -= 1;
+      bs[i].inst = bs[i].inst == RAM_A ? RAM_B : RAM_BL;
+      memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     }
   }

@@ -144,3 +144,4 @@ Multi-line comments: `/* ... */`
 - RAM_A/B x (x < 256) -> RAM_AL/BL x
 - (SUM | SUB) CMPA -> (SUM | SUB)
 - PUSHA (RAM_A | RAM_AL | PEEKAR) POPB -> A_B (RAM_A | RAM_LA | PEEAKR)
+- (RAM_A | RAM_AL) A_B -> RAM_B | RAM_BL

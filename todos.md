@@ -1,4 +1,5 @@
-array[0] -> \*array
+array\[0\] -> \*array
+array\[n\] local use PEEKAR
 
 if token_peek and then token_next_if_kind the tokenizer->loc gives you the loc after the token you want
 so maybe change to tokenizer_get_loc() that checks if there is token to peek
@@ -55,7 +56,6 @@ maybe do better ir and keep track of SP in compile_ir?
 - [ ] remove ifs that do nothing
 - [ ] remove dead or unreachable code
 - [ ] A_SP SP_A -> A_SP
-- [ ] RAM_A A_B -> RAM_B
 
 # README
 
