@@ -1817,19 +1817,17 @@ ast_t *parse_array(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   token_t bro = token_expect(tokenizer, T_BRO);
-  if (token_peek(tokenizer).kind == T_BRC) {
-    token_t brc = token_expect(tokenizer, T_BRC);
+  if (token_next_if_kind(tokenizer, T_BRC)) {
     catch = false;
-    // TODO: why not empty array?
-    eprintf(location_union(bro.loc, brc.loc), "invalid empty array");
+    eprintf(location_union(bro.loc, tokenizer->last_token.loc), "invalid empty array");
   }
 
   ast_t *expr = parse_expr(tokenizer);
-  ast_t *ast = ast_malloc((ast_t){A_ARRAY, expr->loc, {0}, {.binary = {expr, NULL}}});
+  ast_t *ast = ast_malloc((ast_t){A_ARRAY, expr->loc, {}, {.binary = {expr, NULL}}});
   ast_t *asti = ast;
   while (token_next_if_kind(tokenizer, T_COMMA)) {
     expr = parse_expr(tokenizer);
-    asti->as.binary.right = ast_malloc((ast_t){A_ARRAY, expr->loc, {0}, {.binary = {expr, NULL}}});
+    asti->as.binary.right = ast_malloc((ast_t){A_ARRAY, expr->loc, {}, {.binary = {expr, NULL}}});
     asti = asti->as.binary.right;
   }
   token_t brc = token_expect(tokenizer, T_BRC);
@@ -2876,8 +2874,13 @@ void typecheck(ast_t *ast, state_t *state) {
           f = f->as.fieldlist.next;
         }
 
-        if (f != NULL) {
-          eprintf(ast->loc, "too few fields");
+        if (f != NULL
+            && !(ast->as.cast.ast->kind == A_ARRAY
+                 && ast->as.cast.ast->as.binary.left
+                 && ast->as.cast.ast->as.binary.left->kind == A_INT
+                 && ast->as.cast.ast->as.binary.left->as.fac.asint == 0
+                 && ast->as.cast.ast->as.binary.right == NULL)) {
+          eprintf(ast->loc, "missing fields");
         }
         if (expr != NULL) {
           eprintf(ast->loc, "too many fields");
@@ -3165,8 +3168,7 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
     case A_CAST:
     {
       compile_data(ast->as.cast.ast, state, uli, 0);
-      int delta =
-          type_size_aligned(&ast->as.cast.target) - type_size_aligned(&ast->as.cast.ast->type);
+      int delta = type_size_aligned(&ast->as.cast.target) - type_size_aligned(&ast->as.cast.ast->type);
       assert(delta >= 0);
       if (delta > 0) {
         data(compiled, (bytecode_t){BDB, 0, {.num = delta}});
@@ -3418,7 +3420,7 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.decl.expr) {
         int start_sp = state->sp;
         compile(ast->as.decl.expr, state);
-        assert(state->sp > start_sp); // TODO: test
+        assert(state->sp > start_sp);
         if (state->sp - start_sp > size) {
           state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - start_sp - size}});
           state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
@@ -3488,7 +3490,16 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_CAST:
-      if (type_is_kind(&ast->as.cast.target, TY_STRUCT) && ast->as.cast.ast->kind == A_ARRAY) {
+      if (ast->as.cast.ast->kind == A_ARRAY
+          && ast->as.cast.ast->as.binary.left
+          && ast->as.cast.ast->as.binary.left->kind == A_INT
+          && ast->as.cast.ast->as.binary.left->as.fac.asint == 0
+          && ast->as.cast.ast->as.binary.right == NULL) {
+        for (int i = 0; i < type_size_aligned(&ast->as.cast.target); i += 2) {
+          state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
+          state->sp += 2;
+        }
+      } else if (type_is_kind(&ast->as.cast.target, TY_STRUCT) && ast->as.cast.ast->kind == A_ARRAY) {
         ast_t *asts[128] = {0};
         int ast_num = 0;
         ast_t *asti = ast->as.cast.ast;
@@ -3512,7 +3523,7 @@ void compile(ast_t *ast, state_t *state) {
       } else if (type_is_kind(&ast->as.cast.target, TY_PTR)
                  && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
         get_addr_ast(state, ast->as.cast.ast);
-        state->sp += 2; // TODO: to test
+        state->sp += 2;
       } else {
         int tsize = type_size_aligned(&ast->as.cast.target);
         int size = type_size_aligned(&ast->as.cast.ast->type);
@@ -3947,7 +3958,7 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
 
 bool is_inst(bytecode_t *bs, int *b_count, int i, instruction_t inst) {
   assert(bs);
-  return i < *b_count && bs[i].inst == inst;
+  return i >= 0 && i < *b_count && bs[i].inst == inst;
 }
 
 void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
@@ -4288,7 +4299,7 @@ int main(int argc, char **argv) {
 
     if (opt >= OL_IR) {
       if (debug_opt) {
-        printf("OPTIMIZE IR\n");
+        printf("OPTIMIZE IR:\n");
       }
       optimize_ir(state.irs_init, &state.ir_init_num, debug_opt);
       optimize_ir(state.irs, &state.ir_num, debug_opt);
@@ -4325,7 +4336,7 @@ int main(int argc, char **argv) {
 
     if (opt >= OL_ASM) {
       if (debug_opt) {
-        printf("OPTIMIZE_ASM\n");
+        printf("OPTIMIZE ASM:\n");
       }
       optimize_asm(state.compiled.code, &state.compiled.code_num, debug_opt);
       optimize_asm(state.compiled.init, &state.compiled.init_num, debug_opt);

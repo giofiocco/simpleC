@@ -1,0 +1,47 @@
+params: -D com
+exitcode: 0
+code:
+typedef struct {
+  int x;
+  int y;
+} point_t;
+
+int main() {
+  int b[5] = {0};
+  point_t p = {0};
+  p;
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTHEX      PEEKAR 0x04
+INST         PUSHA
+INSTHEX      PEEKAR 0x04
+INST         PUSHA
+INST         SP_A
+INSTHEX2     RAM_B 0x0012
+INST         SUM
+INST         A_SP
+INST         RET
