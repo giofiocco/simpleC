@@ -1,13 +1,8 @@
-array\[0\] -> \*array
-array\[n\] local use PEEKAR
-
 if token_peek and then token_next_if_kind the tokenizer->loc gives you the loc after the token you want
 so maybe change to tokenizer_get_loc() that checks if there is token to peek
 
 typedef array
 struct with array
-
-better documentation for ir
 
 tests errors
 
@@ -21,7 +16,6 @@ maybe do better ir and keep track of SP in compile_ir?
 # Parser
 
 - [ ] in funcdef etc sv_t instead of token? (maybe not)
-- [ ] int a,b;
 - [ ] int \*\*a;
 - [ ] struct point a; only in structdef?
 
@@ -64,7 +58,6 @@ maybe do better ir and keep track of SP in compile_ir?
 
 # Roadmap
 
-- [ ] inline asm
 - [ ] macros
 - [ ] include
 - [ ] union

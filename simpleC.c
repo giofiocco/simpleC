@@ -327,13 +327,11 @@ token_t token_next(tokenizer_t *tokenizer) {
         while (isdigit(tokenizer->buffer[len])) {
           ++len;
         }
-        if (isalpha(tokenizer->buffer[len + 1]) || tokenizer->buffer[len + 1] == '_') {
-          tokenizer->loc.len = len + 1;
+        if (isalpha(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
+          tokenizer->loc.len = len;
           eprintf(tokenizer->loc, "invalid integer");
-          tokenizer->loc.len = 1;
         }
         token = token_new_and_consume_from_buffer(T_INT, len, tokenizer, atoi(tokenizer->buffer));
-
       } else if (isalpha(*tokenizer->buffer) || *tokenizer->buffer == '_') {
         int len = 1;
         while (isalpha(tokenizer->buffer[len]) || isdigit(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
