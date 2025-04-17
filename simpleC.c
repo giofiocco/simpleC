@@ -89,6 +89,7 @@ typedef enum {
   T_SHL,
   T_SHR,
   T_BREAK,
+  T_DEFINE,
 } token_kind_t;
 
 typedef struct {
@@ -118,11 +119,24 @@ typedef struct {
   int asint;
 } token_t;
 
+#define MACRO_TOKEN_MAX 16
+#define MACRO_MAX       16
+
+typedef struct {
+  sv_t name;
+  token_t tokens[MACRO_TOKEN_MAX];
+  int token_count;
+} macro_t;
+
 typedef struct {
   char *buffer;
   location_t loc;
   token_t last_token;
   bool has_last_token;
+  macro_t macros[MACRO_MAX];
+  int macro_count;
+  int current_macro;
+  int current_macro_token_index;
 } tokenizer_t;
 
 void tokenizer_init(tokenizer_t *tokenizer, char *buffer, char *filename) {
@@ -131,8 +145,10 @@ void tokenizer_init(tokenizer_t *tokenizer, char *buffer, char *filename) {
   while (*row_end != '\n' && *row_end != '\0') {
     ++row_end;
   }
+  *tokenizer = (tokenizer_t){0};
   tokenizer->buffer = buffer;
   tokenizer->loc = (location_t){filename, (sv_t){buffer, row_end - buffer}, 1, 1, 1};
+  tokenizer->current_macro = -1;
 }
 
 void print_location(location_t location) {
@@ -182,204 +198,6 @@ void eprintf_impl(location_t location, int line, const char *func, char *fmt, ..
   exit(1);
 }
 
-token_t token_new_and_consume_from_buffer(token_kind_t kind, int len, tokenizer_t *tok, int asint) {
-  assert(len);
-  assert(tok);
-  location_t loc = tok->loc;
-  loc.len = len;
-  token_t token = (token_t){kind, {tok->buffer, len}, loc, asint};
-  tok->loc.col += len;
-  tok->buffer += len;
-  return token;
-}
-
-token_t token_next(tokenizer_t *tokenizer) {
-  assert(tokenizer);
-
-  if (tokenizer->has_last_token) {
-    tokenizer->has_last_token = false;
-    return tokenizer->last_token;
-  }
-
-  token_kind_t table[128] = {0};
-  table['('] = T_PARO;
-  table[')'] = T_PARC;
-  table['['] = T_SQO;
-  table[']'] = T_SQC;
-  table['{'] = T_BRO;
-  table['}'] = T_BRC;
-  table[';'] = T_SEMICOLON;
-  table['+'] = T_PLUS;
-  table['-'] = T_MINUS;
-  table['*'] = T_STAR;
-  table['/'] = T_SLASH;
-  table['&'] = T_AND;
-  table[','] = T_COMMA;
-  table['.'] = T_DOT;
-  table['='] = T_EQUAL;
-  table['!'] = T_NOT;
-
-  token_t token = {0};
-
-  switch (*tokenizer->buffer) {
-    case '\0':
-      break;
-    case ' ':
-    case '\t':
-    case '\r':
-      ++tokenizer->buffer;
-      ++tokenizer->loc.col;
-      return token_next(tokenizer);
-    case '\n':
-    {
-      ++tokenizer->loc.row;
-      tokenizer->loc.col = 1;
-      ++tokenizer->buffer;
-      tokenizer->loc.line.start = tokenizer->buffer;
-      char *row_end = tokenizer->buffer;
-      while (*row_end != '\n' && *row_end != '\0') {
-        ++row_end;
-      }
-      tokenizer->loc.line.len = row_end - tokenizer->buffer;
-      return token_next(tokenizer);
-    }
-    case '<':
-    case '>':
-      if (tokenizer->buffer[1] == tokenizer->buffer[0]) {
-        token = token_new_and_consume_from_buffer(tokenizer->buffer[0] == '<' ? T_SHL : T_SHR, 2, tokenizer, 0);
-      } else {
-        TODO;
-      }
-      break;
-    case '/':
-      if (tokenizer->buffer[1] == '/') {
-        while (tokenizer->buffer[0] != '\n') {
-          ++tokenizer->buffer;
-        }
-        return token_next(tokenizer);
-      } else if (tokenizer->buffer[1] == '*') {
-        while (!(tokenizer->buffer[0] == '*' && tokenizer->buffer[1] == '/')) {
-          ++tokenizer->buffer;
-          ++tokenizer->loc.col;
-        }
-        tokenizer->buffer += 2;
-        tokenizer->loc.col += 2;
-        return token_next(tokenizer);
-      }
-      __attribute__((fallthrough));
-    case '(':
-    case ')':
-    case '[':
-    case ']':
-    case '{':
-    case '}':
-    case '+':
-    case '-':
-    case '*':
-    case '&':
-    case ',':
-    case ';':
-    case '.':
-    case '=':
-    case '!':
-      if (tokenizer->buffer[0] == '=' && tokenizer->buffer[1] == '=') {
-        token = token_new_and_consume_from_buffer(T_EQ, 2, tokenizer, 0);
-      } else if (tokenizer->buffer[0] == '!' && tokenizer->buffer[1] == '=') {
-        token = token_new_and_consume_from_buffer(T_NEQ, 2, tokenizer, 0);
-      } else {
-        assert(table[(int)*tokenizer->buffer]);
-        token = token_new_and_consume_from_buffer(table[(int)*tokenizer->buffer], 1, tokenizer, 0);
-      }
-      break;
-    case '"':
-    {
-      int len = 1;
-      do {
-        ++len;
-      } while (tokenizer->buffer[len] != '"');
-      ++len;
-      token = token_new_and_consume_from_buffer(T_STRING, len, tokenizer, 0);
-    } break;
-    case '\'':
-      token = token_new_and_consume_from_buffer(T_CHAR, 3, tokenizer, *(tokenizer->buffer + 1));
-      if (token.image.start[2] != '\'') {
-        eprintf(token.loc, "CHAR can have only one char");
-      }
-      break;
-    case '0':
-      if (tokenizer->buffer[1] == 'x' || tokenizer->buffer[1] == 'X') {
-        int len = 2;
-        while (isdigit(tokenizer->buffer[len])
-               || ('a' <= tokenizer->buffer[len] && tokenizer->buffer[len] <= 'f')
-               || ('A' <= tokenizer->buffer[len] && tokenizer->buffer[len] <= 'F')) {
-          ++len;
-        }
-        token = token_new_and_consume_from_buffer(T_HEX, len, tokenizer, strtol(tokenizer->buffer + 2, NULL, 16));
-        if (len - 2 != 2 && len - 2 != 4) {
-          eprintf(token.loc, "HEX can be 1 or 2 bytes");
-        }
-        break;
-      }
-      __attribute__((fallthrough));
-    default:
-      if (isdigit(*tokenizer->buffer)) {
-        int len = 1;
-        while (isdigit(tokenizer->buffer[len])) {
-          ++len;
-        }
-        if (isalpha(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
-          tokenizer->loc.len = len;
-          eprintf(tokenizer->loc, "invalid integer");
-        }
-        token = token_new_and_consume_from_buffer(T_INT, len, tokenizer, atoi(tokenizer->buffer));
-      } else if (isalpha(*tokenizer->buffer) || *tokenizer->buffer == '_') {
-        int len = 1;
-        while (isalpha(tokenizer->buffer[len]) || isdigit(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
-          ++len;
-        }
-        sv_t image = {tokenizer->buffer, len};
-        token = token_new_and_consume_from_buffer(
-            sv_eq(image, sv_from_cstr("return"))  ? T_RETURN :
-            sv_eq(image, sv_from_cstr("typedef")) ? T_TYPEDEF :
-            sv_eq(image, sv_from_cstr("struct"))  ? T_STRUCT :
-            sv_eq(image, sv_from_cstr("enum"))    ? T_ENUM :
-            sv_eq(image, sv_from_cstr("int"))     ? T_INTKW :
-            sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW :
-            sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW :
-            sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM :
-            sv_eq(image, sv_from_cstr("if"))      ? T_IF :
-            sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
-            sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
-            sv_eq(image, sv_from_cstr("while"))   ? T_WHILE :
-            sv_eq(image, sv_from_cstr("extern"))  ? T_EXTERN :
-            sv_eq(image, sv_from_cstr("break"))   ? T_BREAK :
-                                                    T_SYM,
-            len,
-            tokenizer,
-            0);
-
-      } else {
-        eprintf(tokenizer->loc, "unknown char: '%c'", *tokenizer->buffer);
-      }
-  }
-
-  tokenizer->last_token = token;
-
-  return token;
-}
-
-token_t token_peek(tokenizer_t *tokenizer) {
-  assert(tokenizer);
-
-  if (tokenizer->has_last_token) {
-    return tokenizer->last_token;
-  }
-  token_t token = token_next(tokenizer);
-  tokenizer->last_token = token;
-  tokenizer->has_last_token = true;
-  return token;
-}
-
 char *token_kind_to_string(token_kind_t kind) {
   // clang-format off
   switch (kind) {
@@ -423,6 +241,7 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_SHL: return "SHL";
     case T_SHR: return "SHR";
     case T_BREAK: return "BREAK";
+    case T_DEFINE: return "DEFINE";
   }
   // clang-format on
   assert(0);
@@ -434,6 +253,248 @@ void token_dump(token_t token) {
          SV_UNPACK(token.image),
          token.loc.row,
          token.loc.col);
+}
+
+token_t token_new_and_consume_from_buffer(token_kind_t kind, int len, tokenizer_t *tok, int asint) {
+  assert(len);
+  assert(tok);
+  location_t loc = tok->loc;
+  loc.len = len;
+  token_t token = (token_t){kind, {tok->buffer, len}, loc, asint};
+  tok->loc.col += len;
+  tok->buffer += len;
+  return token;
+}
+
+token_t token_expect(tokenizer_t *tokenizer, token_kind_t kind);
+token_t token_next(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  token_kind_t table[128] = {0};
+  table['('] = T_PARO;
+  table[')'] = T_PARC;
+  table['['] = T_SQO;
+  table[']'] = T_SQC;
+  table['{'] = T_BRO;
+  table['}'] = T_BRC;
+  table[';'] = T_SEMICOLON;
+  table['+'] = T_PLUS;
+  table['-'] = T_MINUS;
+  table['*'] = T_STAR;
+  table['/'] = T_SLASH;
+  table['&'] = T_AND;
+  table[','] = T_COMMA;
+  table['.'] = T_DOT;
+  table['='] = T_EQUAL;
+  table['!'] = T_NOT;
+
+  token_t token = {0};
+
+  if (tokenizer->has_last_token) {
+    tokenizer->has_last_token = false;
+    token = tokenizer->last_token;
+
+  } else if (tokenizer->current_macro != -1) {
+    if (tokenizer->current_macro_token_index >= tokenizer->macros[tokenizer->current_macro].token_count) {
+      tokenizer->current_macro_token_index = 0;
+      tokenizer->current_macro = -1;
+      return token_next(tokenizer);
+    } else {
+      token = tokenizer->macros[tokenizer->current_macro].tokens[tokenizer->current_macro_token_index++];
+    }
+
+  } else {
+    switch (*tokenizer->buffer) {
+      case '\0':
+        break;
+      case ' ':
+      case '\t':
+      case '\r':
+        ++tokenizer->buffer;
+        ++tokenizer->loc.col;
+        return token_next(tokenizer);
+      case '\n':
+      {
+        ++tokenizer->loc.row;
+        tokenizer->loc.col = 1;
+        ++tokenizer->buffer;
+        tokenizer->loc.line.start = tokenizer->buffer;
+        char *row_end = tokenizer->buffer;
+        while (*row_end != '\n' && *row_end != '\0') {
+          ++row_end;
+        }
+        tokenizer->loc.line.len = row_end - tokenizer->buffer;
+        return token_next(tokenizer);
+      }
+      case '#':
+      {
+        int len = 1;
+        while (isalpha(tokenizer->buffer[len]) || isdigit(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
+          ++len;
+        }
+        token = token_new_and_consume_from_buffer(T_DEFINE, len, tokenizer, 0);
+        if (sv_eq(token.image, sv_from_cstr("#define"))) {
+          token_t name = token_expect(tokenizer, T_SYM);
+          assert(tokenizer->macro_count + 1 < MACRO_MAX);
+          macro_t *macro = &tokenizer->macros[tokenizer->macro_count];
+          macro->name = name.image;
+          while ((token = token_next(tokenizer)).loc.row == name.loc.row) {
+            assert(macro->token_count + 1 < MACRO_TOKEN_MAX);
+            macro->tokens[macro->token_count++] = token;
+            if (token.kind == T_SYM && sv_eq(token.image, name.image)) {
+              eprintf(token.loc, "invalid recursive macro");
+            }
+          }
+          tokenizer->macro_count++;
+        } else {
+          eprintf(token.loc, "invalid directive");
+        }
+      } break;
+      case '<':
+      case '>':
+        if (tokenizer->buffer[1] == tokenizer->buffer[0]) {
+          token = token_new_and_consume_from_buffer(tokenizer->buffer[0] == '<' ? T_SHL : T_SHR, 2, tokenizer, 0);
+        } else {
+          TODO;
+        }
+        break;
+      case '/':
+        if (tokenizer->buffer[1] == '/') {
+          while (tokenizer->buffer[0] != '\n') {
+            ++tokenizer->buffer;
+          }
+          return token_next(tokenizer);
+        } else if (tokenizer->buffer[1] == '*') {
+          while (!(tokenizer->buffer[0] == '*' && tokenizer->buffer[1] == '/')) {
+            ++tokenizer->buffer;
+            ++tokenizer->loc.col;
+          }
+          tokenizer->buffer += 2;
+          tokenizer->loc.col += 2;
+          return token_next(tokenizer);
+        }
+        __attribute__((fallthrough));
+      case '(':
+      case ')':
+      case '[':
+      case ']':
+      case '{':
+      case '}':
+      case '+':
+      case '-':
+      case '*':
+      case '&':
+      case ',':
+      case ';':
+      case '.':
+      case '=':
+      case '!':
+        if (tokenizer->buffer[0] == '=' && tokenizer->buffer[1] == '=') {
+          token = token_new_and_consume_from_buffer(T_EQ, 2, tokenizer, 0);
+        } else if (tokenizer->buffer[0] == '!' && tokenizer->buffer[1] == '=') {
+          token = token_new_and_consume_from_buffer(T_NEQ, 2, tokenizer, 0);
+        } else {
+          assert(table[(int)*tokenizer->buffer]);
+          token = token_new_and_consume_from_buffer(table[(int)*tokenizer->buffer], 1, tokenizer, 0);
+        }
+        break;
+      case '"':
+      {
+        int len = 1;
+        do {
+          ++len;
+        } while (tokenizer->buffer[len] != '"');
+        ++len;
+        token = token_new_and_consume_from_buffer(T_STRING, len, tokenizer, 0);
+      } break;
+      case '\'':
+        token = token_new_and_consume_from_buffer(T_CHAR, 3, tokenizer, *(tokenizer->buffer + 1));
+        if (token.image.start[2] != '\'') {
+          eprintf(token.loc, "CHAR can have only one char");
+        }
+        break;
+      case '0':
+        if (tokenizer->buffer[1] == 'x' || tokenizer->buffer[1] == 'X') {
+          int len = 2;
+          while (isdigit(tokenizer->buffer[len])
+                 || ('a' <= tokenizer->buffer[len] && tokenizer->buffer[len] <= 'f')
+                 || ('A' <= tokenizer->buffer[len] && tokenizer->buffer[len] <= 'F')) {
+            ++len;
+          }
+          token = token_new_and_consume_from_buffer(T_HEX, len, tokenizer, strtol(tokenizer->buffer + 2, NULL, 16));
+          if (len - 2 != 2 && len - 2 != 4) {
+            eprintf(token.loc, "HEX can be 1 or 2 bytes");
+          }
+          break;
+        }
+        __attribute__((fallthrough));
+      default:
+        if (isdigit(*tokenizer->buffer)) {
+          int len = 1;
+          while (isdigit(tokenizer->buffer[len])) {
+            ++len;
+          }
+          if (isalpha(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
+            tokenizer->loc.len = len;
+            eprintf(tokenizer->loc, "invalid integer");
+          }
+          token = token_new_and_consume_from_buffer(T_INT, len, tokenizer, atoi(tokenizer->buffer));
+        } else if (isalpha(*tokenizer->buffer) || *tokenizer->buffer == '_') {
+          int len = 1;
+          while (isalpha(tokenizer->buffer[len]) || isdigit(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
+            ++len;
+          }
+          sv_t image = {tokenizer->buffer, len};
+          token = token_new_and_consume_from_buffer(
+              sv_eq(image, sv_from_cstr("return"))  ? T_RETURN :
+              sv_eq(image, sv_from_cstr("typedef")) ? T_TYPEDEF :
+              sv_eq(image, sv_from_cstr("struct"))  ? T_STRUCT :
+              sv_eq(image, sv_from_cstr("enum"))    ? T_ENUM :
+              sv_eq(image, sv_from_cstr("int"))     ? T_INTKW :
+              sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW :
+              sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW :
+              sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM :
+              sv_eq(image, sv_from_cstr("if"))      ? T_IF :
+              sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
+              sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
+              sv_eq(image, sv_from_cstr("while"))   ? T_WHILE :
+              sv_eq(image, sv_from_cstr("extern"))  ? T_EXTERN :
+              sv_eq(image, sv_from_cstr("break"))   ? T_BREAK :
+                                                      T_SYM,
+              len,
+              tokenizer,
+              0);
+
+        } else {
+          eprintf(tokenizer->loc, "unknown char: '%c'", *tokenizer->buffer);
+        }
+    }
+  }
+
+  tokenizer->last_token = token;
+
+  if (token.kind == T_SYM) {
+    for (int i = 0; i < tokenizer->macro_count; ++i) {
+      if (sv_eq(token.image, tokenizer->macros[i].name)) {
+        tokenizer->current_macro = i;
+        return token_next(tokenizer);
+      }
+    }
+  }
+
+  return token;
+}
+
+token_t token_peek(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  if (tokenizer->has_last_token) {
+    return tokenizer->last_token;
+  }
+  token_t token = token_next(tokenizer);
+  tokenizer->last_token = token;
+  tokenizer->has_last_token = true;
+  return token;
 }
 
 token_t token_expect(tokenizer_t *tokenizer, token_kind_t kind) {
@@ -942,6 +1003,8 @@ void ast_dump(ast_t *ast, bool dumptype) {
   switch (ast->kind) {
     case A_NONE:
       assert(0);
+    case A_BREAK:
+      break;
     case A_LIST:
     case A_ASSIGN:
     case A_PARAM:
@@ -1029,8 +1092,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
       ast_dump(ast->as.if_.then, dumptype);
       printf(", ");
       ast_dump(ast->as.if_.else_, dumptype);
-      break;
-    case A_BREAK:
       break;
   }
   printf(")");
@@ -2857,6 +2918,7 @@ void optimize_ast(ast_t **astp, bool debug_opt) {
     case A_ASM:
     case A_FUNCDEF:
     case A_EXTERN:
+    case A_BREAK:
       break;
     case A_LIST:
     case A_ASSIGN:
@@ -2956,8 +3018,6 @@ void optimize_ast(ast_t **astp, bool debug_opt) {
       optimize_ast(&cond, debug_opt);
       optimize_ast(&ast->as.binary.right, debug_opt);
     } break;
-    case A_BREAK:
-      break;
   }
 }
 
@@ -3358,7 +3418,7 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.decl.expr) {
         int start_sp = state->sp;
         compile(ast->as.decl.expr, state);
-        assert(state->sp >= start_sp); // TODO: test
+        assert(state->sp > start_sp); // TODO: test
         if (state->sp - start_sp > size) {
           state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - start_sp - size}});
           state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
@@ -3422,11 +3482,7 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.typedef_.type.kind == TY_ENUM) {
         int i = 0;
         for (type_t *typei = &ast->as.typedef_.type; typei; typei = typei->as.enum_.next) {
-          state_add_symbol(state,
-                           (symbol_t){typei->as.enum_.name,
-                                      type_malloc((type_t){TY_INT, 2, {}}),
-                                      INFO_CONSTANT,
-                                      {.num = i}});
+          state_add_symbol(state, (symbol_t){typei->as.enum_.name, type_malloc((type_t){TY_INT, 2, {}}), INFO_CONSTANT, {.num = i}});
           i++;
         }
       }
@@ -3529,6 +3585,7 @@ void compile(ast_t *ast, state_t *state) {
       break_target_info_t info = state->break_target[state->break_target_num - 1];
       state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -(state->sp - info.sp)}});
       state_add_ir(state, (ir_t){IR_JMP, {.num = info.uli}});
+      break;
   }
 }
 

@@ -1,4 +1,4 @@
-params: -D tok
+params: -D tok --dev
 exitcode: 0
 code:
 _asd_123 012 12 0x12 0x1322 0XaBcD
@@ -10,6 +10,8 @@ void int char
 if else for while break
 extern
 << >>
+#define A 2 1
+A
 output:
 TOKENS:
 SYM '_asd_123' @ 1:1
@@ -54,3 +56,5 @@ BREAK 'break' @ 7:19
 EXTERN 'extern' @ 8:1
 SHL '<<' @ 9:1
 SHR '>>' @ 9:4
+INT '2' @ 10:11
+INT '1' @ 10:13

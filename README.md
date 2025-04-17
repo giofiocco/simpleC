@@ -62,12 +62,18 @@ Is possible to enable optimizzation to the AST (after typecheck), to the IR or t
 - SHL: `<<`
 - SHR: `>>`
 - BREAK: `break`
+- DEFINE: `#define`
 
 ## Comments
 
 Single-line comments: `//` (till the end of line)
 
 Multi-line comments: `/* ... */`
+
+## Macros
+
+It's DEFINE SYM followed by a list of tokens until the newline.
+When the same SYM is used it is substituted by the list of tokens
 
 # Grammar
 
