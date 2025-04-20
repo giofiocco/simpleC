@@ -1686,14 +1686,15 @@ type_t parse_type(tokenizer_t *tokenizer) {
 type_t parse_structdef(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  token_expect(tokenizer, T_STRUCT);
+  location_t start = token_expect(tokenizer, T_STRUCT).loc;
   token_t name = {0};
   if (token_peek(tokenizer).kind == T_SYM) {
     name = token_next(tokenizer);
   }
   token_expect(tokenizer, T_BRO);
   if (token_next_if_kind(tokenizer, T_BRC)) {
-    return (type_t){TY_STRUCT, 0, {.struct_ = {name, NULL}}};
+    catch = false;
+    eprintf(location_union(start, tokenizer->last_token.loc), "invalid empty struct");
   }
 
   sv_t fields[128] = {0};
