@@ -48,4 +48,5 @@ INST         INCSP
 INSTHEX      RAM_AL 0x01
 INST         PUSHA
 SETLABEL     _002
+INST         INCSP
 INST         RET

@@ -1,4 +1,4 @@
-params: -D com
+params: -D com -O1
 exitcode: 0
 code:
 typedef struct {
@@ -11,6 +11,7 @@ int main() {
   point a;
   point b;
   a.c;
+  a.a;
 }
 output:
 ASSEMBLY:
@@ -28,10 +29,13 @@ INST         DECSP
 INST         DECSP
 INST         DECSP
 INST         SP_A
-INSTHEX2     RAM_B 0x0009
+INSTHEX      RAM_BL 0x09
 INST         SUM
 INST         A_B
 INST         rB_AL
+INST         PUSHA
+INST         INCSP
+INSTHEX      PEEKAR 0x06
 INST         PUSHA
 INST         INCSP
 INST         INCSP

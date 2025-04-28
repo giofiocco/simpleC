@@ -1293,25 +1293,26 @@ typedef struct {
 
 typedef enum {
   IR_NONE,
-  IR_SETLABEL,    // + sv
-  IR_SETULI,      // + num
-  IR_JMPZ,        // + num
-  IR_JMPNZ,       // + num
-  IR_JMP,         // + num
-  IR_FUNCEND,     //
-  IR_ADDR_LOCAL,  // + num
-  IR_ADDR_GLOBAL, // + num
-  IR_ADDR_OFFSET, // + num
-  IR_READ,        // + num
-  IR_WRITE,       // + num
-  IR_CHANGE_SP,   // + num
-  IR_INT,         // + num
-  IR_STRING,      // + num
-  IR_OPERATION,   // + inst
-  IR_MUL,         // + num
-  IR_DIV,         // + num
-  IR_CALL,        // + sv
-  IR_EXTERN,      // + sv
+  IR_SETLABEL,      // + sv
+  IR_SETULI,        // + num
+  IR_JMPZ,          // + num
+  IR_JMPNZ,         // + num
+  IR_JMP,           // + num
+  IR_LOCATION,      // + loc
+  IR_READ,          // + loc
+  IR_WRITE,         // + loc
+  IR_CHANGE_SP,     // + num
+  IR_INT,           // + num
+  IR_STRING,        // + num
+  IR_OPERATION,     // + inst
+  IR_MUL,           // + num
+  IR_DIV,           // + num
+  IR_CALL,          // + sv
+  IR_EXTERN,        // + sv
+  IR_END_STATEMENT, //
+  IR_NEW_VARIABLE,  // + num (size)
+  IR_NEW_PARAM,     // + num (size)
+  IR_RETURN,        // + num (size)
 } ir_kind_t;
 
 typedef struct {
@@ -1320,6 +1321,11 @@ typedef struct {
     sv_t sv;
     int num;
     instruction_t inst;
+    struct {
+      int local;
+      int base;
+      int offset;
+    } loc;
   } arg;
 } ir_t;
 
@@ -1337,14 +1343,8 @@ char *ir_kind_to_string(ir_kind_t kind) {
       return "JMPNZ";
     case IR_JMP:
       return "JMP";
-    case IR_FUNCEND:
-      return "FUNCEND";
-    case IR_ADDR_LOCAL:
-      return "ADDR_LOCAL";
-    case IR_ADDR_GLOBAL:
-      return "ADDR_GLOBAL";
-    case IR_ADDR_OFFSET:
-      return "ADDR_OFFSET";
+    case IR_LOCATION:
+      return "LOCATION";
     case IR_READ:
       return "READ";
     case IR_WRITE:
@@ -1365,39 +1365,50 @@ char *ir_kind_to_string(ir_kind_t kind) {
       return "CALL";
     case IR_EXTERN:
       return "EXTERN";
+    case IR_END_STATEMENT:
+      return "END_STATEMENT";
+    case IR_NEW_VARIABLE:
+      return "NEW_VARIABLE";
+    case IR_NEW_PARAM:
+      return "NEW_PARAM";
+    case IR_RETURN:
+      return "RETURN";
   }
   assert(0);
 }
 
 void ir_dump(ir_t ir) {
-  printf("%s ", ir_kind_to_string(ir.kind));
+  printf("%s", ir_kind_to_string(ir.kind));
   switch (ir.kind) {
     case IR_NONE:
-    case IR_FUNCEND:
+    case IR_END_STATEMENT:
       break;
     case IR_SETLABEL:
     case IR_CALL:
     case IR_EXTERN:
-      printf(SV_FMT, SV_UNPACK(ir.arg.sv));
+      printf(" " SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
     case IR_SETULI:
     case IR_JMPZ:
     case IR_JMPNZ:
     case IR_JMP:
-    case IR_ADDR_LOCAL:
-    case IR_ADDR_GLOBAL:
-    case IR_ADDR_OFFSET:
-    case IR_READ:
-    case IR_WRITE:
     case IR_CHANGE_SP:
     case IR_INT:
     case IR_STRING:
     case IR_MUL:
     case IR_DIV:
-      printf("%d", ir.arg.num);
+    case IR_NEW_VARIABLE:
+    case IR_NEW_PARAM:
+    case IR_RETURN:
+    case IR_READ:
+    case IR_WRITE:
+      printf(" %d", ir.arg.num);
       break;
     case IR_OPERATION:
-      printf("%s", instruction_to_string(ir.arg.inst));
+      printf(" %s", instruction_to_string(ir.arg.inst));
+      break;
+    case IR_LOCATION:
+      printf(" {%s %d+%d}", ir.arg.loc.local ? "LOCAL" : "GLOBAL", ir.arg.loc.base, ir.arg.loc.offset);
       break;
   }
   printf("\n");
@@ -1423,6 +1434,7 @@ typedef struct {
   bool is_init;
   break_target_info_t break_target[BREAK_TARGET_MAX];
   int break_target_num;
+  int variables_count;
 } state_t;
 
 void state_init(state_t *state) {
@@ -1445,12 +1457,12 @@ void state_add_ir(state_t *state, ir_t ir) {
 
 void state_add_addr_offset(state_t *state, int offset) {
   assert(state);
-  if (state->ir_num > 0
-      && (state->irs[state->ir_num - 1].kind == IR_ADDR_LOCAL
-          || state->irs[state->ir_num - 1].kind == IR_ADDR_OFFSET)) {
-    state->irs[state->ir_num - 1].arg.num += offset;
+  if (state->is_init) {
+    assert(state->ir_init_num > 0 && state->irs_init[state->ir_init_num - 1].kind == IR_LOCATION);
+    state->irs_init[state->ir_init_num - 1].arg.loc.offset += offset;
   } else {
-    state_add_ir(state, (ir_t){IR_ADDR_OFFSET, {.num = offset}});
+    assert(state->ir_num > 0 && state->irs[state->ir_num - 1].kind == IR_LOCATION);
+    state->irs[state->ir_num - 1].arg.loc.offset += offset;
   }
 }
 
@@ -2814,8 +2826,7 @@ void typecheck(ast_t *ast, state_t *state) {
       typecheck(ast->as.binary.right, state);
       ast->type = (type_t){TY_PARAM,
                            ast->as.binary.left->type.size,
-                           {.list = {&ast->as.binary.left->type,
-                                     ast->as.binary.right ? &ast->as.binary.right->type : NULL}}};
+                           {.list = {&ast->as.binary.left->type, ast->as.binary.right ? &ast->as.binary.right->type : NULL}}};
       break;
     case A_ARRAY:
       assert(ast->as.binary.left);
@@ -3094,9 +3105,9 @@ void get_addr_ast(state_t *state, ast_t *ast) {
     {
       symbol_t *s = state_find_symbol(state, ast->as.fac);
       if (s->kind == INFO_LOCAL) {
-        state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - s->info.local}});
+        state_add_ir(state, (ir_t){IR_LOCATION, {.loc = {1, s->info.local, 0}}});
       } else if (s->kind == INFO_GLOBAL) {
-        state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = s->info.global}});
+        state_add_ir(state, (ir_t){IR_LOCATION, {.loc = {0, s->info.local, 0}}});
       } else {
         assert(0);
       }
@@ -3110,6 +3121,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
         case T_DOT:
         {
           get_addr_ast(state, ast->as.binaryop.lhs);
+
           unsigned int offset = 0;
           type_t *f = ast->as.binaryop.lhs->type.as.alias.type->as.struct_.fieldlist;
           while (!sv_eq(f->as.fieldlist.name.image, ast->as.binaryop.rhs->as.fac.image)) {
@@ -3141,8 +3153,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
             if (size != 1) {
               state_add_ir(state, (ir_t){IR_MUL, {.num = size}});
             }
-            state_add_ir(state,
-                         (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
+            state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
           }
         } break;
         default:
@@ -3203,13 +3214,10 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
       }
       break;
     case A_INT:
-      data(compiled,
-           (bytecode_t){ast->type.size == 2 ? BHEX2 : BHEX, 0, {.num = ast->as.fac.asint}});
+      data(compiled, (bytecode_t){ast->type.size == 2 ? BHEX2 : BHEX, 0, {.num = ast->as.fac.asint}});
       break;
     case A_STRING:
-      data(compiled,
-           bytecode_with_sv(
-               BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
+      data(compiled, bytecode_with_sv(BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
       data(compiled, (bytecode_t){BHEX, 0, {.num = 0}});
       break;
     default:
@@ -3218,10 +3226,8 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
       data(compiled, (bytecode_t){BDB, 0, {.num = size}});
       state->is_init = true;
       compile(ast, state);
-      state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
-      if (offset != 0) {
-        state_add_ir(state, (ir_t){IR_ADDR_OFFSET, {.num = offset}});
-      }
+
+      state_add_ir(state, (ir_t){IR_LOCATION, {.loc = {0, uli, offset}}});
       state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
       state->is_init = false;
     }
@@ -3244,13 +3250,10 @@ void compile(ast_t *ast, state_t *state) {
       }
       break;
     case A_BLOCK:
-    {
-      int start_sp = state->sp;
       state_push_scope(state);
       compile(ast->as.ast, state);
       state_drop_scope(state);
-      state_change_sp(state, -(state->sp - start_sp));
-    } break;
+      break;
     case A_PARAM:
       if (ast->as.binary.right) {
         compile(ast->as.binary.right, state);
@@ -3265,13 +3268,11 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.funcdecl.params, state);
       }
       state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
-      state->sp = 0;
       if (ast->as.funcdecl.block) {
-        compile(ast->as.funcdecl.block->as.ast, state);
+        compile(ast->as.funcdecl.block, state);
       }
-      if (state->irs[state->ir_num - 1].kind != IR_FUNCEND) {
-        state_change_sp(state, -state->sp);
-        state_add_ir(state, (ir_t){IR_FUNCEND, {}});
+      if (state->irs[state->ir_num - 1].kind != IR_RETURN) {
+        state_add_ir(state, (ir_t){IR_RETURN, {.num = 0}});
       }
       state_drop_scope(state);
       break;
@@ -3279,35 +3280,22 @@ void compile(ast_t *ast, state_t *state) {
       state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
       break;
     case A_PARAMDEF:
-      state_add_symbol(
-          state,
-          (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {-state->param}});
+      state_add_symbol(state, (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {-state->param}});
       state->param += type_size_aligned(&ast->as.paramdef.type);
       if (ast->as.paramdef.next) {
         compile(ast->as.paramdef.next, state);
       }
       break;
     case A_STATEMENT:
-    {
-      int sp_start = state->sp;
       compile(ast->as.ast, state);
       assert(ast->as.ast->kind != A_RETURN); // TODO: needed?
       assert(ast->as.ast->kind != A_DECL);
-      int delta = state->sp - sp_start;
-      if (delta != 0) {
-        state_change_sp(state, -delta);
-      }
-    } break;
+      state_add_ir(state, (ir_t){IR_END_STATEMENT, {}});
+      break;
     case A_RETURN:
-    {
       compile(ast->as.ast, state);
-      int size = type_size_aligned(&ast->as.ast->type);
-      state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp + 2}});
-      state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
-      state->sp -= size;
-      state_change_sp(state, -state->sp);
-      state_add_ir(state, (ir_t){IR_FUNCEND, {}});
-    } break;
+      state_add_ir(state, (ir_t){IR_RETURN, {.num = type_size_aligned(&ast->as.ast->type)}});
+      break;
     case A_BINARYOP:
       switch (ast->as.binaryop.op) {
         case T_DOT:
@@ -3322,15 +3310,12 @@ void compile(ast_t *ast, state_t *state) {
           if (type_is_kind(&ast->type, TY_PTR)) {
             state_add_ir(state, (ir_t){IR_MUL, {.num = ast->type.as.ptr->size}});
             state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
-            state->sp -= 2;
           } else if (ast->as.binaryop.op == T_MINUS && ast->type.kind == TY_INT && type_is_kind(&ast->as.binaryop.lhs->type, TY_PTR) && type_is_kind(&ast->as.binaryop.rhs->type, TY_PTR)) {
             state_add_ir(state, (ir_t){IR_OPERATION, {.inst = SUB}});
             state_add_ir(state, (ir_t){IR_DIV, {.num = ast->as.binaryop.lhs->type.as.ptr->size}});
-            state->sp -= 2;
             break;
           } else {
             state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
-            state->sp -= 2;
           }
           break;
         case T_EQ:
@@ -3390,14 +3375,12 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_INT:
       state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.fac.asint}});
-      state->sp += 2;
       break;
     case A_SYM:
     {
       symbol_t *s = state_find_symbol(state, ast->as.fac);
       if (s->kind == INFO_CONSTANT) {
         state_add_ir(state, (ir_t){IR_INT, {.num = s->info.num}});
-        state->sp += 2;
       } else {
         if (type_is_kind(&ast->type, TY_ARRAY)) {
           eprintf(ast->loc, "cannot access ARRAY, maybe wanna cast it to PTR");
@@ -3405,34 +3388,24 @@ void compile(ast_t *ast, state_t *state) {
         get_addr_ast(state, ast);
         assert(s->type);
         state_add_ir(state, (ir_t){IR_READ, {.num = s->type->size}});
-        state->sp += type_size_aligned(s->type);
       }
     } break;
     case A_STRING:
     {
       int uli = datauli(state);
       compile_data(ast, state, 0, 0); // TODO: maybe compile_data(ast, state, uli, 0);
-      state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
-      state->sp += 2;
+      state_add_ir(state, (ir_t){IR_LOCATION, {.loc = {0, uli, 0}}});
     } break;
     case A_DECL:
     {
       int size = type_size_aligned(&ast->as.decl.type);
       if (ast->as.decl.expr) {
-        int start_sp = state->sp;
         compile(ast->as.decl.expr, state);
-        assert(state->sp > start_sp);
-        if (state->sp - start_sp > size) {
-          state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - start_sp - size}});
-          state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
-          state_change_sp(state, -(state->sp - start_sp - 2 * size));
-          state->sp = start_sp + size;
-        }
       } else {
         state_change_sp(state, size);
       }
-      state_add_symbol(
-          state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_LOCAL, {state->sp - 2}});
+      state_add_ir(state, (ir_t){IR_NEW_VARIABLE, {.num = size}});
+      state_add_symbol(state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_LOCAL, {state->variables_count++}});
     } break;
     case A_GLOBDECL:
     {
@@ -3442,17 +3415,13 @@ void compile(ast_t *ast, state_t *state) {
       } else {
         data(compiled, (bytecode_t){BDB, 0, {.num = ast->as.decl.type.size}});
       }
-      state_add_symbol(state,
-                       (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_GLOBAL, {uli}});
+      state_add_symbol(state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_GLOBAL, {uli}});
     } break;
     case A_ASSIGN:
-    {
       compile(ast->as.binary.right, state);
       get_addr_ast(state, ast->as.binary.left);
-      int size = type_size_aligned(&ast->type);
-      state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
-      state->sp -= size;
-    } break;
+      state_add_ir(state, (ir_t){IR_WRITE, {.num = type_size_aligned(&ast->type)}});
+      break;
     case A_FUNCALL:
       if (ast->as.funcall.params) {
         compile(ast->as.funcall.params, state);
@@ -3470,7 +3439,6 @@ void compile(ast_t *ast, state_t *state) {
           compile(ast->as.binary.left, state);
           compile(ast->as.binary.right->as.binary.left, state);
           state_add_ir(state, (ir_t){IR_OPERATION, {.inst = B_AH}});
-          state->sp -= 2;
         } else {
           compile(ast->as.binary.left, state);
         }
@@ -3521,8 +3489,7 @@ void compile(ast_t *ast, state_t *state) {
             compile(asts[ast_num], state);
           }
         }
-      } else if (type_is_kind(&ast->as.cast.target, TY_PTR)
-                 && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
+      } else if (type_is_kind(&ast->as.cast.target, TY_PTR) && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
         get_addr_ast(state, ast->as.cast.ast);
         state->sp += 2;
       } else {
@@ -3572,11 +3539,9 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.binary.left->kind == A_UNARYOP && ast->as.binary.left->as.unaryop.op == T_NOT) {
         compile(ast->as.binary.left->as.unaryop.arg, state);
         state_add_ir(state, (ir_t){IR_JMPNZ, {.num = b}});
-        state->sp -= 2;
       } else {
         compile(ast->as.binary.left, state);
         state_add_ir(state, (ir_t){IR_JMPZ, {.num = b}});
-        state->sp -= 2;
       }
       if (ast->as.binary.right) {
         compile(ast->as.binary.right, state);
@@ -3629,32 +3594,32 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 1;
       memcpy(irs + i, irs + i + 1, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
-               && is_ir_kind(irs, ir_count, i + 1, IR_READ)
-               && is_ir_kind(irs, ir_count, i + 2, IR_CHANGE_SP)
-               && irs[i + 1].arg.num <= -irs[i + 2].arg.num) {
-      if (debug_opt) {
-        printf("  %03d | ADDR_LOCAL READ(x) CHANGE_SP(y) if x <= -y -> CHANGE_SP(x+y)\n", i);
-      }
-
-      irs[i + 2].arg.num += irs[i + 1].arg.num;
-      *ir_count -= 2;
-      memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
-      i = 0;
-    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
-               && is_ir_kind(irs, ir_count, i + 1, IR_READ)
-               && is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL)
-               && is_ir_kind(irs, ir_count, i + 3, IR_READ)
-               && irs[i].arg.num - irs[i + 3].arg.num == irs[i + 2].arg.num - irs[i + 1].arg.num) {
-      if (debug_opt) {
-        printf("  %03d | ADDR_LOCAL(x+z) READ(y) ADDR_LOCAL(y+z) READ(z) -> ADDR_LOCAL(z) READ(x+y)\n", i);
-      }
-
-      irs[i + 2].arg.num = irs[i].arg.num - irs[i + 3].arg.num;
-      irs[i + 3].arg.num += irs[i + 1].arg.num;
-      *ir_count -= 2;
-      memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
-      i = 0;
+      // } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
+      //            && is_ir_kind(irs, ir_count, i + 1, IR_READ)
+      //            && is_ir_kind(irs, ir_count, i + 2, IR_CHANGE_SP)
+      //            && irs[i + 1].arg.num <= -irs[i + 2].arg.num) {
+      //   if (debug_opt) {
+      //     printf("  %03d | ADDR_LOCAL READ(x) CHANGE_SP(y) if x <= -y -> CHANGE_SP(x+y)\n", i);
+      //   }
+      //
+      //   irs[i + 2].arg.num += irs[i + 1].arg.num;
+      //   *ir_count -= 2;
+      //   memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
+      //   i = 0;
+      // } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
+      //            && is_ir_kind(irs, ir_count, i + 1, IR_READ)
+      //            && is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL)
+      //            && is_ir_kind(irs, ir_count, i + 3, IR_READ)
+      //            && irs[i].arg.num - irs[i + 3].arg.num == irs[i + 2].arg.num - irs[i + 1].arg.num) {
+      //   if (debug_opt) {
+      //     printf("  %03d | ADDR_LOCAL(x+z) READ(y) ADDR_LOCAL(y+z) READ(z) -> ADDR_LOCAL(z) READ(x+y)\n", i);
+      //   }
+      //
+      //   irs[i + 2].arg.num = irs[i].arg.num - irs[i + 3].arg.num;
+      //   irs[i + 3].arg.num += irs[i + 1].arg.num;
+      //   *ir_count -= 2;
+      //   memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
+      //   i = 0;
     } else if (is_ir_kind(irs, ir_count, i, IR_INT) && is_ir_kind(irs, ir_count, i + 1, IR_INT)
                && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION) && irs[i + 2].arg.inst == B_AH) {
       if (debug_opt) {
@@ -3676,22 +3641,22 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
-               && is_ir_kind(irs, ir_count, i + 1, IR_READ)
-               && is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL)
-               && is_ir_kind(irs, ir_count, i + 3, IR_WRITE)
-               && is_ir_kind(irs, ir_count, i + 4, IR_CHANGE_SP) && irs[i].arg.num == 2
-               && irs[i + 1].arg.num == irs[i + 3].arg.num
-               && -irs[i + 4].arg.num >= irs[i + 1].arg.num) {
-      if (debug_opt) {
-        printf("  %03d | ADDR_LOCAL(2) READ(x) ADDR_LOCAL(y) WRITE(x) CHANGE_SP(z) if -z>=x -> ADDR_LOCAL(y-x) WRITE(x) CHANGE_SP(z+x)\n", i);
-      }
-
-      irs[i + 2].arg.num -= irs[i + 1].arg.num;
-      irs[i + 4].arg.num += irs[i + 1].arg.num;
-      *ir_count -= 2;
-      memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
-      i = 0;
+      // } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
+      //            && is_ir_kind(irs, ir_count, i + 1, IR_READ)
+      //            && is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL)
+      //            && is_ir_kind(irs, ir_count, i + 3, IR_WRITE)
+      //            && is_ir_kind(irs, ir_count, i + 4, IR_CHANGE_SP) && irs[i].arg.num == 2
+      //            && irs[i + 1].arg.num == irs[i + 3].arg.num
+      //            && -irs[i + 4].arg.num >= irs[i + 1].arg.num) {
+      //   if (debug_opt) {
+      //     printf("  %03d | ADDR_LOCAL(2) READ(x) ADDR_LOCAL(y) WRITE(x) CHANGE_SP(z) if -z>=x -> ADDR_LOCAL(y-x) WRITE(x) CHANGE_SP(z+x)\n", i);
+      //   }
+      //
+      //   irs[i + 2].arg.num -= irs[i + 1].arg.num;
+      //   irs[i + 4].arg.num += irs[i + 1].arg.num;
+      //   *ir_count -= 2;
+      //   memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
+      //   i = 0;
     } else if (is_ir_kind(irs, ir_count, i, IR_INT)
                && is_ir_kind(irs, ir_count, i + 1, IR_MUL)) {
       if (debug_opt) {
@@ -3702,18 +3667,18 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 1;
       memcpy(irs + i + 1, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-    } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
-               && is_ir_kind(irs, ir_count, i + 1, IR_INT)
-               && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION)
-               && irs[i + 2].arg.inst == SUM) {
-      if (debug_opt) {
-        printf("  %03d | ADDR_LOCAL(x) INT(y) OPERATION(SUM) -> ADDR_LOCAL(x + y)\n", i);
-      }
-
-      irs[i].arg.num += irs[i + 1].arg.num;
-      *ir_count -= 2;
-      memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
-      i = 0;
+      // } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
+      //            && is_ir_kind(irs, ir_count, i + 1, IR_INT)
+      //            && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION)
+      //            && irs[i + 2].arg.inst == SUM) {
+      //   if (debug_opt) {
+      //     printf("  %03d | ADDR_LOCAL(x) INT(y) OPERATION(SUM) -> ADDR_LOCAL(x + y)\n", i);
+      //   }
+      //
+      //   irs[i].arg.num += irs[i + 1].arg.num;
+      //   *ir_count -= 2;
+      //   memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
+      //   i = 0;
     }
   }
 }
@@ -3744,217 +3709,210 @@ void compile_change_sp(state_t *state, int delta) {
   }
 }
 
-void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
+void compile_ir_list(state_t *state, ir_t *irs, int ir_num) {
   assert(state);
   assert(irs);
-  if (iri >= ir_num) {
-    return;
-  }
   compiled_t *compiled = &state->compiled;
-  ir_t ir = irs[iri];
 
-  switch (ir.kind) {
-    case IR_NONE:
-      assert(0);
-    case IR_SETLABEL:
-      code(compiled, bytecode_with_sv(BSETLABEL, 0, ir.arg.sv));
-      break;
-    case IR_SETULI:
-      code(compiled, bytecode_uli(BSETLABEL, 0, ir.arg.num));
-      break;
-    case IR_JMPZ:
-    case IR_JMPNZ:
-      code(compiled, (bytecode_t){BINST, POPA, {}});
-      code(compiled, (bytecode_t){BINST, CMPA, {}});
-      code(compiled, bytecode_uli(BINSTRELLABEL, ir.kind == IR_JMPZ ? JMPRZ : JMPRNZ, ir.arg.num));
-      break;
-    case IR_JMP:
-      code(compiled, bytecode_uli(BINSTRELLABEL, JMPR, ir.arg.num));
-      break;
-    case IR_FUNCEND:
-      code(compiled, (bytecode_t){BINST, RET, {}});
-      break;
-    case IR_ADDR_LOCAL:
-      if (iri + 1 < ir_num && irs[iri + 1].kind == IR_READ) {
-        assert(0 < ir.arg.num && ir.arg.num < 256);
-        int size = irs[iri + 1].arg.num;
-        if (size == 1) {
-          code(compiled, (bytecode_t){BINST, SP_A, {}});
-          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.num}});
-          code(compiled, (bytecode_t){BINST, SUM, {}});
-          code(compiled, (bytecode_t){BINST, A_B, {}});
-          code(compiled, (bytecode_t){BINST, rB_AL, {}});
-          code(compiled, (bytecode_t){BINST, PUSHA, {}});
-        } else {
-          assert(size % 2 == 0);
-          for (int i = 0; i < size; i += 2) {
-            code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = ir.arg.num + size - 2}});
-            code(compiled, (bytecode_t){BINST, PUSHA, {}});
-          }
-        }
-        ++iri;
-      } else if (iri + 1 < ir_num && irs[iri + 1].kind == IR_WRITE) {
-        assert(0 < ir.arg.num && ir.arg.num < 256);
-        int size = irs[iri + 1].arg.num;
-        for (int i = 0; i < size; i += 2) {
-          code(compiled, (bytecode_t){BINST, POPA, {}});
-          code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = ir.arg.num}});
-        }
-        ++iri;
-      } else {
-        code(compiled, (bytecode_t){BINST, SP_A, {}});
-        if (abs(ir.arg.num) <= 4) {
-          for (int i = 0; i < abs(ir.arg.num); ++i) {
-            code(compiled, (bytecode_t){BINST, ir.arg.num > 0 ? INCA : DECA, {}});
-          }
-        } else {
-          if (ir.arg.num > 0) {
-            code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.num}});
-            code(compiled, (bytecode_t){BINST, SUM, {}});
+  int sp_vars = 0;
+  int sp = 0;
+#define VARS_MAX 128
+  int vars[VARS_MAX] = {0};
+  int vars_count = 0;
+
+  for (int i = 0; i < ir_num;) {
+    ir_t ir = irs[i++];
+
+    switch (ir.kind) {
+      case IR_NONE:
+        assert(0);
+      case IR_SETLABEL:
+        code(compiled, bytecode_with_sv(BSETLABEL, 0, ir.arg.sv));
+        break;
+      case IR_SETULI:
+        code(compiled, bytecode_uli(BSETLABEL, 0, ir.arg.num));
+        break;
+      case IR_JMPZ:
+      case IR_JMPNZ:
+        code(compiled, (bytecode_t){BINST, POPA, {}});
+        sp -= 2;
+        code(compiled, (bytecode_t){BINST, CMPA, {}});
+        code(compiled, bytecode_uli(BINSTRELLABEL, ir.kind == IR_JMPZ ? JMPRZ : JMPRNZ, ir.arg.num));
+        break;
+      case IR_JMP:
+        code(compiled, bytecode_uli(BINSTRELLABEL, JMPR, ir.arg.num));
+        break;
+      case IR_LOCATION:
+        if (ir.arg.loc.local) {
+          int var = ir.arg.loc.base;
+          int delta = 0;
+          if (var >= 0) {
+            delta = sp - vars[var];
           } else {
+            delta = sp - var;
+          }
+          delta += ir.arg.loc.offset;
+          assert(0 < delta && delta < 256);
+          code(compiled, (bytecode_t){BINST, SP_A, {}});
+          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = delta}});
+          code(compiled, (bytecode_t){BINST, SUM, {}});
+          code(compiled, (bytecode_t){BINST, PUSHA, {}});
+          sp += 2;
+        } else {
+          code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.loc.base));
+          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.loc.offset}});
+          code(compiled, (bytecode_t){BINST, SUM, {}});
+          code(compiled, (bytecode_t){BINST, PUSHA, {}});
+          sp += 2;
+        }
+        break;
+      case IR_WRITE:
+        code(compiled, (bytecode_t){BINST, POPB, {}});
+        code(compiled, (bytecode_t){BINST, POPA, {}});
+        sp -= 4;
+        if (ir.arg.num == 1) {
+          code(compiled, (bytecode_t){BINST, AL_rB, {}});
+        } else {
+          assert(ir.arg.num % 2 == 0);
+          code(compiled, (bytecode_t){BINST, A_rB, {}});
+          for (int i = 2; i < ir.arg.num; i += 2) {
+            code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
+            code(compiled, (bytecode_t){BINST, SUM, {}});
             code(compiled, (bytecode_t){BINST, A_B, {}});
-            code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = -ir.arg.num}});
-            code(compiled, (bytecode_t){BINST, SUB, {}});
+            code(compiled, (bytecode_t){BINST, POPA, {}});
+            sp -= 2;
+            code(compiled, (bytecode_t){BINST, A_rB, {}});
           }
         }
-        code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      }
-      break;
-    case IR_ADDR_GLOBAL:
-      code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.num));
-      code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      break;
-    case IR_ADDR_OFFSET:
-      code(compiled, (bytecode_t){BINST, POPA, {}});
-      if (iri + 1 < ir_num && irs[iri + 1].kind == IR_READ) {
-        int size = irs[iri + 1].arg.num;
-        if (size == 1) {
-          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.num}});
-          code(compiled, (bytecode_t){BINST, SUM, {}});
-          code(compiled, (bytecode_t){BINST, A_B, {}});
+        break;
+      case IR_READ:
+        code(compiled, (bytecode_t){BINST, POPB, {}});
+        sp -= 2;
+        if (ir.arg.num == 1) {
           code(compiled, (bytecode_t){BINST, rB_AL, {}});
         } else {
-          assert(size % 2 == 0);
-          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.num + size - 2}});
-          code(compiled, (bytecode_t){BINST, SUM, {}});
-          code(compiled, (bytecode_t){BINST, A_B, {}});
+          assert(ir.arg.num % 2 == 0);
+          if (ir.arg.num > 2) {
+            code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = ir.arg.num - 2}});
+            code(compiled, (bytecode_t){BINST, SUM, {}});
+            code(compiled, (bytecode_t){BINST, A_B, {}});
+          }
           code(compiled, (bytecode_t){BINST, rB_A, {}});
-          for (int i = 2; i < size; i += 2) {
+          for (int i = 2; i < ir.arg.num; i += 2) {
             code(compiled, (bytecode_t){BINST, PUSHA, {}});
+            sp += 2;
             code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
             code(compiled, (bytecode_t){BINST, SUB, {}});
             code(compiled, (bytecode_t){BINST, A_B, {}});
             code(compiled, (bytecode_t){BINST, rB_A, {}});
           }
         }
-        ++iri;
-      } else {
-        code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.num}});
-        code(compiled, (bytecode_t){BINST, SUM, {}});
-      }
-      code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      break;
-    case IR_WRITE:
-      code(compiled, (bytecode_t){BINST, POPB, {}});
-      code(compiled, (bytecode_t){BINST, POPA, {}});
-      if (ir.arg.num == 1) {
-        code(compiled, (bytecode_t){BINST, AL_rB, {}});
-      } else {
-        assert(ir.arg.num % 2 == 0);
-        code(compiled, (bytecode_t){BINST, A_rB, {}});
-        for (int i = 2; i < ir.arg.num; i += 2) {
-          code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
-          code(compiled, (bytecode_t){BINST, SUM, {}});
-          code(compiled, (bytecode_t){BINST, A_B, {}});
-          code(compiled, (bytecode_t){BINST, POPA, {}});
-          code(compiled, (bytecode_t){BINST, A_rB, {}});
+        code(compiled, (bytecode_t){BINST, PUSHA, {}});
+        sp += 2;
+        break;
+      case IR_CHANGE_SP:
+        compile_change_sp(state, ir.arg.num);
+        sp += ir.arg.num;
+        break;
+      case IR_INT:
+      {
+        int num = ir.arg.num;
+        if (i < ir_num && irs[i].kind == IR_MUL) {
+          num *= irs[i++].arg.num;
         }
-      }
-      break;
-    case IR_READ:
-      code(compiled, (bytecode_t){BINST, POPB, {}});
-      if (ir.arg.num == 1) {
-        code(compiled, (bytecode_t){BINST, rB_AL, {}});
-      } else {
-        assert(ir.arg.num % 2 == 0);
-        if (ir.arg.num > 2) {
-          code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = ir.arg.num - 2}});
-          code(compiled, (bytecode_t){BINST, SUM, {}});
-          code(compiled, (bytecode_t){BINST, A_B, {}});
-        }
-        code(compiled, (bytecode_t){BINST, rB_A, {}});
-        for (int i = 2; i < ir.arg.num; i += 2) {
-          code(compiled, (bytecode_t){BINST, PUSHA, {}});
-          code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
-          code(compiled, (bytecode_t){BINST, SUB, {}});
-          code(compiled, (bytecode_t){BINST, A_B, {}});
-          code(compiled, (bytecode_t){BINST, rB_A, {}});
-        }
-      }
-      code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      break;
-    case IR_CHANGE_SP:
-      compile_change_sp(state, ir.arg.num);
-      break;
-    case IR_INT:
-    {
-      int num = ir.arg.num;
-      if (iri + 1 < ir_num && irs[iri + 1].kind == IR_MUL) {
-        num *= irs[iri + 1].arg.num;
-        ++iri;
-      }
-      if (0 <= num && num < 256) {
-        code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = num}});
-      } else {
-        code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = num}});
-      }
-      code(compiled, (bytecode_t){BINST, PUSHA, {}});
-    } break;
-    case IR_STRING:
-      code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.num));
-      code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      break;
-    case IR_OPERATION:
-      switch (ir.arg.inst) {
-        case SUM:
-        case SUB:
-        case B_AH:
-          code(compiled, (bytecode_t){BINST, POPA, {}});
-          code(compiled, (bytecode_t){BINST, POPB, {}});
-          code(compiled, (bytecode_t){BINST, ir.arg.inst, {}});
-          code(compiled, (bytecode_t){BINST, PUSHA, {}});
-          break;
-        case SHL:
-        case SHR:
-          code(compiled, (bytecode_t){BINST, POPA, {}});
-          code(compiled, (bytecode_t){BINST, ir.arg.inst, {}});
-          code(compiled, (bytecode_t){BINST, PUSHA, {}});
-          break;
-        default:
-          printf("%s\n", instruction_to_string(ir.arg.inst));
-          TODO;
-      }
-      break;
-    case IR_MUL:
-    case IR_DIV:
-      if (ir.arg.num != 1) {
-        code(compiled, (bytecode_t){BINST, POPA, {}});
-        assert(ir.arg.num % 2 == 0);
-        for (int i = 0; i < ir.arg.num; i += 2) {
-          code(compiled, (bytecode_t){BINST, ir.kind == IR_MUL ? SHL : SHR, {}});
+        if (0 <= num && num < 256) {
+          code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = num}});
+        } else {
+          code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = num}});
         }
         code(compiled, (bytecode_t){BINST, PUSHA, {}});
-      }
-      break;
-    case IR_CALL:
-      code(compiled, bytecode_with_sv(BINSTLABEL, CALL, ir.arg.sv));
-      break;
-    case IR_EXTERN:
-      code(compiled, bytecode_with_sv(BEXTERN, 0, ir.arg.sv));
-      break;
+        sp += 2;
+      } break;
+      case IR_STRING:
+        code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.num));
+        code(compiled, (bytecode_t){BINST, PUSHA, {}});
+        sp += 2;
+        break;
+      case IR_OPERATION:
+        switch (ir.arg.inst) {
+          case SUM:
+          case SUB:
+          case B_AH:
+            code(compiled, (bytecode_t){BINST, POPA, {}});
+            code(compiled, (bytecode_t){BINST, POPB, {}});
+            code(compiled, (bytecode_t){BINST, ir.arg.inst, {}});
+            code(compiled, (bytecode_t){BINST, PUSHA, {}});
+            sp -= 2;
+            break;
+          case SHL:
+          case SHR:
+            code(compiled, (bytecode_t){BINST, POPA, {}});
+            code(compiled, (bytecode_t){BINST, ir.arg.inst, {}});
+            code(compiled, (bytecode_t){BINST, PUSHA, {}});
+            break;
+          default:
+            printf("%s\n", instruction_to_string(ir.arg.inst));
+            TODO;
+        }
+        break;
+      case IR_MUL:
+      case IR_DIV:
+        if (ir.arg.num != 1) {
+          code(compiled, (bytecode_t){BINST, POPA, {}});
+          assert(ir.arg.num % 2 == 0);
+          for (int i = 0; i < ir.arg.num; i += 2) {
+            code(compiled, (bytecode_t){BINST, ir.kind == IR_MUL ? SHL : SHR, {}});
+          }
+          code(compiled, (bytecode_t){BINST, PUSHA, {}});
+        }
+        break;
+      case IR_CALL:
+        code(compiled, bytecode_with_sv(BINSTLABEL, CALL, ir.arg.sv));
+        break;
+      case IR_EXTERN:
+        code(compiled, bytecode_with_sv(BEXTERN, 0, ir.arg.sv));
+        break;
+      case IR_END_STATEMENT:
+        compile_change_sp(state, -(sp - sp_vars));
+        sp = sp_vars;
+        break;
+      case IR_NEW_VARIABLE:
+      {
+        int size = ir.arg.num;
+        assert(size > 0 && size % 2 == 0);
+        if (sp - sp_vars > size) {
+          int d = sp - sp_vars;
+          for (int i = 0; i < size; i += 2) {
+            code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = size - i}});
+            code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = d - i}});
+          }
+          compile_change_sp(state, -(d - size));
+          sp -= d - size;
+        } else {
+          assert(sp - sp_vars == size);
+        }
+        assert(vars_count + 1 < VARS_MAX);
+        vars[vars_count++] = sp - 2;
+        sp_vars = sp;
+      } break;
+      case IR_NEW_PARAM:
+        TODO;
+        break;
+      case IR_RETURN:
+      {
+        int size = ir.arg.num;
+        assert(0 <= size && size <= 256 && (size % 2 == 0 || size == 1));
+        for (int i = 0; i < size; i += 2) {
+          code(compiled, (bytecode_t){BINST, POPA, {}});
+          code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = sp + 2}});
+          sp -= 2;
+        }
+        compile_change_sp(state, -sp);
+        sp = 0; // TODO: test
+        code(compiled, (bytecode_t){BINST, RET, {}});
+      } break;
+    }
   }
-
-  compile_ir(state, irs, ir_num, iri + 1);
 }
 
 bool is_inst(bytecode_t *bs, int *b_count, int i, instruction_t inst) {
@@ -3988,7 +3946,7 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
       i = 0;
     } else if (is_inst(bs, b_count, i, PUSHA) && is_inst(bs, b_count, i + 1, POPB)) {
       if (debug_opt) {
-        printf("  %03d | PUHSA POPB -> A_B\n", i);
+        printf("  %03d | PUSHA POPB -> A_B\n", i);
       }
 
       bs[i].inst = A_B;
@@ -3998,7 +3956,7 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
     } else if ((is_inst(bs, b_count, i, RAM_A) || is_inst(bs, b_count, i, RAM_B))
                && bs[i].arg.num < 256) {
       if (debug_opt) {
-        printf("  %03d | RAM_A x | RAM_B x if x<256 -> RAM_AL x | RAM_BL x\n", i);
+        printf("  %03d | RAM_A(x)|RAM_B(x) if x<256 -> RAM_AL x | RAM_BL x\n", i);
       }
 
       bs[i].inst = bs[i].inst == RAM_A ? RAM_AL : RAM_BL;
@@ -4032,6 +3990,21 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
       *b_count -= 1;
       bs[i].inst = bs[i].inst == RAM_A ? RAM_B : RAM_BL;
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
+      i = 0;
+    } else if (is_inst(bs, b_count, i, SP_A)
+               && (is_inst(bs, b_count, i + 1, RAM_B) || is_inst(bs, b_count, i + 1, RAM_BL))
+               && is_inst(bs, b_count, i + 2, SUM)
+               && is_inst(bs, b_count, i + 3, A_B)
+               && is_inst(bs, b_count, i + 4, rB_A)
+               && bs[i + 1].arg.num % 2 == 0
+               && bs[i + 1].arg.num < 256) {
+      if (debug_opt) {
+        printf("  %03d | SP_A (RAM_B(x)|RAM_BL(x)) SUM A_B rB_A if x%%2==0 && x<256 -> PEEKAR x\n", i);
+      }
+
+      *b_count -= 4;
+      bs[i] = (bytecode_t){BINSTHEX, PEEKAR, {.num = bs[i + 1].arg.num}};
+      memcpy(bs + i + 1, bs + i + 5, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     }
   }
@@ -4316,16 +4289,15 @@ int main(int argc, char **argv) {
         printf("\t");
         ir_dump(state.irs[i]);
       }
-      printf("\n");
     }
     if ((exitat >> M_IR) & 1) {
       exit(0);
     }
 
     state.compiled.is_init = true;
-    compile_ir(&state, state.irs_init, state.ir_init_num, 0);
+    compile_ir_list(&state, state.irs_init, state.ir_init_num);
     state.compiled.is_init = false;
-    compile_ir(&state, state.irs, state.ir_num, 0);
+    compile_ir_list(&state, state.irs, state.ir_num);
 
     state.compiled.is_init = true;
     code(&state.compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 0}});
