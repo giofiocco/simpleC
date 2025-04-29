@@ -1312,7 +1312,10 @@ typedef enum {
   IR_END_STATEMENT, //
   IR_NEW_VARIABLE,  // + num (size)
   IR_NEW_PARAM,     // + num (size)
+  IR_NEW_FUNCTION,  // + num (size of ret)
   IR_RETURN,        // + num (size)
+  IR_NEW_SCOPE,
+  IR_DROP_SCOPE,
 } ir_kind_t;
 
 typedef struct {
@@ -1371,8 +1374,14 @@ char *ir_kind_to_string(ir_kind_t kind) {
       return "NEW_VARIABLE";
     case IR_NEW_PARAM:
       return "NEW_PARAM";
+    case IR_NEW_FUNCTION:
+      return "NEW_FUNCTION";
     case IR_RETURN:
       return "RETURN";
+    case IR_NEW_SCOPE:
+      return "NEW_SCOPE";
+    case IR_DROP_SCOPE:
+      return "DROP_SCOPE";
   }
   assert(0);
 }
@@ -1382,6 +1391,8 @@ void ir_dump(ir_t ir) {
   switch (ir.kind) {
     case IR_NONE:
     case IR_END_STATEMENT:
+    case IR_NEW_SCOPE:
+    case IR_DROP_SCOPE:
       break;
     case IR_SETLABEL:
     case IR_CALL:
@@ -1402,6 +1413,7 @@ void ir_dump(ir_t ir) {
     case IR_RETURN:
     case IR_READ:
     case IR_WRITE:
+    case IR_NEW_FUNCTION:
       printf(" %d", ir.arg.num);
       break;
     case IR_OPERATION:
@@ -1496,6 +1508,7 @@ void state_push_scope(state_t *state) {
   memset(&state->scopes[state->scope_num], 0, sizeof(scope_t));
   ++state->scope_num;
   state->scope = &state->scopes[state->scope_num - 1];
+  state_add_ir(state, (ir_t){IR_NEW_SCOPE, {}});
 }
 
 void state_drop_scope(state_t *state) {
@@ -1503,6 +1516,7 @@ void state_drop_scope(state_t *state) {
   assert(state->scope_num > 0);
   --state->scope_num;
   state->scope = &state->scopes[state->scope_num - 1];
+  state_add_ir(state, (ir_t){IR_DROP_SCOPE, {}});
 }
 
 symbol_t *state_find_symbol(state_t *state, token_t name) {
@@ -3262,12 +3276,13 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_FUNCDECL:
       state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
+      state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
+      state_add_ir(state, (ir_t){IR_NEW_FUNCTION, {.num = type_size_aligned(ast->type.as.func.ret)}});
       state_push_scope(state);
-      state->param = 4 + type_size_aligned(&ast->as.funcdecl.type);
+      state->variables_count = 0;
       if (ast->as.funcdecl.params) {
         compile(ast->as.funcdecl.params, state);
       }
-      state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
       if (ast->as.funcdecl.block) {
         compile(ast->as.funcdecl.block, state);
       }
@@ -3280,11 +3295,11 @@ void compile(ast_t *ast, state_t *state) {
       state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
       break;
     case A_PARAMDEF:
-      state_add_symbol(state, (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {-state->param}});
-      state->param += type_size_aligned(&ast->as.paramdef.type);
       if (ast->as.paramdef.next) {
         compile(ast->as.paramdef.next, state);
       }
+      state_add_symbol(state, (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {state->variables_count++}});
+      state_add_ir(state, (ir_t){IR_NEW_PARAM, {.num = type_size_aligned(&ast->as.paramdef.type)}});
       break;
     case A_STATEMENT:
       compile(ast->as.ast, state);
@@ -3714,14 +3729,16 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_num) {
   assert(irs);
   compiled_t *compiled = &state->compiled;
 
-  int sp_vars = 0;
-  int sp = 0;
 #define VARS_MAX 128
   int vars[VARS_MAX] = {0};
   int vars_count = 0;
+  int sp_vars[SCOPE_MAX] = {0};
+  int sp_vars_index = 0;
+  int param = 0;
+  int sp = 0;
 
-  for (int i = 0; i < ir_num;) {
-    ir_t ir = irs[i++];
+  for (int i = 0; i < ir_num; ++i) {
+    ir_t ir = irs[i];
 
     switch (ir.kind) {
       case IR_NONE:
@@ -3745,23 +3762,41 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_num) {
       case IR_LOCATION:
         if (ir.arg.loc.local) {
           int var = ir.arg.loc.base;
-          int delta = 0;
-          if (var >= 0) {
-            delta = sp - vars[var];
-          } else {
-            delta = sp - var;
-          }
+          assert(0 <= var && var < vars_count);
+          int delta = sp - vars[var];
           delta += ir.arg.loc.offset;
-          assert(0 < delta && delta < 256);
-          code(compiled, (bytecode_t){BINST, SP_A, {}});
-          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = delta}});
-          code(compiled, (bytecode_t){BINST, SUM, {}});
-          code(compiled, (bytecode_t){BINST, PUSHA, {}});
-          sp += 2;
+          assert(0 < delta && delta <= 0xFFFF);
+          if (i + 1 < ir_num && irs[i + 1].kind == IR_READ && irs[i + 1].arg.num > 1) {
+            for (int j = irs[i + 1].arg.num - 2; j >= 0; j -= 2) {
+              assert(delta <= 0xFF);
+              code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = delta + j}});
+              code(compiled, (bytecode_t){BINST, PUSHA, {}});
+              sp += 2;
+              delta += 2;
+            }
+            i++;
+          } else if (i + 1 < ir_num && irs[i + 1].kind == IR_WRITE && irs[i + 1].arg.num > 1) {
+            for (int j = 0; j < irs[i + 1].arg.num; j += 2) {
+              code(compiled, (bytecode_t){BINST, POPA, {}});
+              sp -= 2;
+              delta -= 2;
+              assert(delta > 0);
+              code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = delta + j}});
+            }
+            i++;
+          } else {
+            code(compiled, (bytecode_t){BINST, SP_A, {}});
+            code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = delta}});
+            code(compiled, (bytecode_t){BINST, SUM, {}});
+            code(compiled, (bytecode_t){BINST, PUSHA, {}});
+            sp += 2;
+          }
         } else {
           code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.loc.base));
-          code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.loc.offset}});
-          code(compiled, (bytecode_t){BINST, SUM, {}});
+          if (ir.arg.loc.offset) {
+            code(compiled, (bytecode_t){BINSTHEX2, RAM_B, {.num = ir.arg.loc.offset}});
+            code(compiled, (bytecode_t){BINST, SUM, {}});
+          }
           code(compiled, (bytecode_t){BINST, PUSHA, {}});
           sp += 2;
         }
@@ -3817,8 +3852,9 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_num) {
       case IR_INT:
       {
         int num = ir.arg.num;
-        if (i < ir_num && irs[i].kind == IR_MUL) {
-          num *= irs[i++].arg.num;
+        if (i + 1 < ir_num && irs[i + 1].kind == IR_MUL) {
+          num *= irs[i + 1].arg.num;
+          i++;
         }
         if (0 <= num && num < 256) {
           code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = num}});
@@ -3873,15 +3909,15 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_num) {
         code(compiled, bytecode_with_sv(BEXTERN, 0, ir.arg.sv));
         break;
       case IR_END_STATEMENT:
-        compile_change_sp(state, -(sp - sp_vars));
-        sp = sp_vars;
+        compile_change_sp(state, -(sp - sp_vars[sp_vars_index]));
+        sp = sp_vars[sp_vars_index];
         break;
       case IR_NEW_VARIABLE:
       {
         int size = ir.arg.num;
         assert(size > 0 && size % 2 == 0);
-        if (sp - sp_vars > size) {
-          int d = sp - sp_vars;
+        if (sp - sp_vars[sp_vars_index] > size) {
+          int d = sp - sp_vars[sp_vars_index];
           for (int i = 0; i < size; i += 2) {
             code(compiled, (bytecode_t){BINSTHEX, PEEKAR, {.num = size - i}});
             code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = d - i}});
@@ -3889,28 +3925,49 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_num) {
           compile_change_sp(state, -(d - size));
           sp -= d - size;
         } else {
-          assert(sp - sp_vars == size);
+          assert(sp - sp_vars[sp_vars_index] == size);
         }
         assert(vars_count + 1 < VARS_MAX);
         vars[vars_count++] = sp - 2;
-        sp_vars = sp;
+        sp_vars[sp_vars_index] = sp;
       } break;
       case IR_NEW_PARAM:
-        TODO;
+        assert(vars_count + 1 < VARS_MAX);
+        vars[vars_count++] = -param;
+        param += ir.arg.num;
+        break;
+      case IR_NEW_FUNCTION:
+        param = ir.arg.num + 2;
+        sp = 0;
+        memset(sp_vars, 0, sizeof(sp_vars));
+        sp_vars_index = 0;
+        memset(vars, 0, sizeof(vars));
+        vars_count = 0;
         break;
       case IR_RETURN:
       {
         int size = ir.arg.num;
-        assert(0 <= size && size <= 256 && (size % 2 == 0 || size == 1));
+        assert(0 <= size && size <= 0xFF && (size % 2 == 0 || size == 1));
         for (int i = 0; i < size; i += 2) {
           code(compiled, (bytecode_t){BINST, POPA, {}});
           code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = sp + 2}});
-          sp -= 2;
         }
+        sp -= size;
         compile_change_sp(state, -sp);
         sp = 0; // TODO: test
         code(compiled, (bytecode_t){BINST, RET, {}});
       } break;
+      case IR_NEW_SCOPE:
+        assert(sp_vars_index + 1 < SCOPE_MAX);
+        sp_vars_index++;
+        sp_vars[sp_vars_index] = sp_vars[sp_vars_index - 1];
+        break;
+      case IR_DROP_SCOPE:
+        assert(sp_vars_index > 0);
+        sp_vars_index--;
+        compile_change_sp(state, -(sp - sp_vars[sp_vars_index]));
+        sp = sp_vars[sp_vars_index];
+        break;
     }
   }
 }
@@ -3991,20 +4048,21 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
       bs[i].inst = bs[i].inst == RAM_A ? RAM_B : RAM_BL;
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
-    } else if (is_inst(bs, b_count, i, SP_A)
-               && (is_inst(bs, b_count, i + 1, RAM_B) || is_inst(bs, b_count, i + 1, RAM_BL))
-               && is_inst(bs, b_count, i + 2, SUM)
-               && is_inst(bs, b_count, i + 3, A_B)
-               && is_inst(bs, b_count, i + 4, rB_A)
-               && bs[i + 1].arg.num % 2 == 0
-               && bs[i + 1].arg.num < 256) {
+    } else if (is_inst(bs, b_count, i, INCSP)
+               && is_inst(bs, b_count, i + 1, SP_A)
+               && (is_inst(bs, b_count, i + 2, RAM_B) || is_inst(bs, b_count, i + 2, RAM_BL))
+               && is_inst(bs, b_count, i + 3, SUM)
+               && is_inst(bs, b_count, i + 4, A_SP)) {
       if (debug_opt) {
-        printf("  %03d | SP_A (RAM_B(x)|RAM_BL(x)) SUM A_B rB_A if x%%2==0 && x<256 -> PEEKAR x\n", i);
+        printf("  %03d | INCSP SP_A RAM_B(x)|RAM_BL(x) SUM A_SP -> SP_A RAM_B(x + 2)|RAM_BL(x + 2) SUM A_SP\n", i);
       }
 
-      *b_count -= 4;
-      bs[i] = (bytecode_t){BINSTHEX, PEEKAR, {.num = bs[i + 1].arg.num}};
-      memcpy(bs + i + 1, bs + i + 5, (*b_count - i) * sizeof(bytecode_t));
+      *b_count -= 1;
+      bs[i + 2].arg.num += 2;
+      if (bs[i + 2].arg.num >= 256) {
+        bs[i + 2] = (bytecode_t){BINSTHEX2, RAM_B, {.num = bs[i + 2].arg.num}};
+      }
+      memcpy(bs + i, bs + i + 1, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     }
   }
@@ -4351,33 +4409,6 @@ int main(int argc, char **argv) {
     bytecode_to_file(file, state.compiled.code[i]);
     putc(' ', file);
   }
-
-  /*
-  for (int i = 0; i < state.compiled.data_num; ++i) {
-    bytecode_t bc = state.compiled.data[i];
-    bytecode_kind_t bbckind = i > 0 ? state.compiled.data[i - 1].kind : BNONE;
-    bytecode_kind_t abckind =
-        i + 1 < state.compiled.data_num ? state.compiled.data[i + 1].kind : BNONE;
-    if ((bc.kind == BSETLABEL && bbckind != BALIGN) || (bc.kind == BALIGN && abckind == BSETLABEL)
-        || (i > 0 && (bc.kind == BEXTERN || bc.kind == BGLOBAL))) {
-      putc('\n', file);
-    }
-    bytecode_to_asm(file, bc);
-    putc(' ', file);
-  }
-  putc('\n', file);
-  for (int i = 0; i < state.compiled.init_num; ++i) {
-    bytecode_to_asm(file, state.compiled.init[i]);
-    putc(' ', file);
-  }
-  for (int i = 0; i < state.compiled.code_num; ++i) {
-    if (state.compiled.code[i].kind == BSETLABEL) {
-      putc('\n', file);
-    }
-    bytecode_to_asm(file, state.compiled.code[i]);
-    putc(' ', file);
-  }
-  */
 
   assert(fclose(file) == 0);
 

@@ -1,4 +1,4 @@
-params: -D com
+params: -D com -O1
 exitcode: 0
 code:
 int add(int a, int b) {
@@ -20,25 +20,16 @@ INST         POPA
 INSTLABEL    CALL exit
 SETLABEL     add
 INSTHEX      PEEKAR 0x06
-INST         PUSHA
+INST         A_B
 INSTHEX      PEEKAR 0x0A
-INST         PUSHA
-INST         POPA
-INST         POPB
 INST         SUM
-INST         PUSHA
-INST         POPA
 INSTHEX      PUSHAR 0x04
 INST         RET
 SETLABEL     main
 INSTHEX      RAM_AL 0x01
 INST         PUSHA
-INSTHEX      RAM_AL 0x02
-INST         PUSHA
+INSTHEX      RAM_BL 0x02
 INSTHEX      RAM_AL 0x03
-INST         PUSHA
-INST         POPA
-INST         POPB
 INST         SUM
 INST         PUSHA
 INST         DECSP
