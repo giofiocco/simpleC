@@ -3284,9 +3284,10 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.funcdecl.params, state);
       }
       if (ast->as.funcdecl.block) {
-        compile(ast->as.funcdecl.block, state);
+        assert(ast->as.funcdecl.block->kind == A_BLOCK);
+        compile(ast->as.funcdecl.block->as.ast, state);
       }
-      if (state->irs[state->ir_num - 1].kind != IR_RETURN) {
+      if (state->ir_num > 1 && state->irs[state->ir_num - 1].kind != IR_RETURN) {
         state_add_ir(state, (ir_t){IR_RETURN, {.num = 0}});
       }
       state_drop_scope(state);
@@ -3295,11 +3296,11 @@ void compile(ast_t *ast, state_t *state) {
       state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
       break;
     case A_PARAMDEF:
+      state_add_symbol(state, (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {state->variables_count++}});
+      state_add_ir(state, (ir_t){IR_NEW_PARAM, {.num = type_size_aligned(&ast->as.paramdef.type)}});
       if (ast->as.paramdef.next) {
         compile(ast->as.paramdef.next, state);
       }
-      state_add_symbol(state, (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {state->variables_count++}});
-      state_add_ir(state, (ir_t){IR_NEW_PARAM, {.num = type_size_aligned(&ast->as.paramdef.type)}});
       break;
     case A_STATEMENT:
       compile(ast->as.ast, state);
@@ -3937,7 +3938,7 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_num) {
         param += ir.arg.num;
         break;
       case IR_NEW_FUNCTION:
-        param = ir.arg.num + 2;
+        param = ir.arg.num + 4;
         sp = 0;
         memset(sp_vars, 0, sizeof(sp_vars));
         sp_vars_index = 0;
@@ -4028,15 +4029,18 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     } else if (is_inst(bs, b_count, i, PUSHA)
-               && (is_inst(bs, b_count, i + 1, RAM_A) || is_inst(bs, b_count, i + 1, RAM_AL)
-                   || is_inst(bs, b_count, i + 1, PEEKAR))
+               && (is_inst(bs, b_count, i + 1, RAM_A) || is_inst(bs, b_count, i + 1, RAM_AL) || is_inst(bs, b_count, i + 1, PEEKAR))
                && is_inst(bs, b_count, i + 2, POPB)) {
       if (debug_opt) {
-        printf("  %03d | PUSHA RAM_A|RAM_AL|PEEKAR POPB -> A_B RAM_A|RAM_AL|PEEKAR\n", i);
+        printf("  %03d | PUSHA RAM_A|RAM_AL|PEEKAR(x) POPB -> A_B RAM_A|RAM_AL|PEEKAR(x-2)\n", i);
       }
 
       *b_count -= 1;
       bs[i] = (bytecode_t){BINST, A_B, {}};
+      if (bs[i + 1].inst == PEEKAR) {
+        assert(bs[i + 1].arg.num > 2);
+        bs[i + 1].arg.num -= 2;
+      }
       memcpy(bs + i + 2, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     } else if ((is_inst(bs, b_count, i, RAM_A) || is_inst(bs, b_count, i, RAM_AL)) && is_inst(bs, b_count, i + 1, A_B)) {

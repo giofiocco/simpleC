@@ -26,7 +26,7 @@ INST         DECSP
 INST         DECSP
 INSTHEX      PEEKAR 0x04
 INST         A_B
-INSTHEX      PEEKAR 0x08
+INSTHEX      PEEKAR 0x06
 INST         SUB
 INST         SHR
 INST         PUSHA

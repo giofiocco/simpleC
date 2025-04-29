@@ -3,6 +3,8 @@ so maybe change to tokenizer_get_loc() that checks if there is token to peek
 
 IR_RETURN with LOCATION WRITE CLEAN_STACK
 
+maybe remove state->scope
+
 structdef parse_decl expect no expr
 
 void v; should not be possible
