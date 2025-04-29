@@ -4017,11 +4017,14 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
                    || is_inst(bs, b_count, i + 1, PEEKAR))
                && is_inst(bs, b_count, i + 2, POPB)) {
       if (debug_opt) {
-        printf("  %03d | PUSHA RAM_A|RAM_AL|PEEKAR POPB -> A_B RAM_A|RAM_AL|PEEKAR\n", i);
+        printf("  %03d | PUSHA RAM_A|RAM_AL|PEEKAR(x) POPB -> A_B RAM_A|RAM_AL|PEEKAR(x-2)\n", i);
       }
 
       *b_count -= 1;
       bs[i] = (bytecode_t){BINST, A_B, {}};
+      if (bs[i + 1].inst == PEEKAR) {
+        bs[i + 1].arg.num -= 2;
+      }
       memcpy(bs + i + 2, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     } else if ((is_inst(bs, b_count, i, RAM_A) || is_inst(bs, b_count, i, RAM_AL)) && is_inst(bs, b_count, i + 1, A_B)) {
