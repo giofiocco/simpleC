@@ -1,3 +1,9 @@
+ir location
+ir better write and read
+ir compile list
+state_add_ir take care of sp
+maybe return ir
+
 if token_peek and then token_next_if_kind the tokenizer->loc gives you the loc after the token you want
 so maybe change to tokenizer_get_loc() that checks if there is token to peek
 

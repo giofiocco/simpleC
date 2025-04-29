@@ -1293,30 +1293,33 @@ typedef struct {
 
 typedef enum {
   IR_NONE,
-  IR_SETLABEL,    // + sv
-  IR_SETULI,      // + num
-  IR_JMPZ,        // + num
-  IR_JMPNZ,       // + num
-  IR_JMP,         // + num
-  IR_FUNCEND,     //
-  IR_ADDR_LOCAL,  // + num
-  IR_ADDR_GLOBAL, // + num
-  IR_ADDR_OFFSET, // + num
-  IR_READ,        // + num
-  IR_WRITE,       // + num
-  IR_CHANGE_SP,   // + num
-  IR_INT,         // + num
-  IR_STRING,      // + num
-  IR_OPERATION,   // + inst
-  IR_MUL,         // + num
-  IR_DIV,         // + num
-  IR_CALL,        // + sv
-  IR_EXTERN,      // + sv
+  IR_SETLABEL,  // + sv
+  IR_SETULI,    // + num
+  IR_JMPZ,      // + num
+  IR_JMPNZ,     // + num
+  IR_JMP,       // + num
+  IR_FUNCEND,   //
+  IR_ADDR,      // loc
+  IR_READ,      // + num
+  IR_WRITE,     // + num
+  IR_CHANGE_SP, // + num
+  IR_INT,       // + num
+  IR_STRING,    // + num
+  IR_OPERATION, // + inst
+  IR_MUL,       // + num
+  IR_DIV,       // + num
+  IR_CALL,      // + sv
+  IR_EXTERN,    // + sv
 } ir_kind_t;
 
 typedef struct {
   ir_kind_t kind;
   union {
+    struct {
+      uint8_t is_local;
+      uint16_t base;
+      uint16_t offset;
+    } loc;
     sv_t sv;
     int num;
     instruction_t inst;
@@ -1339,12 +1342,8 @@ char *ir_kind_to_string(ir_kind_t kind) {
       return "JMP";
     case IR_FUNCEND:
       return "FUNCEND";
-    case IR_ADDR_LOCAL:
-      return "ADDR_LOCAL";
-    case IR_ADDR_GLOBAL:
-      return "ADDR_GLOBAL";
-    case IR_ADDR_OFFSET:
-      return "ADDR_OFFSET";
+    case IR_ADDR:
+      return "ADDR";
     case IR_READ:
       return "READ";
     case IR_WRITE:
@@ -1370,7 +1369,7 @@ char *ir_kind_to_string(ir_kind_t kind) {
 }
 
 void ir_dump(ir_t ir) {
-  printf("%s ", ir_kind_to_string(ir.kind));
+  printf("%s", ir_kind_to_string(ir.kind));
   switch (ir.kind) {
     case IR_NONE:
     case IR_FUNCEND:
@@ -1378,15 +1377,12 @@ void ir_dump(ir_t ir) {
     case IR_SETLABEL:
     case IR_CALL:
     case IR_EXTERN:
-      printf(SV_FMT, SV_UNPACK(ir.arg.sv));
+      printf(" " SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
     case IR_SETULI:
     case IR_JMPZ:
     case IR_JMPNZ:
     case IR_JMP:
-    case IR_ADDR_LOCAL:
-    case IR_ADDR_GLOBAL:
-    case IR_ADDR_OFFSET:
     case IR_READ:
     case IR_WRITE:
     case IR_CHANGE_SP:
@@ -1394,10 +1390,13 @@ void ir_dump(ir_t ir) {
     case IR_STRING:
     case IR_MUL:
     case IR_DIV:
-      printf("%d", ir.arg.num);
+      printf(" %d", ir.arg.num);
       break;
     case IR_OPERATION:
-      printf("%s", instruction_to_string(ir.arg.inst));
+      printf(" %s", instruction_to_string(ir.arg.inst));
+      break;
+    case IR_ADDR:
+      printf(" {%s %d+%d}", ir.arg.loc.is_local ? "LOCAL" : "GLOBAL", ir.arg.loc.base, ir.arg.loc.offset);
       break;
   }
   printf("\n");
@@ -1445,12 +1444,20 @@ void state_add_ir(state_t *state, ir_t ir) {
 
 void state_add_addr_offset(state_t *state, int offset) {
   assert(state);
-  if (state->ir_num > 0
-      && (state->irs[state->ir_num - 1].kind == IR_ADDR_LOCAL
-          || state->irs[state->ir_num - 1].kind == IR_ADDR_OFFSET)) {
-    state->irs[state->ir_num - 1].arg.num += offset;
+  if (state->is_init) {
+    assert(state->ir_init_num > 0 && state->irs_init[state->ir_init_num - 1].kind == IR_ADDR);
+    if (state->irs_init[state->ir_init_num - 1].arg.loc.is_local) {
+      state->irs_init[state->ir_init_num - 1].arg.loc.base += offset;
+    } else {
+      state->irs_init[state->ir_init_num - 1].arg.loc.offset += offset;
+    }
   } else {
-    state_add_ir(state, (ir_t){IR_ADDR_OFFSET, {.num = offset}});
+    assert(state->ir_num > 0 && state->irs[state->ir_num - 1].kind == IR_ADDR);
+    if (state->irs[state->ir_num - 1].arg.loc.is_local) {
+      state->irs[state->ir_num - 1].arg.loc.base += offset;
+    } else {
+      state->irs[state->ir_num - 1].arg.loc.offset += offset;
+    }
   }
 }
 
@@ -3094,9 +3101,9 @@ void get_addr_ast(state_t *state, ast_t *ast) {
     {
       symbol_t *s = state_find_symbol(state, ast->as.fac);
       if (s->kind == INFO_LOCAL) {
-        state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - s->info.local}});
+        state_add_ir(state, (ir_t){IR_ADDR, {.loc = {1, state->sp - s->info.local, 0}}});
       } else if (s->kind == INFO_GLOBAL) {
-        state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = s->info.global}});
+        state_add_ir(state, (ir_t){IR_ADDR, {.loc = {0, s->info.global, 0}}});
       } else {
         assert(0);
       }
@@ -3141,8 +3148,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
             if (size != 1) {
               state_add_ir(state, (ir_t){IR_MUL, {.num = size}});
             }
-            state_add_ir(state,
-                         (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
+            state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
           }
         } break;
         default:
@@ -3207,9 +3213,7 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
            (bytecode_t){ast->type.size == 2 ? BHEX2 : BHEX, 0, {.num = ast->as.fac.asint}});
       break;
     case A_STRING:
-      data(compiled,
-           bytecode_with_sv(
-               BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
+      data(compiled, bytecode_with_sv(BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
       data(compiled, (bytecode_t){BHEX, 0, {.num = 0}});
       break;
     default:
@@ -3218,10 +3222,7 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
       data(compiled, (bytecode_t){BDB, 0, {.num = size}});
       state->is_init = true;
       compile(ast, state);
-      state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
-      if (offset != 0) {
-        state_add_ir(state, (ir_t){IR_ADDR_OFFSET, {.num = offset}});
-      }
+      state_add_ir(state, (ir_t){IR_ADDR, {.loc = {0, uli, offset}}});
       state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
       state->is_init = false;
     }
@@ -3302,7 +3303,7 @@ void compile(ast_t *ast, state_t *state) {
     {
       compile(ast->as.ast, state);
       int size = type_size_aligned(&ast->as.ast->type);
-      state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp + 2}});
+      state_add_ir(state, (ir_t){IR_ADDR, {.loc = {1, state->sp + 2, 0}}});
       state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
       state->sp -= size;
       state_change_sp(state, -state->sp);
@@ -3412,7 +3413,7 @@ void compile(ast_t *ast, state_t *state) {
     {
       int uli = datauli(state);
       compile_data(ast, state, 0, 0); // TODO: maybe compile_data(ast, state, uli, 0);
-      state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.num = uli}});
+      state_add_ir(state, (ir_t){IR_ADDR, {.loc = {0, uli, 0}}});
       state->sp += 2;
     } break;
     case A_DECL:
@@ -3423,7 +3424,7 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.decl.expr, state);
         assert(state->sp > start_sp);
         if (state->sp - start_sp > size) {
-          state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - start_sp - size}});
+          state_add_ir(state, (ir_t){IR_ADDR, {.loc = {1, state->sp - start_sp - size, 0}}});
           state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
           state_change_sp(state, -(state->sp - start_sp - 2 * size));
           state->sp = start_sp + size;
@@ -3629,6 +3630,7 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 1;
       memcpy(irs + i, irs + i + 1, (*ir_count - i) * sizeof(ir_t));
       i = 0;
+      /* TODO:
     } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
                && is_ir_kind(irs, ir_count, i + 1, IR_READ)
                && is_ir_kind(irs, ir_count, i + 2, IR_CHANGE_SP)
@@ -3655,6 +3657,7 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
+      */
     } else if (is_ir_kind(irs, ir_count, i, IR_INT) && is_ir_kind(irs, ir_count, i + 1, IR_INT)
                && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION) && irs[i + 2].arg.inst == B_AH) {
       if (debug_opt) {
@@ -3676,6 +3679,7 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
       i = 0;
+      /* TODO:
     } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
                && is_ir_kind(irs, ir_count, i + 1, IR_READ)
                && is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL)
@@ -3692,6 +3696,7 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
+      */
     } else if (is_ir_kind(irs, ir_count, i, IR_INT)
                && is_ir_kind(irs, ir_count, i + 1, IR_MUL)) {
       if (debug_opt) {
@@ -3702,6 +3707,7 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 1;
       memcpy(irs + i + 1, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
+      /* TODO:
     } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
                && is_ir_kind(irs, ir_count, i + 1, IR_INT)
                && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION)
@@ -3714,6 +3720,7 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
       i = 0;
+    */
     }
   }
 }
@@ -3774,6 +3781,10 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
     case IR_FUNCEND:
       code(compiled, (bytecode_t){BINST, RET, {}});
       break;
+    case IR_ADDR:
+      TODO;
+      break;
+      /*
     case IR_ADDR_LOCAL:
       if (iri + 1 < ir_num && irs[iri + 1].kind == IR_READ) {
         assert(0 < ir.arg.num && ir.arg.num < 256);
@@ -3854,6 +3865,7 @@ void compile_ir(state_t *state, ir_t *irs, int ir_num, int iri) {
       }
       code(compiled, (bytecode_t){BINST, PUSHA, {}});
       break;
+      */
     case IR_WRITE:
       code(compiled, (bytecode_t){BINST, POPB, {}});
       code(compiled, (bytecode_t){BINST, POPA, {}});
