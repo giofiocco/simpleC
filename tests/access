@@ -30,7 +30,8 @@ INST         DECSP
 INST         SP_A
 INSTHEX2     RAM_B 0x0009
 INST         SUM
-INST         A_B
+INST         PUSHA
+INST         POPB
 INST         rB_AL
 INST         PUSHA
 INST         INCSP

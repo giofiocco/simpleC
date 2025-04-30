@@ -1,6 +1,3 @@
-ir location
-ir better write and read
-ir compile list
 state_add_ir take care of sp
 maybe return ir
 

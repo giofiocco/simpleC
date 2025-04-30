@@ -35,8 +35,8 @@ SETLABEL     main
 INST         DECSP
 INST         DECSP
 INST         SP_A
-INST         INCA
-INST         INCA
+INSTHEX      RAM_BL 0x02
+INST         SUM
 INST         A_B
 INSTHEX      RAM_AL 0x02
 INST         SUM

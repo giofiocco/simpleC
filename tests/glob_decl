@@ -35,8 +35,6 @@ INST         POPB
 INST         SUM
 INST         PUSHA
 INSTLABEL    RAM_A _002
-INST         PUSHA
-INST         POPA
 INSTHEX2     RAM_B 0x0002
 INST         SUM
 INST         PUSHA
