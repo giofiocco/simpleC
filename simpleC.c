@@ -1434,12 +1434,77 @@ void state_init(state_t *state) {
 void state_add_ir(state_t *state, ir_t ir) {
   assert(state);
   if (state->is_init) {
+    // if (ir.kind == IR_CHANGE_SP && state->irs_init[state->ir_init_num].kind == IR_CHANGE_SP) {
+    //   state->irs_init[state->ir_init_num].arg.num += ir.arg.num;
+    //   state->sp += ir.arg.num;
+    //   return;
+    // } else if (ir.kind == IR_CHANGE_SP && ir.arg.num == 0) {
+    //   return;
+    // }
     assert(state->ir_init_num + 1 < IR_MAX);
     state->irs_init[state->ir_init_num++] = ir;
   } else {
+    // if (ir.kind == IR_CHANGE_SP && state->irs[state->ir_num].kind == IR_CHANGE_SP) {
+    //   state->irs[state->ir_num].arg.num += ir.arg.num;
+    //   state->sp += ir.arg.num;
+    //   return;
+    // } else if (ir.kind == IR_CHANGE_SP && ir.arg.num == 0) {
+    //   return;
+    // }
     assert(state->ir_num + 1 < IR_MAX);
     state->irs[state->ir_num++] = ir;
   }
+  switch (ir.kind) {
+    case IR_NONE:
+      assert(0);
+      break;
+    case IR_SETLABEL:
+    case IR_SETULI:
+    case IR_JMP:
+    case IR_FUNCEND:
+    case IR_MUL:
+    case IR_DIV:
+    case IR_CALL:
+    case IR_EXTERN:
+      break;
+    case IR_JMPZ:
+    case IR_JMPNZ:
+      state->sp -= 2;
+      break;
+    case IR_ADDR:
+      state->sp += 2;
+      break;
+    case IR_READ:
+      state->sp -= 2;
+      state->sp += ir.arg.num + ir.arg.num % 2;
+      break;
+    case IR_WRITE:
+      state->sp -= 2;
+      state->sp -= ir.arg.num + ir.arg.num % 2;
+      break;
+    case IR_CHANGE_SP:
+      state->sp += ir.arg.num;
+      break;
+    case IR_INT:
+    case IR_STRING:
+      state->sp += 2;
+      break;
+    case IR_OPERATION:
+      switch (ir.arg.inst) {
+        case SUM:
+        case SUB:
+        case B_AH:
+          state->sp -= 2;
+          break;
+        case SHL:
+        case SHR:
+          break;
+        default:
+          TODO;
+      }
+      break;
+  }
+  assert(state->sp % 2 == 0);
 }
 
 void state_add_addr_offset(state_t *state, int offset) {
@@ -3068,22 +3133,6 @@ int datauli(state_t *state) {
   return uli;
 }
 
-void state_change_sp(state_t *state, int delta) {
-  assert(state);
-  if (delta == 0) {
-    return;
-  }
-  if (state->ir_num > 0 && state->irs[state->ir_num - 1].kind == IR_CHANGE_SP) {
-    state->irs[state->ir_num - 1].arg.num += delta;
-    if (state->irs[state->ir_num - 1].arg.num == 0) {
-      state->ir_num -= 1;
-    }
-  } else {
-    state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = delta}});
-  }
-  state->sp += delta;
-}
-
 bytecode_t bytecode_with_sv(bytecode_kind_t kind, instruction_t inst, sv_t sv) {
   char label[sv.len + 1];
   memset(label, 0, sv.len + 1);
@@ -3250,7 +3299,7 @@ void compile(ast_t *ast, state_t *state) {
       state_push_scope(state);
       compile(ast->as.ast, state);
       state_drop_scope(state);
-      state_change_sp(state, -(state->sp - start_sp));
+      state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -(state->sp - start_sp)}});
     } break;
     case A_PARAM:
       if (ast->as.binary.right) {
@@ -3271,7 +3320,7 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.funcdecl.block->as.ast, state);
       }
       if (state->irs[state->ir_num - 1].kind != IR_FUNCEND) {
-        state_change_sp(state, -state->sp);
+        state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -state->sp}});
         state_add_ir(state, (ir_t){IR_FUNCEND, {}});
       }
       state_drop_scope(state);
@@ -3280,9 +3329,7 @@ void compile(ast_t *ast, state_t *state) {
       state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
       break;
     case A_PARAMDEF:
-      state_add_symbol(
-          state,
-          (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {-state->param}});
+      state_add_symbol(state, (symbol_t){ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {-state->param}});
       state->param += type_size_aligned(&ast->as.paramdef.type);
       if (ast->as.paramdef.next) {
         compile(ast->as.paramdef.next, state);
@@ -3296,7 +3343,7 @@ void compile(ast_t *ast, state_t *state) {
       assert(ast->as.ast->kind != A_DECL);
       int delta = state->sp - sp_start;
       if (delta != 0) {
-        state_change_sp(state, -delta);
+        state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -delta}});
       }
     } break;
     case A_RETURN:
@@ -3305,8 +3352,7 @@ void compile(ast_t *ast, state_t *state) {
       int size = type_size_aligned(&ast->as.ast->type);
       state_add_ir(state, (ir_t){IR_ADDR, {.loc = {1, state->sp + 2, 0}}});
       state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
-      state->sp -= size;
-      state_change_sp(state, -state->sp);
+      state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -state->sp}});
       state_add_ir(state, (ir_t){IR_FUNCEND, {}});
     } break;
     case A_BINARYOP:
@@ -3314,7 +3360,6 @@ void compile(ast_t *ast, state_t *state) {
         case T_DOT:
           get_addr_ast(state, ast);
           state_add_ir(state, (ir_t){IR_READ, {.num = ast->type.size}});
-          state->sp += type_size_aligned(&ast->type);
           break;
         case T_PLUS:
         case T_MINUS:
@@ -3323,15 +3368,12 @@ void compile(ast_t *ast, state_t *state) {
           if (type_is_kind(&ast->type, TY_PTR)) {
             state_add_ir(state, (ir_t){IR_MUL, {.num = ast->type.as.ptr->size}});
             state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
-            state->sp -= 2;
           } else if (ast->as.binaryop.op == T_MINUS && ast->type.kind == TY_INT && type_is_kind(&ast->as.binaryop.lhs->type, TY_PTR) && type_is_kind(&ast->as.binaryop.rhs->type, TY_PTR)) {
             state_add_ir(state, (ir_t){IR_OPERATION, {.inst = SUB}});
             state_add_ir(state, (ir_t){IR_DIV, {.num = ast->as.binaryop.lhs->type.as.ptr->size}});
-            state->sp -= 2;
             break;
           } else {
             state_add_ir(state, (ir_t){IR_OPERATION, {.inst = ast->as.binaryop.op == T_PLUS ? SUM : SUB}});
-            state->sp -= 2;
           }
           break;
         case T_EQ:
@@ -3344,7 +3386,7 @@ void compile(ast_t *ast, state_t *state) {
 
           int a = state->uli++;
           state_add_ir(state, (ir_t){IR_JMPZ, {.num = a}});
-          state_change_sp(state, -2);
+          state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -2}});
           state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.binaryop.op != T_EQ}});
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
         } break;
@@ -3368,11 +3410,9 @@ void compile(ast_t *ast, state_t *state) {
         case T_STAR:
           compile(ast->as.unaryop.arg, state);
           state_add_ir(state, (ir_t){IR_READ, {.num = ast->type.size}});
-          state->sp += type_size_aligned(&ast->type) - 2;
           break;
         case T_AND:
           get_addr_ast(state, ast->as.unaryop.arg);
-          state->sp += 2;
           break;
         case T_NOT:
         {
@@ -3380,7 +3420,7 @@ void compile(ast_t *ast, state_t *state) {
           compile(ast->as.unaryop.arg, state);
           int a = state->uli++;
           state_add_ir(state, (ir_t){IR_JMPZ, {.num = a}});
-          state_change_sp(state, -2);
+          state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -2}});
           state_add_ir(state, (ir_t){IR_INT, {.num = 1}});
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
         } break;
@@ -3391,14 +3431,12 @@ void compile(ast_t *ast, state_t *state) {
       break;
     case A_INT:
       state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.fac.asint}});
-      state->sp += 2;
       break;
     case A_SYM:
     {
       symbol_t *s = state_find_symbol(state, ast->as.fac);
       if (s->kind == INFO_CONSTANT) {
         state_add_ir(state, (ir_t){IR_INT, {.num = s->info.num}});
-        state->sp += 2;
       } else {
         if (type_is_kind(&ast->type, TY_ARRAY)) {
           eprintf(ast->loc, "cannot access ARRAY, maybe wanna cast it to PTR");
@@ -3406,7 +3444,6 @@ void compile(ast_t *ast, state_t *state) {
         get_addr_ast(state, ast);
         assert(s->type);
         state_add_ir(state, (ir_t){IR_READ, {.num = s->type->size}});
-        state->sp += type_size_aligned(s->type);
       }
     } break;
     case A_STRING:
@@ -3414,7 +3451,6 @@ void compile(ast_t *ast, state_t *state) {
       int uli = datauli(state);
       compile_data(ast, state, 0, 0); // TODO: maybe compile_data(ast, state, uli, 0);
       state_add_ir(state, (ir_t){IR_ADDR, {.loc = {0, uli, 0}}});
-      state->sp += 2;
     } break;
     case A_DECL:
     {
@@ -3426,14 +3462,12 @@ void compile(ast_t *ast, state_t *state) {
         if (state->sp - start_sp > size) {
           state_add_ir(state, (ir_t){IR_ADDR, {.loc = {1, state->sp - start_sp - size, 0}}});
           state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
-          state_change_sp(state, -(state->sp - start_sp - 2 * size));
-          state->sp = start_sp + size;
+          state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = state->sp - start_sp - 2 * size}});
         }
       } else {
-        state_change_sp(state, size);
+        state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = size}});
       }
-      state_add_symbol(
-          state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_LOCAL, {state->sp - 2}});
+      state_add_symbol(state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, INFO_LOCAL, {state->sp - 2}});
     } break;
     case A_GLOBDECL:
     {
@@ -3452,13 +3486,12 @@ void compile(ast_t *ast, state_t *state) {
       get_addr_ast(state, ast->as.binary.left);
       int size = type_size_aligned(&ast->type);
       state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
-      state->sp -= size;
     } break;
     case A_FUNCALL:
       if (ast->as.funcall.params) {
         compile(ast->as.funcall.params, state);
       }
-      state_change_sp(state, type_size_aligned(&ast->type));
+      state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = type_size_aligned(&ast->type)}});
       state_add_ir(state, (ir_t){IR_CALL, {.sv = ast->as.funcall.name.image}});
       break;
     case A_ARRAY:
@@ -3471,7 +3504,6 @@ void compile(ast_t *ast, state_t *state) {
           compile(ast->as.binary.left, state);
           compile(ast->as.binary.right->as.binary.left, state);
           state_add_ir(state, (ir_t){IR_OPERATION, {.inst = B_AH}});
-          state->sp -= 2;
         } else {
           compile(ast->as.binary.left, state);
         }
@@ -3499,7 +3531,6 @@ void compile(ast_t *ast, state_t *state) {
           && ast->as.cast.ast->as.binary.right == NULL) {
         for (int i = 0; i < type_size_aligned(&ast->as.cast.target); i += 2) {
           state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
-          state->sp += 2;
         }
       } else if (type_is_kind(&ast->as.cast.target, TY_STRUCT) && ast->as.cast.ast->kind == A_ARRAY) {
         ast_t *asts[128] = {0};
@@ -3516,16 +3547,13 @@ void compile(ast_t *ast, state_t *state) {
             compile(asts[ast_num - 1], state);
             compile(asts[ast_num], state);
             state_add_ir(state, (ir_t){IR_OPERATION, {.inst = B_AH}});
-            state->sp -= 2;
             --ast_num;
           } else {
             compile(asts[ast_num], state);
           }
         }
-      } else if (type_is_kind(&ast->as.cast.target, TY_PTR)
-                 && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
+      } else if (type_is_kind(&ast->as.cast.target, TY_PTR) && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
         get_addr_ast(state, ast->as.cast.ast);
-        state->sp += 2;
       } else {
         int tsize = type_size_aligned(&ast->as.cast.target);
         int size = type_size_aligned(&ast->as.cast.ast->type);
@@ -3535,7 +3563,7 @@ void compile(ast_t *ast, state_t *state) {
                   type_dump_to_string(&ast->as.cast.ast->type),
                   type_dump_to_string(&ast->as.cast.target));
         }
-        state_change_sp(state, tsize - size);
+        state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = tsize - size}});
         compile(ast->as.cast.ast, state);
       }
       break;
@@ -3548,7 +3576,6 @@ void compile(ast_t *ast, state_t *state) {
         int a = state->uli++;
         int b = state->uli++;
         state_add_ir(state, (ir_t){IR_JMPZ, {.num = a}});
-        state->sp -= 2;
         if (ast->as.if_.then) {
           compile(ast->as.if_.then, state);
         }
@@ -3559,7 +3586,6 @@ void compile(ast_t *ast, state_t *state) {
       } else if (ast->as.if_.then) {
         int a = state->uli++;
         state_add_ir(state, (ir_t){IR_JMPZ, {.num = a}});
-        state->sp -= 2;
         compile(ast->as.if_.then, state);
         state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
       }
@@ -3573,11 +3599,9 @@ void compile(ast_t *ast, state_t *state) {
       if (ast->as.binary.left->kind == A_UNARYOP && ast->as.binary.left->as.unaryop.op == T_NOT) {
         compile(ast->as.binary.left->as.unaryop.arg, state);
         state_add_ir(state, (ir_t){IR_JMPNZ, {.num = b}});
-        state->sp -= 2;
       } else {
         compile(ast->as.binary.left, state);
         state_add_ir(state, (ir_t){IR_JMPZ, {.num = b}});
-        state->sp -= 2;
       }
       if (ast->as.binary.right) {
         compile(ast->as.binary.right, state);
@@ -3865,11 +3889,14 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_count) {
           num *= irs[iri + 1].arg.num;
           ++iri;
         }
+        // TODO: asdiauds
+        // if (!(iri > 0 && irs[iri - 1].kind == IR_INT && irs[iri - 1].arg.num == num)) {
         if (0 <= num && num < 256) {
           code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = num}});
         } else {
           code(compiled, (bytecode_t){BINSTHEX2, RAM_A, {.num = num}});
         }
+        //}
         code(compiled, (bytecode_t){BINST, PUSHA, {}});
       } break;
       case IR_STRING:

@@ -40,8 +40,10 @@ INSTHEX      PEEKAR 0x04
 INST         PUSHA
 INSTHEX      PEEKAR 0x04
 INST         PUSHA
+INST         INCSP
+INST         INCSP
 INST         SP_A
-INSTHEX2     RAM_B 0x0012
+INSTHEX2     RAM_B 0x000E
 INST         SUM
 INST         A_SP
 INST         RET
