@@ -1,0 +1,18 @@
+params: -D par
+exitcode: 0
+code:
+typedef struct {
+  int a;
+  int x,y,z;
+} point_t;
+
+int main() {
+}
+output:
+AST:
+LIST
+    TYPEDEF {STRUCT {FIELDLIST {INT a FIELDLIST {INT x FIELDLIST {INT y FIELDLIST {INT z}}}}}} point_t
+    FUNCDECL {INT} main
+        NULL
+        NULL
+

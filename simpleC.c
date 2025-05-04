@@ -1762,6 +1762,43 @@ type_t parse_type(tokenizer_t *tokenizer) {
   return type;
 }
 
+void add_field(ast_t *ast, type_t *type, type_t **typei, token_t name) {
+  assert(ast);
+  assert(ast->kind == A_DECL);
+  assert(type);
+  assert(type->kind == TY_FIELDLIST);
+  assert(typei);
+  assert(*typei);
+  assert((*typei)->kind == TY_FIELDLIST);
+  assert((*typei)->as.fieldlist.next == NULL);
+
+  type_t ftype = ast->as.decl.type;
+  token_t fname = ast->as.decl.name;
+
+  for (type_t *t = type; t; t = t->as.fieldlist.next) {
+    assert(t->kind == TY_FIELDLIST);
+    if (sv_eq(t->as.fieldlist.name.image, fname.image)) {
+      eprintf(fname.loc, "redefinition of field");
+    }
+  }
+
+  if (!(*typei)->as.fieldlist.name.kind) {
+    (*typei)->as.fieldlist.type = type_malloc(ftype);
+    (*typei)->as.fieldlist.name = fname;
+  } else {
+    (*typei)->as.fieldlist.next = type_malloc((type_t){TY_FIELDLIST, 0, {.fieldlist = {type_malloc(ftype), fname, NULL}}});
+    *typei = (*typei)->as.fieldlist.next;
+  }
+
+  if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct && sv_eq(ftype.as.alias.name.image, fname.image)) {
+    eprintf(fname.loc,
+            "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'",
+            SV_UNPACK(name.image),
+            SV_UNPACK(fname.image));
+  }
+}
+
+ast_t *parse_decl(tokenizer_t *tokenizer);
 type_t parse_structdef(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
@@ -1776,47 +1813,29 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
     eprintf(location_union(start, tokenizer->last_token.loc), "invalid empty struct");
   }
 
-  sv_t fields[128] = {0};
-  int field_num = 0;
-
-  type_t ftype = parse_type(tokenizer);
-  token_t fname = token_expect(tokenizer, T_SYM);
-  token_expect(tokenizer, T_SEMICOLON);
-  type_t type = {TY_FIELDLIST, 0, {.fieldlist = {type_malloc(ftype), fname, NULL}}};
+  type_t type = {TY_FIELDLIST, 0, {}};
   type_t *typei = &type;
 
-  fields[field_num++] = fname.image;
-
-  if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct
-      && sv_eq(ftype.as.alias.name.image, name.image)) {
-    eprintf(fname.loc,
-            "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'",
-            SV_UNPACK(name.image),
-            SV_UNPACK(fname.image));
-  }
-
-  while (!token_next_if_kind(tokenizer, T_BRC)) {
-    ftype = parse_type(tokenizer);
-    fname = token_expect(tokenizer, T_SYM);
+  do {
+    ast_t *ast = parse_decl(tokenizer);
     token_expect(tokenizer, T_SEMICOLON);
-    typei->as.fieldlist.next = type_malloc((type_t){TY_FIELDLIST, 0, {.fieldlist = {type_malloc(ftype), fname, NULL}}});
-    typei = typei->as.fieldlist.next;
-
-    for (int i = 0; i < field_num; ++i) {
-      if (sv_eq(fields[i], fname.image)) {
-        eprintf(fname.loc, "redefinition of field");
+    if (ast->kind == A_DECL) {
+      if (ast->as.decl.expr) {
+        eprintf(ast->as.decl.expr->loc, "expected SEMICOLON");
+      }
+      add_field(ast, &type, &typei, name);
+    } else if (ast->kind == A_LIST) {
+      for (ast_t *l = ast; l; l = l->as.binary.right) {
+        assert(l->as.binary.left);
+        assert(l->as.binary.left->kind == A_DECL);
+        if (l->as.binary.left->as.decl.expr) {
+          eprintf(ast->as.decl.expr->loc, "expected SEMICOLON");
+        }
+        assert(l->kind == A_LIST);
+        add_field(l->as.binary.left, &type, &typei, name);
       }
     }
-    assert(field_num < 128);
-    fields[field_num++] = fname.image;
-
-    if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct && sv_eq(ftype.as.alias.name.image, name.image)) {
-      eprintf(fname.loc,
-              "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'",
-              SV_UNPACK(name.image),
-              SV_UNPACK(fname.image));
-    }
-  }
+  } while (!token_next_if_kind(tokenizer, T_BRC));
 
   return (type_t){TY_STRUCT, 0, {.struct_ = {name, type_malloc(type)}}};
 }
@@ -3601,7 +3620,6 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 1;
       memcpy(irs + i, irs + i + 1, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-      /* TODO:
     } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
                && is_ir_kind(irs, ir_count, i + 1, IR_READ)
                && is_ir_kind(irs, ir_count, i + 2, IR_CHANGE_SP)
@@ -3628,7 +3646,6 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-      */
     } else if (is_ir_kind(irs, ir_count, i, IR_INT) && is_ir_kind(irs, ir_count, i + 1, IR_INT)
                && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION) && irs[i + 2].arg.inst == B_AH) {
       if (debug_opt) {
@@ -3650,7 +3667,6 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-      /* TODO:
     } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
                && is_ir_kind(irs, ir_count, i + 1, IR_READ)
                && is_ir_kind(irs, ir_count, i + 2, IR_ADDR_LOCAL)
@@ -3667,7 +3683,6 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-      */
     } else if (is_ir_kind(irs, ir_count, i, IR_INT)
                && is_ir_kind(irs, ir_count, i + 1, IR_MUL)) {
       if (debug_opt) {
@@ -3678,7 +3693,6 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 1;
       memcpy(irs + i + 1, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-      /* TODO:
     } else if (is_ir_kind(irs, ir_count, i, IR_ADDR_LOCAL)
                && is_ir_kind(irs, ir_count, i + 1, IR_INT)
                && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION)
@@ -3691,7 +3705,6 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt) {
       *ir_count -= 2;
       memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
       i = 0;
-    */
     }
   }
 }
@@ -3835,7 +3848,7 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_count) {
           num *= irs[iri + 1].arg.num;
           ++iri;
         }
-        // TODO: asdiauds
+        // TODO: INTs in sequence
         // if (!(iri > 0 && irs[iri - 1].kind == IR_INT && irs[iri - 1].arg.num == num)) {
         if (0 <= num && num < 256) {
           code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = num}});

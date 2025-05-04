@@ -97,7 +97,7 @@ When the same SYM is used it is substituted by the list of tokens
 - cast ::= PARO type PARC fac
 - type ::= STRUCT ? SYM STAR ? | VOIDKW | INTKW | CHARKW
 - typedef ::= TYPEDEF ( type | structdef | enumdef ) SYM SEMICOLON
-- structdef ::= STRUCT SYM ? BRO ( type SYM SEMICOLON )\* BRC
+- structdef ::= STRUCT SYM ? BRO ( decl SEMICOLON )\* BRC
 - enumdef ::= ENUM BRO ( SYM COMMA )\* BRC
 - asm ::= ASM PARO STRING PARC
 - if ::= IF PARO expr PARC block ( ELSE ( if | block ) )?
