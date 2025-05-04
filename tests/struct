@@ -4,6 +4,7 @@ code:
 typedef struct {
   int a;
   int x,y,z;
+  int b[10];
 } point_t;
 
 int main() {
@@ -11,7 +12,7 @@ int main() {
 output:
 AST:
 LIST
-    TYPEDEF {STRUCT {FIELDLIST {INT a FIELDLIST {INT x FIELDLIST {INT y FIELDLIST {INT z}}}}}} point_t
+    TYPEDEF {STRUCT {FIELDLIST {INT a FIELDLIST {INT x FIELDLIST {INT y FIELDLIST {INT z FIELDLIST {INT[10] b}}}}}}} point_t
     FUNCDECL {INT} main
         NULL
         NULL

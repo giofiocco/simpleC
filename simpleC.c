@@ -1762,7 +1762,7 @@ type_t parse_type(tokenizer_t *tokenizer) {
   return type;
 }
 
-void add_field(ast_t *ast, type_t *type, type_t **typei, token_t name) {
+void add_field(ast_t *ast, type_t *type, type_t **typei) {
   assert(ast);
   assert(ast->kind == A_DECL);
   assert(type);
@@ -1788,13 +1788,6 @@ void add_field(ast_t *ast, type_t *type, type_t **typei, token_t name) {
   } else {
     (*typei)->as.fieldlist.next = type_malloc((type_t){TY_FIELDLIST, 0, {.fieldlist = {type_malloc(ftype), fname, NULL}}});
     *typei = (*typei)->as.fieldlist.next;
-  }
-
-  if (name.kind != T_NONE && ftype.kind == TY_ALIAS && ftype.as.alias.is_struct && sv_eq(ftype.as.alias.name.image, fname.image)) {
-    eprintf(fname.loc,
-            "incomplete type, maybe wanna use 'struct " SV_FMT " *" SV_FMT "'",
-            SV_UNPACK(name.image),
-            SV_UNPACK(fname.image));
   }
 }
 
@@ -1823,7 +1816,7 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
       if (ast->as.decl.expr) {
         eprintf(ast->as.decl.expr->loc, "expected SEMICOLON");
       }
-      add_field(ast, &type, &typei, name);
+      add_field(ast, &type, &typei);
     } else if (ast->kind == A_LIST) {
       for (ast_t *l = ast; l; l = l->as.binary.right) {
         assert(l->as.binary.left);
@@ -1832,7 +1825,7 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
           eprintf(ast->as.decl.expr->loc, "expected SEMICOLON");
         }
         assert(l->kind == A_LIST);
-        add_field(l->as.binary.left, &type, &typei, name);
+        add_field(l->as.binary.left, &type, &typei);
       }
     }
   } while (!token_next_if_kind(tokenizer, T_BRC));
@@ -2160,6 +2153,12 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
       } while (token_next_if_kind(tokenizer, T_COMMA));
     }
   }
+
+  if (ast->as.decl.type.size == 0) {
+    catch = false;
+    eprintf(ast->loc, "variable has incomplete type: %s", type_dump_to_string(&ast->as.decl.type));
+  }
+
   return ast;
 }
 

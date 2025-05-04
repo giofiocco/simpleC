@@ -1,16 +1,7 @@
 if token_peek and then token_next_if_kind the tokenizer->loc gives you the loc after the token you want
 so maybe change to tokenizer_get_loc() that checks if there is token to peek
 
-void v; should not be possible
-because incomplete type
-maybe do also in `typedef struct a_` a\_ an incomplete type
-
-typedef array
-struct with array
-
 tests errors
-
-maybe do better ir and keep track of SP in compile_ir?
 
 # Tokenizer
 
