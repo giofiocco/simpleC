@@ -1,0 +1,12 @@
+params: -D typ
+exitcode: 256
+code:
+typedef struct {
+  void a;
+} point;
+
+int main() {}
+output:
+ERROR:cmd:2:8: field has incomplete type
+  2 |   void a;
+             ^

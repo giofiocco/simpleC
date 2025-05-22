@@ -732,6 +732,11 @@ char *type_dump_to_string(type_t *type) {
       break;
   }
 
+#if 0
+  int len = strlen(string);
+  snprintf(string + len, 128 - len, " <%d>", type->size);
+#endif
+
   return string;
 }
 
@@ -1661,6 +1666,9 @@ void state_solve_type_alias(state_t *state, type_t *type) {
     case TY_FIELDLIST:
       assert(type->as.fieldlist.type);
       state_solve_type_alias(state, type->as.fieldlist.type);
+      if (type->as.fieldlist.type->size == 0) {
+        eprintf(type->as.fieldlist.name.loc, "field has incomplete type");
+      }
       if (type->as.fieldlist.next) {
         state_solve_type_alias(state, type->as.fieldlist.next);
       }
@@ -1819,12 +1827,12 @@ type_t parse_structdef(tokenizer_t *tokenizer) {
       add_field(ast, &type, &typei);
     } else if (ast->kind == A_LIST) {
       for (ast_t *l = ast; l; l = l->as.binary.right) {
+        assert(l->kind == A_LIST);
         assert(l->as.binary.left);
         assert(l->as.binary.left->kind == A_DECL);
         if (l->as.binary.left->as.decl.expr) {
           eprintf(ast->as.decl.expr->loc, "expected SEMICOLON");
         }
-        assert(l->kind == A_LIST);
         add_field(l->as.binary.left, &type, &typei);
       }
     }
@@ -2153,12 +2161,6 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
       } while (token_next_if_kind(tokenizer, T_COMMA));
     }
   }
-
-  if (ast->as.decl.type.size == 0) {
-    catch = false;
-    eprintf(ast->loc, "variable has incomplete type: %s", type_dump_to_string(&ast->as.decl.type));
-  }
-
   return ast;
 }
 
@@ -2615,6 +2617,7 @@ void typecheck(ast_t *ast, state_t *state) {
       ast->type = (type_t){TY_VOID, 0, {}};
       break;
     case A_FUNCDECL:
+      // TODO: why not solve_type_alias there?
       state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
       state_push_scope(state);
       state->param = 0;
@@ -2789,6 +2792,7 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_GLOBDECL:
     case A_DECL:
       state_solve_type_alias(state, &ast->as.decl.type);
+
       if (type_is_kind(&ast->as.decl.type, TY_ARRAY)
           && ast->as.decl.type.as.array.len.kind == ARRAY_LEN_UNSET && ast->as.decl.expr == NULL) {
         eprintf(ast->loc, "array without length uninitialized");
@@ -2810,6 +2814,11 @@ void typecheck(ast_t *ast, state_t *state) {
         }
         ast->as.decl.expr->type = ast->as.decl.type;
       }
+
+      if (ast->as.decl.type.size == 0) {
+        eprintf(ast->loc, "variable has incomplete type: %s", type_dump_to_string(&ast->as.decl.type));
+      }
+
       state_add_symbol(state, (symbol_t){ast->as.decl.name, &ast->as.decl.type, 0, {}});
       ast->type = (type_t){TY_VOID, 0, {}};
       break;

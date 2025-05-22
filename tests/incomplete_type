@@ -1,0 +1,10 @@
+params: -D typ
+exitcode: 256
+code:
+int main() {
+  void a;
+}
+output:
+ERROR:cmd:2:7: variable has incomplete type: VOID
+  2 |   void a;
+            ^~
