@@ -1,6 +1,10 @@
 if token_peek and then token_next_if_kind the tokenizer->loc gives you the loc after the token you want
 so maybe change to tokenizer_get_loc() that checks if there is token to peek
 
+function call with first the return and then the arguments?
+
+test array of ptr
+
 tests errors
 
 # Tokenizer
@@ -22,7 +26,6 @@ tests errors
 # Compiler
 
 - [ ] proper compilation for CALL vs CALLR
-- [ ] compile_data array of str or ptr
 - [ ] array with expression as length
 - [ ] maybe merge \_start and main
 
@@ -53,6 +56,5 @@ tests errors
 
 # Roadmap
 
-- [ ] macros
 - [ ] include
 - [ ] union

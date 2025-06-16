@@ -3206,29 +3206,38 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
     } break;
     case A_ARRAY:
       if (type_is_kind(&ast->type, TY_ARRAY) && type_is_kind(ast->type.as.array.type, TY_PTR)) {
-        TODO;
-        // ast_t *node = ast;
-        // int i = 0;
-        // while (node) {
-        //   i++;
-        // ;
-        // data(compiled,bytecode_uli() );
-        //   ast_dump_tree(node->as.binary.left, 0, 0);
-        //   compile_data(node->as.binary.left, state, element_uli, 0);
-        //   node = node->as.binary.right;
-        // }
-        ast_t *node = ast;
-        while (node) {
-          int element_uli = datauli(state);
-          ast_dump_tree(node->as.binary.left, 0, 0);
-          compile_data(node->as.binary.left, state, element_uli, 0);
-          node = node->as.binary.right;
+        int ulis[256];
+        int uli_count = 0;
+
+        compiled->is_init = true;
+        code(compiled, bytecode_uli(BINSTLABEL, RAM_B, state->uli - 1));
+
+        for (ast_t *a = ast; a; a = a->as.binary.right) {
+          assert(uli_count + 1 < 256);
+          ulis[uli_count++] = state->uli++;
+
+          data(compiled, (bytecode_t){BDB, 0, {.num = 2}});
+          code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ulis[uli_count - 1]));
+          code(compiled, (bytecode_t){BINST, A_rB, {}});
+          code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
+          code(compiled, (bytecode_t){BINST, SUM, {}});
+          code(compiled, (bytecode_t){BINST, A_B, {}});
+          // TODO: remove useless final RAM_AL 0x02 SUM A_B
         }
-        break;
-      }
-      compile_data(ast->as.binary.left, state, uli, offset);
-      if (ast->as.binary.right) {
-        compile_data(ast->as.binary.right, state, uli, offset + ast->as.binary.left->type.size);
+        compiled->is_init = false;
+        int i = 0;
+        for (ast_t *a = ast; a; a = a->as.binary.right) {
+          data(compiled, (bytecode_t){BALIGN, 0, {}});
+          data(compiled, bytecode_uli(BSETLABEL, 0, ulis[i]));
+          compile_data(a->as.binary.left, state, ulis[i], 0);
+          i++;
+        }
+
+      } else {
+        compile_data(ast->as.binary.left, state, uli, offset);
+        if (ast->as.binary.right) {
+          compile_data(ast->as.binary.right, state, uli, offset + ast->as.binary.left->type.size);
+        }
       }
       break;
     case A_INT:

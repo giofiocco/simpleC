@@ -2,9 +2,9 @@
 
 A subset of `C` compiler for [Jaris](https://github.com/giofiocco/jaris) assembly.
 
-The file will be tokenized, white spaces are skipped (tabs are treated as single space), tokens that can be either SYM or a keyword are assigned to the keyword.
+The file will be tokenized, white spaces are skipped (tabs are treated as single space).
 
-Tokens ar then parsed to an AST with the grammar defined in the Grammar section.
+Tokens are then parsed to an AST with the grammar defined in the Grammar section.
 The grammar of the recursive parser, each rule are defined as `- rule-name ::= match`
 Where the match can contain another rule or tokens (uppercase as in the Token section) and the other symbols works as follows:
 

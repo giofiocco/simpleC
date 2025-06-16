@@ -1,0 +1,50 @@
+params: -D com
+exitcode: 0
+code:
+char *str[] = {"A", "B", "C"};
+int main() {
+
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+ALIGN
+SETLABEL     _000
+DB           6
+ALIGN
+SETLABEL     _001
+STRING       A
+HEX          0x00
+ALIGN
+SETLABEL     _002
+STRING       B
+HEX          0x00
+ALIGN
+SETLABEL     _003
+STRING       C
+HEX          0x00
+SETLABEL     _start
+INSTLABEL    RAM_B _000
+INSTLABEL    RAM_A _001
+INST         A_rB
+INSTHEX      RAM_AL 0x02
+INST         SUM
+INST         A_B
+INSTLABEL    RAM_A _002
+INST         A_rB
+INSTHEX      RAM_AL 0x02
+INST         SUM
+INST         A_B
+INSTLABEL    RAM_A _003
+INST         A_rB
+INSTHEX      RAM_AL 0x02
+INST         SUM
+INST         A_B
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INST         RET
