@@ -1279,7 +1279,7 @@ typedef struct {
     int local;
     int global;
     int num;
-  } info;
+  } info; // TODO: union {} info -> int arg
 } symbol_t;
 
 typedef struct {
@@ -1432,6 +1432,28 @@ typedef struct {
   break_target_info_t break_target[BREAK_TARGET_MAX];
   int break_target_num;
 } state_t;
+
+void state_print_variables(state_t *state) {
+  assert(state);
+  printf("VARIABLES:\n");
+  for (int i = 0; i < state->scope_num; ++i) {
+    printf("SCOPE %d:\n", i);
+    for (int j = 0; j < state->scopes[i].symbol_num; ++j) {
+      symbol_t *s = &state->scopes[i].symbols[j];
+      char *t = type_dump_to_string(s->type);
+      printf(SV_FMT " <%s> ", SV_UNPACK(s->name.image), t);
+      switch (s->kind) {
+        case INFO_NONE: printf("NONE"); break;
+        case INFO_LOCAL: printf("LOCAL %d", s->info.local); break;
+        case INFO_GLOBAL: printf("GLOBAL %d", s->info.global); break;
+        case INFO_TYPE: printf("TYPE TODO:"); break;
+        case INFO_TYPEINCOMPLETE: printf("TYPEINCOMPLETE"); break;
+        case INFO_CONSTANT: printf("CONSTANT %d", s->info.num); break;
+      }
+      printf("\n");
+    }
+  }
+}
 
 void state_init(state_t *state) {
   assert(state);
@@ -3293,10 +3315,11 @@ void compile(ast_t *ast, state_t *state) {
     case A_FUNCDECL:
       state_add_symbol(state, (symbol_t){ast->as.funcdecl.name, &ast->type, 0, {}});
       state_push_scope(state);
-      state->param = 4 + type_size_aligned(&ast->as.funcdecl.type);
+      state->param = 4;
       if (ast->as.funcdecl.params) {
         compile(ast->as.funcdecl.params, state);
       }
+
       state_add_ir(state, (ir_t){IR_SETLABEL, {.sv = ast->as.funcdecl.name.image}});
       state->sp = 0;
       if (ast->as.funcdecl.block) {
@@ -3330,14 +3353,12 @@ void compile(ast_t *ast, state_t *state) {
       }
     } break;
     case A_RETURN:
-    {
       compile(ast->as.ast, state);
-      int size = type_size_aligned(&ast->as.ast->type);
-      state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp + 2}});
-      state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
+      state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->param + state->sp - 2}});
+      state_add_ir(state, (ir_t){IR_WRITE, {.num = type_size_aligned(&ast->as.ast->type)}});
       state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -state->sp}});
       state_add_ir(state, (ir_t){IR_FUNCEND, {}});
-    } break;
+      break;
     case A_BINARYOP:
       switch (ast->as.binaryop.op) {
         case T_DOT:
@@ -3432,7 +3453,7 @@ void compile(ast_t *ast, state_t *state) {
     case A_STRING:
     {
       int uli = datauli(state);
-      compile_data(ast, state, 0, 0); // TODO: maybe compile_data(ast, state, uli, 0);
+      compile_data(ast, state, uli, 0);
       state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.loc = {uli, 0}}});
     } break;
     case A_DECL:
@@ -3443,6 +3464,7 @@ void compile(ast_t *ast, state_t *state) {
         compile(ast->as.decl.expr, state);
         assert(state->sp > start_sp);
         if (state->sp - start_sp > size) {
+          TODO;
           state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->sp - start_sp - size}});
           state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
           state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = state->sp - start_sp - 2 * size}});
@@ -3471,12 +3493,15 @@ void compile(ast_t *ast, state_t *state) {
       state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
     } break;
     case A_FUNCALL:
+    {
+      state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = type_size_aligned(&ast->type)}});
+      int start_sp = state->sp;
       if (ast->as.funcall.params) {
         compile(ast->as.funcall.params, state);
       }
-      state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = type_size_aligned(&ast->type)}});
       state_add_ir(state, (ir_t){IR_CALL, {.sv = ast->as.funcall.name.image}});
-      break;
+      state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = start_sp - state->sp}});
+    } break;
     case A_ARRAY:
       assert(ast->type.as.array.len.kind != ARRAY_LEN_EXPR);
       if (type_is_kind(ast->type.as.array.type, TY_CHAR)) {
