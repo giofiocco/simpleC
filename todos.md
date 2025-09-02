@@ -7,6 +7,8 @@ test array of ptr
 
 tests errors
 
+semplify opt_ast output
+
 # Tokenizer
 
 - [ ] binary litterals
@@ -43,6 +45,7 @@ tests errors
 
 # OPT
 
+- [ ] RAM_A SHL|SHR
 - [ ] condition with constants (like if (2) {} else {})
 - [ ] ptail opt
 - [ ] remove ifs that do nothing

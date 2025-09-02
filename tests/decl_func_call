@@ -1,0 +1,45 @@
+params: -D com -O3
+exitcode: 0
+code:
+int foo(int a, int b) {
+  return a;
+}
+
+int main() {
+  int a = foo(1,2) + foo(3,5);
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+SETLABEL     _start
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     foo
+INSTHEX      PEEKAR 0x04
+INSTHEX      PUSHAR 0x08
+INST         RET
+SETLABEL     main
+INST         DECSP
+INSTHEX      RAM_AL 0x02
+INST         PUSHA
+INSTHEX      RAM_AL 0x01
+INST         PUSHA
+INSTLABEL    CALL foo
+INST         INCSP
+INSTHEX      RAM_AL 0x05
+INST         PUSHA
+INSTHEX      RAM_AL 0x03
+INST         PUSHA
+INSTLABEL    CALL foo
+INST         INCSP
+INST         INCSP
+INST         POPA
+INST         POPB
+INST         SUM
+INST         PUSHA
+INST         INCSP
+INST         RET

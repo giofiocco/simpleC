@@ -9,7 +9,7 @@
 #include <string.h>
 
 #define SV_IMPLEMENTATION
-#include "jaris/instructions.h"
+#include "jaris/src/instructions.h"
 
 #define TODO                          \
   do {                                \
@@ -176,7 +176,6 @@ void print_location(location_t location) {
 }
 
 static bool dev_flag = false;
-
 static bool catch = false;
 static jmp_buf catch_buf;
 #define eprintf(__loc, ...) eprintf_impl((__loc), __LINE__, __FUNCTION__, __VA_ARGS__)
@@ -1464,6 +1463,9 @@ void state_init(state_t *state) {
 
 void state_add_ir(state_t *state, ir_t ir) {
   assert(state);
+  if (ir.kind == IR_CHANGE_SP && ir.arg.num == 0) {
+    return;
+  }
   if (state->is_init) {
     // if (ir.kind == IR_CHANGE_SP && state->irs_init[state->ir_init_num].kind == IR_CHANGE_SP) {
     //   state->irs_init[state->ir_init_num].arg.num += ir.arg.num;
@@ -3129,13 +3131,6 @@ int datauli(state_t *state) {
   return uli;
 }
 
-bytecode_t bytecode_with_sv(bytecode_kind_t kind, instruction_t inst, sv_t sv) {
-  char label[sv.len + 1];
-  memset(label, 0, sv.len + 1);
-  sprintf(label, SV_FMT, SV_UNPACK(sv));
-  return bytecode_with_string(kind, inst, label);
-}
-
 void compile(ast_t *ast, state_t *state);
 void get_addr_ast(state_t *state, ast_t *ast) {
   assert(state);
@@ -3354,7 +3349,7 @@ void compile(ast_t *ast, state_t *state) {
     } break;
     case A_RETURN:
       compile(ast->as.ast, state);
-      state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->param + state->sp - 2}});
+      state_add_ir(state, (ir_t){IR_ADDR_LOCAL, {.num = state->param + state->sp}});
       state_add_ir(state, (ir_t){IR_WRITE, {.num = type_size_aligned(&ast->as.ast->type)}});
       state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -state->sp}});
       state_add_ir(state, (ir_t){IR_FUNCEND, {}});
@@ -3823,7 +3818,7 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_count) {
           assert(ir.arg.loc.base % 2 == 0);
           for (int i = 0; i < size; i += 2) {
             code(compiled, (bytecode_t){BINST, POPA, {}});
-            code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = ir.arg.loc.base}});
+            code(compiled, (bytecode_t){BINSTHEX, PUSHAR, {.num = ir.arg.loc.base - 2}});
           }
           iri++;
         } else {
@@ -4002,18 +3997,14 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     } else if (is_inst(bs, b_count, i, PUSHA)
-               && (is_inst(bs, b_count, i + 1, RAM_A) || is_inst(bs, b_count, i + 1, RAM_AL)
-                   || is_inst(bs, b_count, i + 1, PEEKAR))
+               && (is_inst(bs, b_count, i + 1, RAM_A) || is_inst(bs, b_count, i + 1, RAM_AL))
                && is_inst(bs, b_count, i + 2, POPB)) {
       if (debug_opt) {
-        printf("  %03d | PUSHA RAM_A|RAM_AL|PEEKAR(x) POPB -> A_B RAM_A|RAM_AL|PEEKAR(x-2)\n", i);
+        printf("  %03d | PUSHA RAM_A|RAM_AL POPB -> A_B RAM_A|RAM_AL\n", i); // TODO: add PEEKAR case
       }
 
       *b_count -= 1;
       bs[i] = (bytecode_t){BINST, A_B, {}};
-      if (bs[i + 1].inst == PEEKAR) {
-        bs[i + 1].arg.num -= 2;
-      }
       memcpy(bs + i + 2, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
     } else if ((is_inst(bs, b_count, i, RAM_A) || is_inst(bs, b_count, i, RAM_AL)) && is_inst(bs, b_count, i + 1, A_B)) {

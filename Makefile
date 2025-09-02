@@ -5,7 +5,7 @@ CFLAGS=-Wall -Wextra -std=c99 -g
 .PHONY: test clean
 
 simpleC: simpleC.c
-	cc -Wno-infinite-recursion $(CFLAGS) -o $@ $(filter %.c,$^) jaris/instructions.c jaris/files.c
+	cc -Wno-infinite-recursion $(CFLAGS) -o $@ $(filter %.c,$^) jaris/src/instructions.c
 
 test: all
 	perl test.pl $(wildcard tests/*)

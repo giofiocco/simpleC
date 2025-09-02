@@ -14,15 +14,15 @@ SETLABEL     _000
 DB           6
 ALIGN
 SETLABEL     _001
-STRING       A
+STRING       "A"
 HEX          0x00
 ALIGN
 SETLABEL     _002
-STRING       B
+STRING       "B"
 HEX          0x00
 ALIGN
 SETLABEL     _003
-STRING       C
+STRING       "C"
 HEX          0x00
 SETLABEL     _start
 INSTLABEL    RAM_B _000

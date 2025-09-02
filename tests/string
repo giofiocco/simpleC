@@ -11,7 +11,7 @@ EXTERN       exit
 GLOBAL       _start
 ALIGN
 SETLABEL     _000
-STRING       asdf
+STRING       "asdf"
 HEX          0x00
 SETLABEL     _start
 INSTHEX      RAM_AL 0x00

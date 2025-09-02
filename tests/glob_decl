@@ -23,7 +23,7 @@ HEX2         0x0005
 DB           8
 ALIGN
 SETLABEL     _003
-STRING       asdf
+STRING       "asdf"
 HEX          0x00
 SETLABEL     _start
 INSTHEX      RAM_AL 0x02
