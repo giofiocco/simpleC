@@ -2592,9 +2592,9 @@ void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
     case A_IF:
       assert(ast->as.if_.cond);
       typecheck(ast->as.if_.cond, state);
-      if (ast->as.if_.cond->type.kind != TY_INT && ast->as.if_.cond->type.kind != TY_PTR) {
-        eprintf(ast->as.if_.cond->loc, "expected INT or PTR, found '%s'", type_dump_to_string(&ast->as.if_.cond->type));
-      }
+      assert(type_is_kind(&ast->as.if_.cond->type, TY_INT)
+             || type_is_kind(&ast->as.if_.cond->type, TY_CHAR)
+             || type_is_kind(&ast->as.if_.cond->type, TY_PTR));
       if (ast->as.if_.then) {
         typecheck_funcbody(ast->as.if_.then, state, ret);
       }
@@ -2716,7 +2716,7 @@ void typecheck(ast_t *ast, state_t *state) {
         case T_EQ:
         case T_NEQ:
           typecheck_expandable(ast->as.binaryop.rhs, state, ast->as.binaryop.lhs->type);
-          if (!type_is_kind(type, TY_INT) && !type_is_kind(type, TY_PTR)) {
+          if (!type_is_kind(type, TY_INT) && !type_is_kind(type, TY_CHAR) && !type_is_kind(type, TY_PTR)) {
             eprintf(ast->loc,
                     "invalid operation '%s' between '%s' and '%s'",
                     token_kind_to_string(ast->as.binaryop.op),
@@ -3039,12 +3039,12 @@ void optimize_ast(ast_t **astp, bool debug_opt) {
       ast_t *cond = ast->as.if_.cond;
       if (cond->kind == A_BINARYOP && (cond->as.binaryop.op == T_EQ || cond->as.binaryop.op == T_NEQ)) {
 
-        cond->as.binaryop.op = T_MINUS;
         if (cond->as.binaryop.op == T_EQ) {
           ast_t *then = ast->as.if_.then;
           ast->as.if_.then = ast->as.if_.else_;
           ast->as.if_.else_ = then;
         }
+        cond->as.binaryop.op = T_MINUS;
 
       } else if (cond->kind == A_UNARYOP && cond->as.unaryop.op == T_NOT) {
 
