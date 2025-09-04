@@ -1418,6 +1418,7 @@ typedef struct {
   int sp;
   int param;
   int uli; // unique label id
+  type_t ret_type;
   compiled_t compiled;
   ir_t irs[IR_MAX];
   int ir_num;
@@ -2560,56 +2561,6 @@ void typecheck_expandable(ast_t *ast, state_t *state, type_t type) {
   type_expect(ast->loc, &ast->type, &type);
 }
 
-void typecheck_funcbody(ast_t *ast, state_t *state, type_t ret) {
-  assert(ast);
-  assert(state);
-  assert(ret.kind != TY_FUNC);
-
-  switch (ast->kind) {
-    case A_BLOCK:
-      state_push_scope(state);
-      assert(ast->as.ast);
-      typecheck_funcbody(ast->as.ast, state, ret);
-      state_drop_scope(state);
-      break;
-    case A_LIST:
-      for (ast_t *asti = ast; asti; asti = asti->as.binary.right) {
-        typecheck_funcbody(asti->as.binary.left, state, ret);
-        asti->type = (type_t){TY_VOID, 0, {}};
-      }
-      break;
-    case A_RETURN:
-      if (ast->as.ast) {
-        typecheck_expect(ast->as.ast, state, ret);
-      }
-      ast->type = (type_t){TY_VOID, 0, {}};
-      break;
-    case A_IF:
-      assert(ast->as.if_.cond);
-      typecheck(ast->as.if_.cond, state);
-      assert(type_is_kind(&ast->as.if_.cond->type, TY_INT)
-             || type_is_kind(&ast->as.if_.cond->type, TY_CHAR)
-             || type_is_kind(&ast->as.if_.cond->type, TY_PTR));
-      if (ast->as.if_.then) {
-        typecheck_funcbody(ast->as.if_.then, state, ret);
-      }
-      if (ast->as.if_.else_) {
-        typecheck_funcbody(ast->as.if_.else_, state, ret);
-      }
-      break;
-    case A_WHILE:
-      assert(ast->as.binary.left);
-      typecheck_expandable(ast->as.binary.left, state, (type_t){TY_INT, 2, {}});
-      if (ast->as.binary.right) {
-        typecheck_funcbody(ast->as.binary.right, state, ret);
-      }
-      break;
-    default:
-      typecheck(ast, state);
-  }
-  ast->type = (type_t){TY_VOID, 0, {}};
-}
-
 void typecheck(ast_t *ast, state_t *state) {
   assert(state);
 
@@ -2619,15 +2570,24 @@ void typecheck(ast_t *ast, state_t *state) {
 
   switch (ast->kind) {
     case A_NONE:
-    case A_IF:
-    case A_BLOCK:
-    case A_RETURN:
-    case A_WHILE:
       assert(0);
     case A_LIST:
       assert(ast->as.binary.left);
       typecheck(ast->as.binary.left, state);
       typecheck(ast->as.binary.right, state);
+      ast->type = (type_t){TY_VOID, 0, {}};
+      break;
+    case A_BLOCK:
+      state_push_scope(state);
+      assert(ast->as.ast);
+      typecheck(ast->as.ast, state);
+      state_drop_scope(state);
+      ast->type = (type_t){TY_VOID, 0, {}};
+      break;
+    case A_RETURN:
+      if (ast->as.ast) {
+        typecheck_expect(ast->as.ast, state, state->ret_type);
+      }
       ast->type = (type_t){TY_VOID, 0, {}};
       break;
     case A_STATEMENT:
@@ -2643,9 +2603,9 @@ void typecheck(ast_t *ast, state_t *state) {
       typecheck(ast->as.funcdecl.params, state);
       state_solve_type_alias(state, &ast->as.funcdecl.type);
       ast->type = (type_t){TY_FUNC, ast->as.funcdecl.type.size, {.func = {&ast->as.funcdecl.type, ast->as.funcdecl.params ? &ast->as.funcdecl.params->type : NULL}}};
+      state->ret_type = *ast->type.as.func.ret;
       if (ast->as.funcdecl.block) {
-        assert(ast->as.funcdecl.block->kind == A_BLOCK);
-        typecheck_funcbody(ast->as.funcdecl.block->as.ast, state, ast->as.funcdecl.type);
+        typecheck(ast->as.funcdecl.block, state);
       }
       state_drop_scope(state);
       break;
@@ -2955,6 +2915,28 @@ void typecheck(ast_t *ast, state_t *state) {
         typecheck_expandable(ast->as.cast.ast, state, ast->as.cast.target);
       }
       ast->type = ast->as.cast.target;
+      break;
+    case A_IF:
+      assert(ast->as.if_.cond);
+      typecheck(ast->as.if_.cond, state);
+      assert(type_is_kind(&ast->as.if_.cond->type, TY_INT)
+             || type_is_kind(&ast->as.if_.cond->type, TY_CHAR)
+             || type_is_kind(&ast->as.if_.cond->type, TY_PTR));
+      if (ast->as.if_.then) {
+        typecheck(ast->as.if_.then, state);
+      }
+      if (ast->as.if_.else_) {
+        typecheck(ast->as.if_.else_, state);
+      }
+      ast->type = (type_t){TY_VOID, 0, {}};
+      break;
+    case A_WHILE:
+      assert(ast->as.binary.left);
+      typecheck_expandable(ast->as.binary.left, state, (type_t){TY_INT, 2, {}});
+      if (ast->as.binary.right) {
+        typecheck(ast->as.binary.right, state);
+      }
+      ast->type = (type_t){TY_VOID, 0, {}};
       break;
     case A_ASM:
       ast->type = (type_t){TY_VOID, 0, {}};

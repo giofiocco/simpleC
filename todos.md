@@ -10,7 +10,6 @@ semplify opt_ast output
 # Tokenizer
 
 - [ ] binary litterals
-- [x] escape char in string
 
 # Parser
 

@@ -20,7 +20,7 @@ TYPED AST:
 LIST
     FUNCDECL {INT} main :: {FUNC {INT} <2>}
         NULL
-        BLOCK :: {NONE <0>}
+        BLOCK
             LIST
                 IF
                     BINARYOP MINUS :: {INT <2>}
