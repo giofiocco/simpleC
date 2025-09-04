@@ -1310,7 +1310,6 @@ typedef enum {
   IR_WRITE,       // + num
   IR_CHANGE_SP,   // + num
   IR_INT,         // + num
-  IR_STRING,      // + num
   IR_OPERATION,   // + inst
   IR_MUL,         // + num
   IR_DIV,         // + num
@@ -1359,8 +1358,6 @@ char *ir_kind_to_string(ir_kind_t kind) {
       return "CHANGE_SP";
     case IR_INT:
       return "INT";
-    case IR_STRING:
-      return "STRING";
     case IR_OPERATION:
       return "OPERATION";
     case IR_MUL:
@@ -1394,7 +1391,6 @@ void ir_dump(ir_t ir) {
     case IR_WRITE:
     case IR_CHANGE_SP:
     case IR_INT:
-    case IR_STRING:
     case IR_MUL:
     case IR_DIV:
     case IR_ADDR_LOCAL:
@@ -1520,7 +1516,6 @@ void state_add_ir(state_t *state, ir_t ir) {
       state->sp += ir.arg.num;
       break;
     case IR_INT:
-    case IR_STRING:
       state->sp += 2;
       break;
     case IR_OPERATION:
@@ -3262,9 +3257,22 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
            (bytecode_t){ast->type.size == 2 ? BHEX2 : BHEX, 0, {.num = ast->as.fac.asint}});
       break;
     case A_STRING:
-      data(compiled, bytecode_with_sv(BSTRING, 0, (sv_t){ast->as.fac.image.start + 1, ast->as.fac.image.len - 2}));
+    {
+      sv_t str = {ast->as.fac.image.start + 1, ast->as.fac.image.len - 2};
+      for (unsigned int i = 0; i < str.len; ++i) {
+        if (str.start[i] == '\\' && str.start[i + 1] == 'n') {
+          data(compiled, bytecode_with_sv(BSTRING, 0, (sv_t){str.start, i}));
+          data(compiled, (bytecode_t){BHEX, 0, {.num = '\n'}});
+          str.start += i + 2;
+          str.len -= i + 2;
+          i = 0;
+        }
+      }
+      if (str.len != 0) {
+        data(compiled, bytecode_with_sv(BSTRING, 0, str));
+      }
       data(compiled, (bytecode_t){BHEX, 0, {.num = 0}});
-      break;
+    } break;
     default:
     {
       int size = ast->type.size;
@@ -3909,10 +3917,6 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_count) {
         //}
         code(compiled, (bytecode_t){BINST, PUSHA, {}});
       } break;
-      case IR_STRING:
-        code(compiled, bytecode_uli(BINSTLABEL, RAM_A, ir.arg.num));
-        code(compiled, (bytecode_t){BINST, PUSHA, {}});
-        break;
       case IR_OPERATION:
         switch (ir.arg.inst) {
           case SUM:

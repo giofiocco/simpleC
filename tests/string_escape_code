@@ -1,0 +1,28 @@
+params: -D com
+exitcode: 0
+code:
+int main() {
+  "ciao\nasodi\n";
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+ALIGN
+SETLABEL     _000
+STRING       "ciao"
+HEX          0x0A
+STRING       "asodi"
+HEX          0x0A
+HEX          0x00
+SETLABEL     _start
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INSTLABEL    RAM_A _000
+INST         PUSHA
+INST         INCSP
+INST         RET
