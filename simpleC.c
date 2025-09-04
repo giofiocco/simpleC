@@ -3031,6 +3031,7 @@ void optimize_ast(ast_t **astp, bool debug_opt) {
       break;
     case A_IF:
     {
+      // TODO: this is printed even when no opt is performed
       if (debug_opt) {
         ast_dump(ast, 0);
         printf(" -> ");
@@ -3239,7 +3240,6 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
           code(compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 2}});
           code(compiled, (bytecode_t){BINST, SUM, {}});
           code(compiled, (bytecode_t){BINST, A_B, {}});
-          // TODO: remove useless final RAM_AL 0x02 SUM A_B
         }
         compiled->is_init = false;
         int i = 0;
@@ -3340,7 +3340,6 @@ void compile(ast_t *ast, state_t *state) {
     {
       int sp_start = state->sp;
       compile(ast->as.ast, state);
-      assert(ast->as.ast->kind != A_RETURN); // TODO: needed?
       assert(ast->as.ast->kind != A_DECL);
       int delta = state->sp - sp_start;
       if (delta != 0) {
@@ -3574,14 +3573,18 @@ void compile(ast_t *ast, state_t *state) {
       TODO;
       break;
     case A_IF:
+      // condition CMPA JMPRZ $a
+      //   then
+      //   JMPR $b
+      // a:
+      //   else
+      // b:
       compile(ast->as.if_.cond, state);
-      if (ast->as.if_.else_) {
+      if (ast->as.if_.then && ast->as.if_.else_) {
         int a = state->uli++;
         int b = state->uli++;
         state_add_ir(state, (ir_t){IR_JMPZ, {.num = a}});
-        if (ast->as.if_.then) {
-          compile(ast->as.if_.then, state);
-        }
+        compile(ast->as.if_.then, state);
         state_add_ir(state, (ir_t){IR_JMP, {.num = b}});
         state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
         compile(ast->as.if_.else_, state);
@@ -3591,28 +3594,39 @@ void compile(ast_t *ast, state_t *state) {
         state_add_ir(state, (ir_t){IR_JMPZ, {.num = a}});
         compile(ast->as.if_.then, state);
         state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
+      } else if (ast->as.if_.else_) {
+        int a = state->uli++;
+        state_add_ir(state, (ir_t){IR_JMPNZ, {.num = a}});
+        compile(ast->as.if_.else_, state);
+        state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
       }
       break;
     case A_WHILE:
-    {
-      int a = state->uli++;
-      int b = state->uli++;
-      state_push_break_target(state, b);
-      state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
-      if (ast->as.binary.left->kind == A_UNARYOP && ast->as.binary.left->as.unaryop.op == T_NOT) {
-        compile(ast->as.binary.left->as.unaryop.arg, state);
-        state_add_ir(state, (ir_t){IR_JMPNZ, {.num = b}});
-      } else {
-        compile(ast->as.binary.left, state);
-        state_add_ir(state, (ir_t){IR_JMPZ, {.num = b}});
+      // a:
+      // condition CMPA JMPRZ $b
+      //   body
+      // JMPR $a
+      // b:
+      {
+        int a = state->uli++;
+        int b = state->uli++;
+        state_push_break_target(state, b);
+        state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
+        if (ast->as.binary.left->kind == A_UNARYOP && ast->as.binary.left->as.unaryop.op == T_NOT) {
+          compile(ast->as.binary.left->as.unaryop.arg, state);
+          state_add_ir(state, (ir_t){IR_JMPNZ, {.num = b}});
+        } else {
+          compile(ast->as.binary.left, state);
+          state_add_ir(state, (ir_t){IR_JMPZ, {.num = b}});
+        }
+        if (ast->as.binary.right) {
+          compile(ast->as.binary.right, state);
+        }
+        state_add_ir(state, (ir_t){IR_JMP, {.num = a}});
+        state_add_ir(state, (ir_t){IR_SETULI, {.num = b}});
+        state_drop_break_target(state);
       }
-      if (ast->as.binary.right) {
-        compile(ast->as.binary.right, state);
-      }
-      state_add_ir(state, (ir_t){IR_JMP, {.num = a}});
-      state_add_ir(state, (ir_t){IR_SETULI, {.num = b}});
-      state_drop_break_target(state);
-    } break;
+      break;
     case A_EXTERN:
       assert(ast->as.ast->kind == A_FUNCDEF);
       state_add_ir(state, (ir_t){IR_EXTERN, {.sv = ast->as.ast->as.funcdef.name.image}});
@@ -4016,6 +4030,11 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt) {
       bs[i].inst = bs[i].inst == RAM_A ? RAM_B : RAM_BL;
       memcpy(bs + i + 1, bs + i + 2, (*b_count - i) * sizeof(bytecode_t));
       i = 0;
+      // TODO: RAM_A 0 SUB -> B_A CMPA?
+      //} else if ((is_inst(bs, b_count, i, RAM_A) || is_inst(bs, b_count, i, RAM_AL)) && bs[i].arg.num == 0 && is_inst(bs, b_count, i + 1, SUM)) {
+      //  if (debug_opt) {
+      //    printf("  %03d | RAM_A(0)|RAM_AL(0) SUB -> B_A\n", i);
+      //  }
     }
   }
 }

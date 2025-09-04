@@ -1,10 +1,5 @@
-global_addr with offset 0 dont compile to RAM_B RAM_AL 0x00 SUM
-`*row == 0` cannot deref an array etc
-
 if token_peek and then token_next_if_kind the tokenizer->loc gives you the loc after the token you want
 so maybe change to tokenizer_get_loc() that checks if there is token to peek
-
-function call with first the return and then the arguments?
 
 test array of ptr
 

@@ -26,11 +26,11 @@ LIST
                     BINARYOP MINUS :: {INT <2>}
                         INT 2 :: {INT <2>}
                         INT 3 :: {INT <2>}
+                    NULL
                     BLOCK
                         LIST
                             STATEMENT
                                 INT 4 :: {INT <2>}
-                    NULL
                 IF
                     BINARYOP MINUS :: {INT <2>}
                         INT 5 :: {INT <2>}
