@@ -23,7 +23,7 @@ INST         DECSP
 INSTHEX      RAM_AL 0x02
 INST         PUSHA
 INST         INCSP
-INSTHEX      PEEKAR 0x02
+INST         PEEKA
 INST         PUSHA
 INST         INCSP
 INST         INCSP

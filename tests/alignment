@@ -32,12 +32,8 @@ INSTLABEL    CALL exit
 SETLABEL     main
 INSTHEX      RAM_AL 0x02
 INST         PUSHA
-INSTHEX      RAM_AL 0x20
-INST         PUSHA
+INSTHEX      RAM_BL 0x20
 INSTHEX      RAM_AL 0x01
-INST         PUSHA
-INST         POPA
-INST         POPB
 INST         B_AH
 INST         PUSHA
 INSTHEX      RAM_AL 0x03
@@ -48,18 +44,14 @@ INSTHEX      RAM_AL 0x01
 INST         PUSHA
 INSTHEX      RAM_AL 0x04
 INST         PUSHA
-INSTHEX      RAM_AL 0x01
-INST         PUSHA
+INSTHEX      RAM_BL 0x01
 INSTHEX      RAM_AL 0x02
-INST         PUSHA
-INST         POPA
-INST         POPB
 INST         B_AH
 INST         PUSHA
 INSTHEX      RAM_AL 0x05
 INST         PUSHA
 INST         SP_A
-INSTHEX2     RAM_B 0x0010
+INSTHEX      RAM_BL 0x10
 INST         SUM
 INST         A_SP
 INST         RET

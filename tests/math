@@ -19,21 +19,11 @@ SETLABEL     main
 INSTHEX2     RAM_A 0xFFF6
 INST         PUSHA
 INST         INCSP
-INSTHEX      RAM_AL 0x01
-INST         PUSHA
+INSTHEX      RAM_BL 0x01
 INSTHEX      RAM_AL 0x02
-INST         PUSHA
-INST         POPA
-INST         POPB
 INST         SUM
-INST         PUSHA
-INST         POPA
 INST         SHL
-INST         PUSHA
-INST         POPA
 INST         SHL
-INST         PUSHA
-INST         POPA
 INST         SHL
 INST         PUSHA
 INST         INCSP

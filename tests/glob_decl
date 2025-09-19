@@ -26,19 +26,14 @@ SETLABEL     _003
 STRING       "asdf"
 HEX          0x00
 SETLABEL     _start
-INSTHEX      RAM_AL 0x02
-INST         PUSHA
+INSTHEX      RAM_BL 0x02
 INSTHEX      RAM_AL 0x01
-INST         PUSHA
-INST         POPA
-INST         POPB
 INST         SUM
 INST         PUSHA
 INSTLABEL    RAM_A _002
-INSTHEX2     RAM_B 0x0002
+INSTHEX      RAM_BL 0x02
 INST         SUM
-INST         PUSHA
-INST         POPB
+INST         A_B
 INST         POPA
 INST         A_rB
 INSTHEX      RAM_AL 0x00

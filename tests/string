@@ -22,9 +22,8 @@ INSTLABEL    CALL exit
 SETLABEL     main
 INSTLABEL    RAM_A _000
 INST         PUSHA
-INSTHEX      PEEKAR 0x02
-INST         PUSHA
-INST         POPB
+INST         PEEKA
+INST         A_B
 INST         rB_AL
 INST         PUSHA
 INST         INCSP

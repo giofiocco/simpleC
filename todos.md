@@ -42,7 +42,6 @@ semplify opt_ast output
 
 # OPT
 
-- [ ] RAM_A SHL|SHR
 - [ ] condition with constants (like if (2) {} else {})
 - [ ] ptail opt
 - [ ] remove ifs that do nothing
