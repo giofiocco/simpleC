@@ -11,6 +11,7 @@ if else for while break
 extern
 << >>
 #define A 2 1
+#define B 10
 A
 output:
 TOKENS:

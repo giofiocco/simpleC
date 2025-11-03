@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define DUMP_TREE_INDENT 2
+
 #define SV_IMPLEMENTATION
 #include "jaris/src/instructions.h"
 
@@ -89,7 +91,7 @@ typedef enum {
   T_SHL,
   T_SHR,
   T_BREAK,
-  T_DEFINE,
+  T_DIRECTIVE,
 } token_kind_t;
 
 typedef struct {
@@ -240,7 +242,7 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_SHL: return "SHL";
     case T_SHR: return "SHR";
     case T_BREAK: return "BREAK";
-    case T_DEFINE: return "DEFINE";
+    case T_DIRECTIVE: return "DEFINE";
   }
   // clang-format on
   assert(0);
@@ -331,20 +333,32 @@ token_t token_next(tokenizer_t *tokenizer) {
         while (isalpha(tokenizer->buffer[len]) || isdigit(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
           ++len;
         }
-        token = token_new_and_consume_from_buffer(T_DEFINE, len, tokenizer, 0);
+        token = token_new_and_consume_from_buffer(T_DIRECTIVE, len, tokenizer, 0);
         if (sv_eq(token.image, sv_from_cstr("#define"))) {
           token_t name = token_expect(tokenizer, T_SYM);
           assert(tokenizer->macro_count + 1 < MACRO_MAX);
           macro_t *macro = &tokenizer->macros[tokenizer->macro_count];
           macro->name = name.image;
-          while ((token = token_next(tokenizer)).loc.row == name.loc.row) {
+
+          do {
+            int i = 0;
+            for (; isspace(tokenizer->buffer[i]); ++i) {
+            }
+            if (tokenizer->buffer[i - 1] == '\n') {
+              break;
+            }
+
+            token = token_next(tokenizer);
             assert(macro->token_count + 1 < MACRO_TOKEN_MAX);
             macro->tokens[macro->token_count++] = token;
             if (token.kind == T_SYM && sv_eq(token.image, name.image)) {
               eprintf(token.loc, "invalid recursive macro");
             }
-          }
+          } while (1);
+
           tokenizer->macro_count++;
+
+          return token_next(tokenizer);
         } else {
           eprintf(token.loc, "invalid directive");
         }
@@ -1109,10 +1123,10 @@ void ast_dump(ast_t *ast, bool dumptype) {
 
 void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
   if (indent > 0) {
-    assert(indent < 400 / 4);
+    assert(indent < 400 / DUMP_TREE_INDENT);
     printf("%*.*s",
-           indent * 4,
-           indent * 4,
+           indent * DUMP_TREE_INDENT,
+           indent * DUMP_TREE_INDENT,
            "                                                                   "
            "                                                                   "
            "                                                                   "
@@ -1472,23 +1486,9 @@ void state_add_ir(state_t *state, ir_t ir) {
     return;
   }
   if (state->is_init) {
-    // if (ir.kind == IR_CHANGE_SP && state->irs_init[state->ir_init_num].kind == IR_CHANGE_SP) {
-    //   state->irs_init[state->ir_init_num].arg.num += ir.arg.num;
-    //   state->sp += ir.arg.num;
-    //   return;
-    // } else if (ir.kind == IR_CHANGE_SP && ir.arg.num == 0) {
-    //   return;
-    // }
     assert(state->ir_init_num + 1 < IR_MAX);
     state->irs_init[state->ir_init_num++] = ir;
   } else {
-    // if (ir.kind == IR_CHANGE_SP && state->irs[state->ir_num].kind == IR_CHANGE_SP) {
-    //   state->irs[state->ir_num].arg.num += ir.arg.num;
-    //   state->sp += ir.arg.num;
-    //   return;
-    // } else if (ir.kind == IR_CHANGE_SP && ir.arg.num == 0) {
-    //   return;
-    // }
     assert(state->ir_num + 1 < IR_MAX);
     state->irs[state->ir_num++] = ir;
   }
@@ -3141,7 +3141,8 @@ void get_addr_ast(state_t *state, ast_t *ast) {
     } break;
     case A_UNARYOP:
       assert(ast->as.unaryop.op == T_STAR);
-      get_addr_ast(state, ast->as.unaryop.arg);
+      assert(type_is_kind(&ast->as.unaryop.arg->type, TY_PTR));
+      compile(ast->as.unaryop.arg, state);
       break;
     case A_BINARYOP:
       switch (ast->as.binaryop.op) {
@@ -3486,8 +3487,7 @@ void compile(ast_t *ast, state_t *state) {
     {
       compile(ast->as.binary.right, state);
       get_addr_ast(state, ast->as.binary.left);
-      int size = type_size_aligned(&ast->type);
-      state_add_ir(state, (ir_t){IR_WRITE, {.num = size}});
+      state_add_ir(state, (ir_t){IR_WRITE, {.num = ast->type.size}});
     } break;
     case A_FUNCALL:
     {
@@ -3757,6 +3757,30 @@ void optimize_ir(ir_t *irs, int *ir_count, bool debug_opt, optlevel_t opt) {
       irs[i].arg.num += irs[i + 1].arg.num;
       *ir_count -= 2;
       memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
+      i = 0;
+    } else if (opt > OL_MATH && is_ir_kind(irs, ir_count, i, IR_ADDR_GLOBAL)
+               && is_ir_kind(irs, ir_count, i + 1, IR_INT)
+               && is_ir_kind(irs, ir_count, i + 2, IR_OPERATION)
+               && irs[i + 2].arg.inst == SUM) {
+      if (debug_opt) {
+        printf("  %03d | ADDR_GLOBAL(x,y) INT(z) OPERATION(SUM) -> ADDR_GLOBAL(x,y+z)\n", i);
+      }
+
+      irs[i].arg.loc.offset += irs[i + 1].arg.num;
+      *ir_count -= 2;
+      memcpy(irs + i + 1, irs + i + 3, (*ir_count - i) * sizeof(ir_t));
+      i = 0;
+    } else if (opt > OL_MATH
+               && is_ir_kind(irs, ir_count, i, IR_INT)
+               && irs[i].arg.num == 0
+               && is_ir_kind(irs, ir_count, i + 1, IR_OPERATION)
+               && (irs[i + 1].arg.inst == SUM || irs[i + 1].arg.inst == SUB)) {
+      if (debug_opt) {
+        printf("  %03d | INT(0) OPERATION(SUM|SUB) -> nothing\n", i);
+      }
+
+      *ir_count -= 2;
+      memcpy(irs + i, irs + i + 2, (*ir_count - i) * sizeof(ir_t));
       i = 0;
     }
   }
@@ -4033,6 +4057,33 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt, optlevel_t opt) 
       //  if (debug_opt) {
       //    printf("  %03d | RAM_A(0)|RAM_AL(0) SUB -> B_A\n", i);
       //  }
+    } else if (opt >= OL_MATH
+               && (is_inst(bs, b_count, i, RAM_B) || is_inst(bs, b_count, i, RAM_BL))
+               && is_inst(bs, b_count, i + 1, RAM_AL)
+               && bs[i + 1].arg.num == 1
+               && (is_inst(bs, b_count, i + 2, SUM) || is_inst(bs, b_count, i + 2, SUB))) {
+      if (debug_opt) {
+        printf("  %03d | RAM_B x RAM_AL 1 SUB|SUM -> RAM_A x DECA|INCA", i);
+      }
+
+      *b_count -= 1;
+      bs[i].inst = bs[i].inst == RAM_B ? RAM_A : RAM_AL;
+      bs[i + 1] = (bytecode_t){BINST, bs[i + 2].inst == SUM ? INCA : DECA, {}};
+      memcpy(bs + i + 2, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
+      i = 0;
+    } else if (opt >= OL_MATH
+               && is_inst(bs, b_count, i, A_B)
+               && is_inst(bs, b_count, i + 1, RAM_AL)
+               && bs[i + 1].arg.num == 1
+               && (is_inst(bs, b_count, i + 2, SUM) || is_inst(bs, b_count, i + 2, SUB))) {
+      if (debug_opt) {
+        printf("  %03d | A_B RAM_AL 1 SUB|SUM -> DECA|INCA", i);
+      }
+
+      bs[i] = (bytecode_t){BINST, bs[i + 2].inst == SUM ? INCA : DECA, {}};
+      *b_count -= 2;
+      memcpy(bs + i + 1, bs + i + 3, (*b_count - i) * sizeof(bytecode_t));
+      i = 0;
     }
   }
 }
@@ -4363,45 +4414,18 @@ int main(int argc, char **argv) {
 
   for (int i = 0; i < state.compiled.data_num; ++i) {
     bytecode_to_file(file, state.compiled.data[i]);
-    putc(' ', file);
+    fputc(' ', file);
   }
-  putc('\n', file);
+  fputc('\n', file);
   for (int i = 0; i < state.compiled.init_num; ++i) {
     bytecode_to_file(file, state.compiled.init[i]);
-    putc(' ', file);
+    fputc(' ', file);
   }
-  putc('\n', file);
+  fputc('\n', file);
   for (int i = 0; i < state.compiled.code_num; ++i) {
     bytecode_to_file(file, state.compiled.code[i]);
-    putc(' ', file);
+    fputc(' ', file);
   }
-
-  /*
-  for (int i = 0; i < state.compiled.data_num; ++i) {
-    bytecode_t bc = state.compiled.data[i];
-    bytecode_kind_t bbckind = i > 0 ? state.compiled.data[i - 1].kind : BNONE;
-    bytecode_kind_t abckind =
-        i + 1 < state.compiled.data_num ? state.compiled.data[i + 1].kind : BNONE;
-    if ((bc.kind == BSETLABEL && bbckind != BALIGN) || (bc.kind == BALIGN && abckind == BSETLABEL)
-        || (i > 0 && (bc.kind == BEXTERN || bc.kind == BGLOBAL))) {
-      putc('\n', file);
-    }
-    bytecode_to_asm(file, bc);
-    putc(' ', file);
-  }
-  putc('\n', file);
-  for (int i = 0; i < state.compiled.init_num; ++i) {
-    bytecode_to_asm(file, state.compiled.init[i]);
-    putc(' ', file);
-  }
-  for (int i = 0; i < state.compiled.code_num; ++i) {
-    if (state.compiled.code[i].kind == BSETLABEL) {
-      putc('\n', file);
-    }
-    bytecode_to_asm(file, state.compiled.code[i]);
-    putc(' ', file);
-  }
-  */
 
   assert(fclose(file) == 0);
 

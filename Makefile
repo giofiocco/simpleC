@@ -1,6 +1,6 @@
 all: simpleC
 
-CFLAGS=-Wall -Wextra -std=c99 -g
+CFLAGS=-Wall -Wextra -g
 
 .PHONY: test clean
 
