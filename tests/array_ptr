@@ -1,0 +1,31 @@
+params: -D com
+exitcode: 0
+code:
+int A[10];
+int *ptr = A;
+
+int main() {
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+ALIGN
+SETLABEL     _000
+DB           20
+ALIGN
+SETLABEL     _001
+DB           2
+SETLABEL     _start
+INSTLABEL    RAM_A _000
+INST         PUSHA
+INSTLABEL    RAM_B _001
+INST         POPA
+INST         A_rB
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INST         RET

@@ -1,6 +1,6 @@
 1. '\n'
 2. continue should goto the update statement
-3. in \_start get the return of main as exit code
+3. maybe in grammar atom EQ atom should be atom EQ expr? etc
 
 if token_peek and then token_next_if_kind the tokenizer->loc gives you the loc after the token you want
 so maybe change to tokenizer_get_loc() that checks if there is token to peek

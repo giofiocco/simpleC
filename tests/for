@@ -15,32 +15,32 @@ int main() {
 output:
 AST:
 LIST
-    FUNCDECL {INT} main
-        NULL
+  FUNCDECL {INT} main
+    NULL
+    BLOCK
+      LIST
+        WHILE
+          INT 1
+          NULL
         BLOCK
+          LIST
+            DECL {INT} i
+              CAST {INT}
+                INT 0
+            WHILE
+              INT 1
+              NULL
+        WHILE
+          INT 1
+          BLOCK
+            STATEMENT
+              INT 3
+        WHILE
+          INT 1
+          BLOCK
             LIST
-                WHILE
-                    INT 1
-                    NULL
-                BLOCK
-                    LIST
-                        DECL {INT} i
-                            CAST {INT}
-                                INT 0
-                        WHILE
-                            INT 1
-                            NULL
-                WHILE
-                    INT 1
-                    BLOCK
-                        STATEMENT
-                            INT 3
-                WHILE
-                    INT 1
-                    BLOCK
-                        LIST
-                            STATEMENT
-                                INT 2
-                            STATEMENT
-                                INT 3
+              STATEMENT
+                INT 2
+              STATEMENT
+                INT 3
 

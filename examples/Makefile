@@ -1,6 +1,7 @@
-TARGET=rule110
-SIMPLEC_FLAGS=
+TARGET=$(patsubst src/%.c,%,$(wildcard src/*.c))
+SIMPLEC_FLAGS=--dev
 
+.SECONDARY:
 .PHONY: all clean run
 all: $(patsubst %,build/c_%,$(TARGET)) $(patsubst %,build/%,$(TARGET))
 
@@ -16,7 +17,7 @@ build/%: build/%.o build/c_stdlib.o | build
 build/%.o: build/%.asm | build
 	../jaris/assembler -g -o $@ $<
 
-build/%.asm: src/%.c | build
+build/%.asm: src/%.c ../simpleC | build
 	../simpleC $(SIMPLEC_FLAGS) -o $@ $<
 
 build/c_stdlib.o: c_stdlib.asm | build
@@ -41,8 +42,8 @@ build/example.mem: all
 	make -C .. simpleC
 
 run: build/example.mem.bin
-	./build/c_$(prg)
-	../jaris/sim -i "$(prg)\nshutdown\n" --mem $< $(args)
+	-./build/c_$(prg)
+	-../jaris/sim -i "$(prg)\nshutdown\n" --mem $< $(args)
 
 clean:
 	rm -rf build

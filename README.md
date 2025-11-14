@@ -62,7 +62,7 @@ Is possible to enable optimizzation to the AST (after typecheck), to the IR or t
 - SHL: `<<`
 - SHR: `>>`
 - BREAK: `break`
-- DEFINE: `#define`
+- MOD: `%`
 
 ## Comments
 
@@ -86,10 +86,11 @@ When the same SYM is used it is substituted by the list of tokens
 - statement ::= ( RETURN expr ? | DECL | expr EQUAL expr | expr | asm | BREAK )? SEMICOLON
 - decl ::= type SYM ( SQO expr SQC )? ( EQUAL expr )? | type SYM ( EQUAL expr )? ( COMMA STAR\* SYM ( EQUAL expr )? )\*
 - expr ::= NOT? comp
+- bitwiseand ::= comp ( AND expr )?
 - comp ::= atom ( ( EQ | NEQ ) atom )?
 - atom ::= atom1 ( ( SHL | SHR ) atom1 )?
 - atom1 ::= term ( PLUS term | MINUS term )\*
-- term ::= unary ( STAR unary | SLASH unary )\*
+- term ::= unary ( STAR unary | SLASH unary | MOD unary )\*
 - unary ::= PLUS unary | MINUS unary | AND unary | STAR unary | access SQO expr SQC | access
 - access ::= fac DOT SYM | fac
 - fac ::= INT | SYM | STRING | HEX | CHAR | funcall | PARO expr PARC | cast

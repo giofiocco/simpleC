@@ -8,10 +8,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DUMP_TREE_INDENT 2
-
 #define SV_IMPLEMENTATION
 #include "jaris/src/instructions.h"
+
+#define DUMP_TREE_INDENT 2
+char *mul_string = "mul";
+char *div_string = "div";
+char *shiftl_string = "shiftl";
+char *shiftr_string = "shiftr";
 
 #define TODO                          \
   do {                                \
@@ -91,7 +95,6 @@ typedef enum {
   T_SHL,
   T_SHR,
   T_BREAK,
-  T_DIRECTIVE,
 } token_kind_t;
 
 typedef struct {
@@ -242,7 +245,6 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_SHL: return "SHL";
     case T_SHR: return "SHR";
     case T_BREAK: return "BREAK";
-    case T_DIRECTIVE: return "DEFINE";
   }
   // clang-format on
   assert(0);
@@ -333,7 +335,7 @@ token_t token_next(tokenizer_t *tokenizer) {
         while (isalpha(tokenizer->buffer[len]) || isdigit(tokenizer->buffer[len]) || tokenizer->buffer[len] == '_') {
           ++len;
         }
-        token = token_new_and_consume_from_buffer(T_DIRECTIVE, len, tokenizer, 0);
+        token = token_new_and_consume_from_buffer(T_NONE, len, tokenizer, 0);
         if (sv_eq(token.image, sv_from_cstr("#define"))) {
           token_t name = token_expect(tokenizer, T_SYM);
           assert(tokenizer->macro_count + 1 < MACRO_MAX);
@@ -387,19 +389,6 @@ token_t token_next(tokenizer_t *tokenizer) {
           return token_next(tokenizer);
         }
         __attribute__((fallthrough));
-      case '(':
-      case ')':
-      case '[':
-      case ']':
-      case '{':
-      case '}':
-      case '+':
-      case '-':
-      case '*':
-      case '&':
-      case ',':
-      case ';':
-      case '.':
       case '=':
       case '!':
         if (tokenizer->buffer[0] == '=' && tokenizer->buffer[1] == '=') {
@@ -442,7 +431,9 @@ token_t token_next(tokenizer_t *tokenizer) {
         }
         __attribute__((fallthrough));
       default:
-        if (isdigit(*tokenizer->buffer)) {
+        if (table[(int)*tokenizer->buffer]) {
+          token = token_new_and_consume_from_buffer(table[(int)*tokenizer->buffer], 1, tokenizer, 0);
+        } else if (isdigit(*tokenizer->buffer)) {
           int len = 1;
           while (isdigit(tokenizer->buffer[len])) {
             ++len;
@@ -1425,6 +1416,15 @@ typedef struct {
   int sp;  // sp before the loop, to correctly out of scope the variables
 } break_target_info_t;
 
+typedef enum {
+  BE_MUL,
+  BE_DIV,
+  BE_SHIFTL,
+  BE_SHIFTR,
+
+  BE_COUNT,
+} builtin_externs_t;
+
 typedef struct {
   scope_t scopes[SCOPE_MAX];
   int scope_num;
@@ -1441,7 +1441,9 @@ typedef struct {
   bool is_init;
   break_target_info_t break_target[BREAK_TARGET_MAX];
   int break_target_num;
+  int builtin_externs;
 } state_t;
+static_assert(BE_COUNT < 32, "too many builtin externs");
 
 typedef enum {
   OL_NONE,
@@ -2121,12 +2123,25 @@ ast_t *parse_comp(tokenizer_t *tokenizer) {
   return ast;
 }
 
+ast_t *parse_bitewiseand(tokenizer_t *tokenizer) {
+  assert(tokenizer);
+
+  ast_t *a = parse_comp(tokenizer);
+
+  if (token_next_if_kind(tokenizer, T_AND)) {
+    ast_t *b = parse_expr(tokenizer);
+    a = ast_malloc((ast_t){A_BINARYOP, location_union(a->loc, b->loc), {}, {.binaryop = {T_AND, a, b}}});
+  }
+
+  return a;
+}
+
 ast_t *parse_expr(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
   location_t start = tokenizer->loc;
   int not= token_next_if_kind(tokenizer, T_NOT);
-  ast_t *ast = parse_comp(tokenizer);
+  ast_t *ast = parse_bitewiseand(tokenizer);
 
   if (not) {
     ast = ast_malloc((ast_t){A_UNARYOP, location_union(start, ast->loc), {}, {.unaryop = {T_NOT, ast}}});
@@ -2724,6 +2739,9 @@ void typecheck(ast_t *ast, state_t *state) {
           break;
         case T_SHR:
         case T_SHL:
+        case T_STAR:
+        case T_SLASH:
+        case T_AND:
           typecheck_expandable(ast->as.binaryop.lhs, state, (type_t){TY_INT, 2, {}});
           typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
           ast->type = (type_t){TY_INT, 2, {}};
@@ -3108,6 +3126,19 @@ void code(compiled_t *compiled, bytecode_t b) {
   }
 }
 
+void state_add_builtin(state_t *state, builtin_externs_t b) {
+  assert(state);
+  if ((state->builtin_externs & (1 << b)) == 0) {
+    switch (b) {
+      case BE_MUL: data(&state->compiled, bytecode_with_string(BEXTERN, 0, "mul")); break;
+      case BE_DIV: data(&state->compiled, bytecode_with_string(BEXTERN, 0, "div")); break;
+      case BE_SHIFTL: data(&state->compiled, bytecode_with_string(BEXTERN, 0, "shiftl")); break;
+      case BE_SHIFTR: data(&state->compiled, bytecode_with_string(BEXTERN, 0, "shiftr")); break;
+      case BE_COUNT: assert(0);
+    }
+  }
+}
+
 bytecode_t bytecode_uli(bytecode_kind_t kind, instruction_t inst, int uli) {
   bytecode_t b = {kind, inst, {}};
   sprintf(b.arg.string, "_%03d", uli);
@@ -3205,14 +3236,24 @@ void compile_data(ast_t *ast, state_t *state, int uli, int offset) {
 
   switch (ast->kind) {
     case A_CAST:
-    {
-      compile_data(ast->as.cast.ast, state, uli, 0);
-      int delta = type_size_aligned(&ast->as.cast.target) - type_size_aligned(&ast->as.cast.ast->type);
-      assert(delta >= 0);
-      if (delta > 0) {
-        data(compiled, (bytecode_t){BDB, 0, {.num = delta}});
+      if (type_is_kind(&ast->as.cast.target, TY_PTR) && type_is_kind(&ast->as.cast.ast->type, TY_ARRAY)) {
+        data(compiled, (bytecode_t){BDB, 0, {.num = 2}});
+
+        state->is_init = true;
+        get_addr_ast(state, ast);
+        state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.loc = {uli, 0}}});
+        state_add_ir(state, (ir_t){IR_WRITE, {.num = 2}});
+        state->is_init = false;
+
+      } else {
+        compile_data(ast->as.cast.ast, state, uli, 0);
+        int delta = type_size_aligned(&ast->as.cast.target) - type_size_aligned(&ast->as.cast.ast->type);
+        assert(delta >= 0);
+        if (delta > 0) {
+          data(compiled, (bytecode_t){BDB, 0, {.num = delta}});
+        }
       }
-    } break;
+      break;
     case A_ARRAY:
       if (type_is_kind(&ast->type, TY_ARRAY) && type_is_kind(ast->type.as.array.type, TY_PTR)) {
         int ulis[256];
@@ -3402,6 +3443,18 @@ void compile(ast_t *ast, state_t *state) {
             state_add_ir(state, ir);
           }
         } break;
+        case T_AND:
+          compile(ast->as.binaryop.lhs, state);
+          compile(ast->as.binaryop.rhs, state);
+          state_add_ir(state, (ir_t){IR_OPERATION, {.inst = AND}});
+          break;
+        case T_STAR:
+        case T_SLASH:
+          compile(ast->as.binaryop.lhs, state);
+          compile(ast->as.binaryop.rhs, state);
+          state_add_ir(state, (ir_t){IR_CALL, {.sv = ast->as.binaryop.op == T_STAR ? (sv_t){mul_string, 3} : (sv_t){div_string, 3}}});
+          state_add_builtin(state, ast->as.binaryop.op == T_STAR ? BE_MUL : BE_DIV);
+          break;
         default:
           printf("BINARYOP %s\n", token_kind_to_string(ast->as.binaryop.op));
           TODO;
@@ -3439,10 +3492,10 @@ void compile(ast_t *ast, state_t *state) {
       symbol_t *s = state_find_symbol(state, ast->as.fac);
       if (s->kind == INFO_CONSTANT) {
         state_add_ir(state, (ir_t){IR_INT, {.num = s->info.num}});
+      } else if (type_is_kind(&ast->type, TY_ARRAY)) {
+        // eprintf(ast->loc, "cannot access ARRAY, maybe wanna cast it to PTR");
+        get_addr_ast(state, ast);
       } else {
-        if (type_is_kind(&ast->type, TY_ARRAY)) {
-          eprintf(ast->loc, "cannot access ARRAY, maybe wanna cast it to PTR");
-        }
         get_addr_ast(state, ast);
         assert(s->type);
         state_add_ir(state, (ir_t){IR_READ, {.num = s->type->size}});

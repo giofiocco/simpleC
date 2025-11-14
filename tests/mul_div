@@ -1,0 +1,37 @@
+params: -D com
+exitcode: 0
+code:
+int main() {
+  3*2+1/10;
+}
+output:
+ASSEMBLY:
+EXTERN       exit
+GLOBAL       _start
+EXTERN       mul
+EXTERN       div
+SETLABEL     _start
+INSTHEX      RAM_AL 0x00
+INST         PUSHA
+INSTRELLABEL CALLR main
+INST         POPA
+INSTLABEL    CALL exit
+SETLABEL     main
+INSTHEX      RAM_AL 0x03
+INST         PUSHA
+INSTHEX      RAM_AL 0x02
+INST         PUSHA
+INSTLABEL    CALL mul
+INSTHEX      RAM_AL 0x01
+INST         PUSHA
+INSTHEX      RAM_AL 0x0A
+INST         PUSHA
+INSTLABEL    CALL div
+INST         POPA
+INST         POPB
+INST         SUM
+INST         PUSHA
+INST         INCSP
+INST         INCSP
+INST         INCSP
+INST         RET

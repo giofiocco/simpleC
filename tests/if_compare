@@ -18,33 +18,33 @@ int main() {
 output:
 TYPED AST:
 LIST
-    FUNCDECL {INT} main :: {FUNC {INT} <2>}
-        NULL
-        BLOCK
+  FUNCDECL {INT} main :: {FUNC {INT} <2>}
+    NULL
+    BLOCK
+      LIST
+        IF
+          BINARYOP MINUS :: {INT <2>}
+            INT 2 :: {INT <2>}
+            INT 3 :: {INT <2>}
+          NULL
+          BLOCK
             LIST
-                IF
-                    BINARYOP MINUS :: {INT <2>}
-                        INT 2 :: {INT <2>}
-                        INT 3 :: {INT <2>}
-                    NULL
-                    BLOCK
-                        LIST
-                            STATEMENT
-                                INT 4 :: {INT <2>}
-                IF
-                    BINARYOP MINUS :: {INT <2>}
-                        INT 5 :: {INT <2>}
-                        INT 6 :: {INT <2>}
-                    BLOCK
-                        LIST
-                            STATEMENT
-                                INT 7 :: {INT <2>}
-                    NULL
-                IF
-                    INT 2 :: {INT <2>}
-                    NULL
-                    BLOCK
-                        LIST
-                            STATEMENT
-                                INT 3 :: {INT <2>}
+              STATEMENT
+                INT 4 :: {INT <2>}
+        IF
+          BINARYOP MINUS :: {INT <2>}
+            INT 5 :: {INT <2>}
+            INT 6 :: {INT <2>}
+          BLOCK
+            LIST
+              STATEMENT
+                INT 7 :: {INT <2>}
+          NULL
+        IF
+          INT 2 :: {INT <2>}
+          NULL
+          BLOCK
+            LIST
+              STATEMENT
+                INT 3 :: {INT <2>}
 
