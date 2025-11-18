@@ -2365,15 +2365,17 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
           end_parse_expr = 1;
           break;
         }
-        while (stack[si - 1].t.kind != T_PARO) {
+        while (stack[si - 1].t.kind != T_PARO || stack[si - 1].is_cast) {
           parse_create_ast(output, &oi, stack[--si]);
         }
         si--;
-        if (oi >= 2 && output[oi - 1]->kind == A_ARRAY && output[oi - 2]->kind == A_SYM) {
+        if (oi >= 2 && output[oi - 2]->kind == A_SYM) {
           ast_t *params = output[--oi];
           token_t name = output[--oi]->as.fac;
-          for (ast_t *node = params; node; node = node->as.binary.right) {
-            node->kind = A_PARAM;
+          if (params->kind == A_ARRAY) {
+            for (ast_t *node = params; node; node = node->as.binary.right) {
+              node->kind = A_PARAM;
+            }
           }
           output[oi++] = ast_malloc((ast_t){A_FUNCALL, location_union(name.loc, t.loc), {}, {.funcall = {name, params}}});
         }
@@ -2499,6 +2501,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
         stack[si++] = token;
       } else if (token.is_unary) {
         stack[si++] = token;
+
       } else if (token.prec < stack[si - 1].prec || (token.ass == RIGHTASS && token.prec == stack[si - 1].prec)) {
         parse_create_ast(output, &oi, stack[--si]);
         stack[si++] = token;
