@@ -326,6 +326,7 @@ token_t token_next(tokenizer_t *tokenizer) {
         while (*row_end != '\n' && *row_end != '\0') {
           ++row_end;
         }
+
         tokenizer->loc.line.len = row_end - tokenizer->buffer;
         return token_next(tokenizer);
       }
@@ -969,7 +970,6 @@ ast_t *ast_malloc(ast_t ast) {
 }
 
 char *ast_kind_to_string(ast_kind_t kind) {
-  // clang-format off
   switch (kind) {
     case A_NONE: return "NONE";
     case A_LIST: return "LIST";
@@ -998,7 +998,6 @@ char *ast_kind_to_string(ast_kind_t kind) {
     case A_EXTERN: return "EXTERN";
     case A_BREAK: return "BREAK";
   }
-  // clang-format on
   assert(0);
 }
 
@@ -2136,18 +2135,403 @@ ast_t *parse_bitewiseand(tokenizer_t *tokenizer) {
   return a;
 }
 
+// parsing_info_t token_parsing_info(token_kind_t kind) {
+//   switch (kind) {
+//     case T_DOT:
+//       return (parsing_info_t){14, LEFTASS};
+//     case T_NOT:
+//       return (parsing_info_t){13, RIGHTASS};
+//     case T_STAR:
+//     case T_SLASH:
+//       return (parsing_info_t){12, LEFTASS};
+//     case T_PLUS:
+//     case T_MINUS:
+//       return (parsing_info_t){11, LEFTASS};
+//     case T_SHL:
+//     case T_SHR:
+//       return (parsing_info_t){10, LEFTASS};
+//     // LESS THAN etc 9
+//     case T_EQ:
+//     case T_NEQ:
+//       return (parsing_info_t){8, LEFTASS};
+//     case T_AND:
+//       return (parsing_info_t){7, LEFTASS};
+//       // XOR 6
+//       // OR 5
+//       // LOGIC AND 4
+//       // LOGIC OR 3
+//       // EQUAL 2
+//       // COMMA 1
+//
+//     case T_SYM:
+//     case T_INT:
+//     case T_HEX:
+//     case T_STRING:
+//     case T_CHAR:
+//       break;
+//       return (parsing_info_t){PRECATOM, LEFTASS};
+//
+//     case T_PARO:
+//     case T_PARC:
+//     case T_SQO:
+//     case T_SQC:
+//     case T_BRO:
+//     case T_BRC:
+//       return (parsing_info_t){PRECPAR, LEFTASS};
+//
+//     case T_NONE:
+//     case T_RETURN:
+//     case T_TYPEDEF:
+//     case T_STRUCT:
+//     case T_SEMICOLON:
+//     case T_EQUAL:
+//     case T_VOIDKW:
+//     case T_INTKW:
+//     case T_CHARKW:
+//     case T_ENUM:
+//     case T_ASM:
+//     case T_IF:
+//     case T_ELSE:
+//     case T_FOR:
+//     case T_WHILE:
+//     case T_EXTERN:
+//     case T_BREAK:
+//     case T_COMMA:
+//       return (parsing_info_t){PRECUNVALID, LEFTASS};
+//   }
+//   assert(0);
+// }
+
+#define PARSER_STACK_CAP 1024
+
+typedef struct {
+  token_t t;
+  int prec;
+  int is_unary;
+  enum {
+    LEFTASS,
+    RIGHTASS
+  } ass;
+  int is_cast;
+  type_t type;
+} parser_token_t;
+
+void parse_create_ast(ast_t **output, int *oi, parser_token_t token) {
+  assert(output);
+  assert(oi);
+
+  switch (token.t.kind) {
+    case T_SQO:
+    case T_BRO:
+      eprintf(token.t.loc, "unmached parenthesis");
+      break;
+    case T_PARO:
+      if (!token.is_cast) {
+        eprintf(token.t.loc, "unmached parenthesis");
+      }
+      assert(*oi >= 1);
+      output[*oi - 1] = ast_malloc((ast_t){A_CAST, location_union(token.t.loc, output[*oi - 1]->loc), {}, {.cast = {token.type, output[*oi - 1]}}});
+      break;
+
+    case T_MINUS:
+    case T_PLUS:
+    case T_SHL:
+    case T_SHR:
+    case T_SLASH:
+    case T_EQ:
+    case T_NEQ:
+    case T_STAR:
+    case T_AND:
+    case T_NOT:
+    case T_DOT:
+      if (token.is_unary) {
+        assert(*oi >= 1);
+        ast_t *a = output[--(*oi)];
+        output[(*oi)++] = ast_malloc((ast_t){A_UNARYOP, location_union(token.t.loc, a->loc), {}, {.unaryop = {token.t.kind, a}}});
+      } else {
+        assert(*oi >= 2);
+        ast_t *a = output[--(*oi)];
+        ast_t *b = output[--(*oi)];
+        output[(*oi)++] = ast_malloc((ast_t){A_BINARYOP, location_union(a->loc, b->loc), {}, {.binaryop = {token.t.kind, b, a}}});
+      }
+      break;
+
+    case T_COMMA:
+    {
+      assert(*oi >= 2);
+      ast_t *a = output[--(*oi)];
+      ast_t *b = output[--(*oi)];
+      if (a->kind == A_ARRAY) {
+        output[(*oi)++] = ast_malloc((ast_t){A_ARRAY, location_union(a->loc, b->loc), {}, {.binary = {b, a}}});
+      } else if (b->kind == A_ARRAY) {
+        assert(0);
+      } else {
+        output[(*oi)++] = ast_malloc((ast_t){A_ARRAY, location_union(a->loc, b->loc), {}, {.binary = {b, ast_malloc((ast_t){A_ARRAY, a->loc, {}, {.binary = {a, NULL}}})}}});
+      }
+    } break;
+
+    case T_SYM: assert(0);
+
+    case T_PARC:
+    case T_SQC:
+    case T_BRC:
+    case T_INT:
+    case T_HEX:
+    case T_CHAR:
+    case T_STRING:
+      assert(0);
+
+    case T_NONE:
+    case T_RETURN:
+    case T_TYPEDEF:
+    case T_STRUCT:
+    case T_SEMICOLON:
+    case T_EQUAL:
+    case T_VOIDKW:
+    case T_INTKW:
+    case T_CHARKW:
+    case T_ENUM:
+    case T_ASM:
+    case T_IF:
+    case T_ELSE:
+    case T_FOR:
+    case T_WHILE:
+    case T_EXTERN:
+    case T_BREAK:
+      assert(0);
+  }
+}
+
 ast_t *parse_expr(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
-  location_t start = tokenizer->loc;
-  int not= token_next_if_kind(tokenizer, T_NOT);
-  ast_t *ast = parse_bitewiseand(tokenizer);
+  location_t start_loc = tokenizer->last_token.loc;
 
-  if (not) {
-    ast = ast_malloc((ast_t){A_UNARYOP, location_union(start, ast->loc), {}, {.unaryop = {T_NOT, ast}}});
+  parser_token_t stack[PARSER_STACK_CAP] = {0};
+  ast_t *output[PARSER_STACK_CAP] = {0};
+  int si = 0, oi = 0;
+
+  int opened_pars = 0;
+  int opened_sqs = 0;
+  int opened_brs = 0;
+
+  int is_start_expr = 1;
+  int is_last_op = 0;
+  token_t t = {0};
+  while ((t = token_peek(tokenizer)).kind != T_NONE) {
+    int end_parse_expr = 0;
+    parser_token_t token = {t, 0, LEFTASS, 0, 0, {}};
+    int is_op = 0;
+
+    switch (t.kind) {
+      case T_INT:
+      case T_HEX:
+      case T_CHAR:
+        output[oi++] = ast_malloc((ast_t){A_INT, t.loc, {}, {.fac = t}});
+        break;
+      case T_STRING:
+        output[oi++] = ast_malloc((ast_t){A_STRING, t.loc, {}, {.fac = t}});
+        break;
+      case T_SYM:
+        output[oi++] = ast_malloc((ast_t){A_SYM, t.loc, {}, {.fac = t}});
+        break;
+
+      case T_PARO:
+      {
+        tokenizer_t savetok = *tokenizer;
+        catch = true;
+        if (setjmp(catch_buf) == 0) {
+          token_next(tokenizer);
+          token.type = parse_type(tokenizer);
+          if (token_peek(tokenizer).kind != T_PARC) {
+            eprintf(tokenizer->last_token.loc, "expected )");
+          }
+          token.is_cast = 1;
+          token.prec = 13;
+          token.ass = RIGHTASS;
+          token.is_unary = 1;
+          is_op = 1;
+          catch = false;
+          break;
+        }
+        *tokenizer = savetok;
+
+        opened_pars++;
+        stack[si++] = token;
+      } break;
+      case T_PARC:
+        opened_pars--;
+        if (opened_pars < 0) {
+          end_parse_expr = 1;
+          break;
+        }
+        while (stack[si - 1].t.kind != T_PARO) {
+          parse_create_ast(output, &oi, stack[--si]);
+        }
+        si--;
+        if (oi >= 2 && output[oi - 1]->kind == A_ARRAY && output[oi - 2]->kind == A_SYM) {
+          ast_t *params = output[--oi];
+          token_t name = output[--oi]->as.fac;
+          for (ast_t *node = params; node; node = node->as.binary.right) {
+            node->kind = A_PARAM;
+          }
+          output[oi++] = ast_malloc((ast_t){A_FUNCALL, location_union(name.loc, t.loc), {}, {.funcall = {name, params}}});
+        }
+        break;
+      case T_SQO:
+        opened_sqs++;
+        stack[si++] = token;
+        break;
+      case T_SQC:
+      {
+        opened_sqs--;
+        if (opened_sqs < 0) {
+          end_parse_expr = 1;
+          break;
+        }
+        while (stack[si - 1].t.kind != T_SQO) {
+          parse_create_ast(output, &oi, stack[--si]);
+        }
+        si--;
+        assert(oi >= 2);
+        ast_t *a = output[--oi];
+        ast_t *b = output[--oi];
+        location_t loc = location_union(a->loc, t.loc);
+        output[oi++] = ast_malloc((ast_t){A_UNARYOP, loc, {}, {.unaryop = {T_STAR, ast_malloc((ast_t){A_BINARYOP, loc, {}, {.binaryop = {T_PLUS, b, a}}})}}});
+      } break;
+      case T_BRO:
+        opened_brs++;
+        stack[si++] = token;
+        break;
+      case T_BRC:
+      {
+        opened_brs--;
+        if (opened_brs < 0) {
+          end_parse_expr = 1;
+          break;
+        }
+        while (stack[si - 1].t.kind != T_BRO) {
+          parse_create_ast(output, &oi, stack[--si]);
+        }
+
+        location_t loc = stack[si - 1].t.loc;
+        si--;
+        assert(oi >= 1);
+        if (output[oi - 1]->kind != A_ARRAY) {
+          output[oi - 1] = ast_malloc((ast_t){A_ARRAY, {}, {}, {.binary = {output[oi - 1], NULL}}});
+        }
+        output[oi - 1]->loc = location_union(loc, t.loc);
+      } break;
+
+      case T_MINUS:
+      case T_PLUS:
+        is_op = 1;
+        token.is_unary = is_last_op || is_start_expr;
+        token.prec = token.is_unary ? 13 : 11;
+        token.ass = token.is_unary ? RIGHTASS : LEFTASS;
+        break;
+      case T_SLASH:
+        is_op = 1;
+        token.prec = 12;
+        break;
+      case T_STAR:
+        is_op = 1;
+        token.is_unary = is_last_op || is_start_expr;
+        token.prec = token.is_unary ? 13 : 12;
+        break;
+      case T_AND:
+        is_op = 1;
+        token.is_unary = is_last_op || is_start_expr;
+        token.prec = token.is_unary ? 13 : 7;
+        break;
+      case T_DOT:
+        is_op = 1;
+        token.prec = 14;
+        break;
+      case T_EQ:
+      case T_NEQ:
+        is_op = 1;
+        token.prec = 8;
+        break;
+      case T_NOT:
+        is_op = 1;
+        token.is_unary = 1;
+        token.prec = 13;
+        token.ass = RIGHTASS;
+        break;
+      case T_SHL:
+      case T_SHR:
+        is_op = 1;
+        token.prec = 10;
+        break;
+      case T_COMMA:
+        is_op = 1;
+        token.prec = 1;
+        break;
+
+      case T_NONE: assert(0);
+      case T_RETURN:
+      case T_TYPEDEF:
+      case T_STRUCT:
+      case T_SEMICOLON:
+      case T_EQUAL:
+      case T_VOIDKW:
+      case T_INTKW:
+      case T_CHARKW:
+      case T_ENUM:
+      case T_ASM:
+      case T_IF:
+      case T_ELSE:
+      case T_FOR:
+      case T_WHILE:
+      case T_EXTERN:
+      case T_BREAK:
+        end_parse_expr = 1;
+        break;
+    }
+    if (end_parse_expr) {
+      break;
+    }
+    token_next(tokenizer);
+
+    if (is_op) {
+      if (si == 0) {
+        stack[si++] = token;
+      } else if (token.is_unary) {
+        stack[si++] = token;
+      } else if (token.prec < stack[si - 1].prec || (token.ass == RIGHTASS && token.prec == stack[si - 1].prec)) {
+        parse_create_ast(output, &oi, stack[--si]);
+        stack[si++] = token;
+      } else {
+        stack[si++] = token;
+      }
+    }
+
+    // printf("stack:\n");
+    // for (int i = 0; i < si; ++i) {
+    //   token_dump(stack[i].t);
+    // }
+    // printf("output:\n");
+    // for (int i = 0; i < oi; ++i) {
+    //   ast_dump(output[i], 0);
+    //   printf(" ");
+    // }
+    // printf("\n\n");
+
+    is_last_op = is_op;
+    is_start_expr = 0;
+    assert(0 <= si && si <= PARSER_STACK_CAP);
+    assert(0 <= si && oi <= PARSER_STACK_CAP);
   }
 
-  return ast;
+  while (si > 0) {
+    parse_create_ast(output, &oi, stack[--si]);
+  }
+
+  if (oi != 1) {
+    eprintf(start_loc, "unvalid expr");
+  }
+  return output[0];
 }
 
 ast_t *parse_decl(tokenizer_t *tokenizer) {
@@ -3479,6 +3863,11 @@ void compile(ast_t *ast, state_t *state) {
           state_add_ir(state, (ir_t){IR_INT, {.num = 1}});
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
         } break;
+        case T_MINUS:
+          state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
+          compile(ast->as.unaryop.arg, state);
+          state_add_ir(state, (ir_t){IR_OPERATION, {.inst = SUB}});
+          break;
         default:
           printf("UNARYOP: %s\n", token_kind_to_string(ast->as.unaryop.op));
           TODO;

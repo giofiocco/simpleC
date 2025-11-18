@@ -3,7 +3,6 @@ exitcode: 0
 code:
 char *str[] = {"A", "B", "C"};
 int main() {
-
 }
 output:
 ASSEMBLY:
