@@ -813,10 +813,10 @@ bool type_greaterthan(type_t *a, type_t *b) { // a >= b
 
   if (a->kind == TY_ALIAS) {
     assert(a->as.alias.type);
-    return type_cmp(a->as.alias.type, b);
+    return type_cmp(a->as.alias.type, b); // TODO: shouldnt be type_greaterthan?
   } else if (b->kind == TY_ALIAS) {
     assert(b->as.alias.type);
-    return type_cmp(a, b->as.alias.type);
+    return type_cmp(a, b->as.alias.type); // TODO: shouldnt be type_greaterthan?
   }
 
   if (a->kind == TY_INT && b->kind == TY_CHAR) {
@@ -848,6 +848,13 @@ void type_expect(location_t loc, type_t *found, type_t *expect) {
   char *expectstr = type_dump_to_string(expect);
   char *foundstr = type_dump_to_string(found);
   eprintf(loc, "expected '%s', found '%s'", expectstr, foundstr);
+}
+
+void type_expect_expandable(location_t loc, type_t *found, type_t *expect) {
+  if (type_greaterthan(expect, found)) {
+    return;
+  }
+  type_expect(loc, found, expect);
 }
 
 bool type_is_kind(type_t *type, type_kind_t kind) {
@@ -2376,6 +2383,8 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
             for (ast_t *node = params; node; node = node->as.binary.right) {
               node->kind = A_PARAM;
             }
+          } else {
+            params = ast_malloc((ast_t){A_PARAM, params->loc, {}, {.binary = {params, NULL}}});
           }
           output[oi++] = ast_malloc((ast_t){A_FUNCALL, location_union(name.loc, t.loc), {}, {.funcall = {name, params}}});
         }
@@ -2398,7 +2407,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
         assert(oi >= 2);
         ast_t *a = output[--oi];
         ast_t *b = output[--oi];
-        location_t loc = location_union(a->loc, t.loc);
+        location_t loc = location_union(b->loc, t.loc);
         output[oi++] = ast_malloc((ast_t){A_UNARYOP, loc, {}, {.unaryop = {T_STAR, ast_malloc((ast_t){A_BINARYOP, loc, {}, {.binaryop = {T_PLUS, b, a}}})}}});
       } break;
       case T_BRO:
@@ -3042,10 +3051,7 @@ void typecheck(ast_t *ast, state_t *state) {
           ast->as.paramdef.name, &ast->as.paramdef.type, INFO_LOCAL, {-1 - state->param}};
 
       typecheck(ast->as.paramdef.next, state);
-      ast->type = (type_t){TY_PARAM,
-                           ast->as.paramdef.type.size,
-                           {.list = {&ast->as.paramdef.type,
-                                     ast->as.paramdef.next ? &ast->as.paramdef.next->type : NULL}}};
+      ast->type = (type_t){TY_PARAM, ast->as.paramdef.type.size, {.list = {&ast->as.paramdef.type, ast->as.paramdef.next ? &ast->as.paramdef.next->type : NULL}}};
     } break;
     case A_BINARYOP:
     {
@@ -3108,13 +3114,13 @@ void typecheck(ast_t *ast, state_t *state) {
             }
           } else {
             typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
+
             if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR)) {
               ast->type = *type;
             } else if (type->kind == TY_ARRAY) {
               ast->type = (type_t){TY_PTR, 2, {.ptr = type->as.array.type}};
               ast_t *lhs = ast->as.binaryop.lhs;
-              ast->as.binaryop.lhs =
-                  ast_malloc((ast_t){A_CAST, lhs->loc, {}, {.cast = {ast->type, lhs}}});
+              ast->as.binaryop.lhs = ast_malloc((ast_t){A_CAST, lhs->loc, {}, {.cast = {ast->type, lhs}}});
             } else {
               eprintf(ast->loc,
                       "invalid operation '%s' between '%s' and '%s'",
@@ -3325,7 +3331,12 @@ void typecheck(ast_t *ast, state_t *state) {
           eprintf(ast->loc, "too many fields");
         }
       } else {
-        typecheck_expandable(ast->as.cast.ast, state, ast->as.cast.target);
+        typecheck(ast->as.cast.ast, state);
+
+        if (type_is_kind(&ast->as.cast.target, TY_CHAR) && type_is_kind(&ast->as.cast.ast->type, TY_INT)) {
+        } else {
+          type_expect_expandable(ast->as.cast.ast->loc, &ast->as.cast.ast->type, &ast->as.cast.target);
+        }
       }
       ast->type = ast->as.cast.target;
       break;
@@ -3554,7 +3565,8 @@ void get_addr_ast(state_t *state, ast_t *ast) {
       } else if (s->kind == INFO_GLOBAL) {
         state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.loc = {s->info.global, 0}}});
       } else {
-        assert(0);
+        printf("TODO at %d: cannot %s of %d", __LINE__, __FUNCTION__, s->kind);
+        exit(1);
       }
     } break;
     case A_UNARYOP:
@@ -4712,7 +4724,7 @@ int main(int argc, char **argv) {
         name = inputs[i].str;
         FILE *file = fopen(inputs[i].str, "r");
         if (!file) {
-          fprintf(stderr, "error: cannot open file '%s': %s", inputs[i].str, strerror(errno));
+          fprintf(stderr, "error: cannot open file '%s': %s\n", inputs[i].str, strerror(errno));
           exit(1);
         }
         fseek(file, 0, SEEK_END);
@@ -4769,7 +4781,6 @@ int main(int argc, char **argv) {
       exit(0);
     }
 
-    // check if main
     scope_t *scope = &state.scopes[0];
     symbol_t *main_symbol = NULL;
     for (int i = 0; i < scope->symbol_num; ++i) {
