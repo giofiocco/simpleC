@@ -2340,8 +2340,20 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
         output[oi++] = ast_malloc((ast_t){A_STRING, t.loc, {}, {.fac = t}});
         break;
       case T_SYM:
+      {
+        tokenizer_t savetok = *tokenizer;
+        catch = true;
+        if (setjmp(catch_buf) == 0) {
+          ast_t *ast = parse_funcall(tokenizer);
+          output[oi++] = ast;
+          catch = false;
+          tokenizer->has_last_token = 1; // so than the next doesnt consume the next one
+          break;
+        }
+        *tokenizer = savetok;
+
         output[oi++] = ast_malloc((ast_t){A_SYM, t.loc, {}, {.fac = t}});
-        break;
+      } break;
 
       case T_PARO:
       {
@@ -2376,18 +2388,6 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
           parse_create_ast(output, &oi, stack[--si]);
         }
         si--;
-        if (oi >= 2 && output[oi - 2]->kind == A_SYM) {
-          ast_t *params = output[--oi];
-          token_t name = output[--oi]->as.fac;
-          if (params->kind == A_ARRAY) {
-            for (ast_t *node = params; node; node = node->as.binary.right) {
-              node->kind = A_PARAM;
-            }
-          } else {
-            params = ast_malloc((ast_t){A_PARAM, params->loc, {}, {.binary = {params, NULL}}});
-          }
-          output[oi++] = ast_malloc((ast_t){A_FUNCALL, location_union(name.loc, t.loc), {}, {.funcall = {name, params}}});
-        }
         break;
       case T_SQO:
         opened_sqs++;
@@ -2476,8 +2476,12 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
         token.prec = 10;
         break;
       case T_COMMA:
-        is_op = 1;
-        token.prec = 1;
+        if (opened_brs > 0 || opened_pars > 0) {
+          is_op = 1;
+          token.prec = 1;
+        } else {
+          end_parse_expr = 1;
+        }
         break;
 
       case T_NONE: assert(0);
@@ -3565,7 +3569,7 @@ void get_addr_ast(state_t *state, ast_t *ast) {
       } else if (s->kind == INFO_GLOBAL) {
         state_add_ir(state, (ir_t){IR_ADDR_GLOBAL, {.loc = {s->info.global, 0}}});
       } else {
-        printf("TODO at %d: cannot %s of %d", __LINE__, __FUNCTION__, s->kind);
+        printf("TODO at %d: cannot %s of %d for symbol '" SV_FMT "'\n", __LINE__, __FUNCTION__, s->kind, SV_UNPACK(s->name.image));
         exit(1);
       }
     } break;

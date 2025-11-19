@@ -1,0 +1,36 @@
+params: -D par
+exitcode: 0
+code:
+int main() {
+  add();
+  add(1);
+  add(1,2);
+  add(1,2,3,4);
+}
+output:
+AST:
+LIST
+  FUNCDECL {INT} main
+    NULL
+    BLOCK
+      LIST
+        STATEMENT
+          FUNCALL add
+            NULL
+        STATEMENT
+          FUNCALL add
+            PARAM
+              INT 1
+        STATEMENT
+          FUNCALL add
+            PARAM
+              INT 1
+              INT 2
+        STATEMENT
+          FUNCALL add
+            PARAM
+              INT 1
+              INT 2
+              INT 3
+              INT 4
+
