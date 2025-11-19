@@ -2321,9 +2321,9 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
   int opened_pars = 0;
   int opened_sqs = 0;
   int opened_brs = 0;
-
   int is_start_expr = 1;
   int is_last_op = 0;
+  int is_last_par_open = 0;
   token_t t = {0};
   while ((t = token_peek(tokenizer)).kind != T_NONE) {
     int end_parse_expr = 0;
@@ -2437,7 +2437,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
       case T_MINUS:
       case T_PLUS:
         is_op = 1;
-        token.is_unary = is_last_op || is_start_expr;
+        token.is_unary = is_last_op || is_start_expr || is_last_par_open;
         token.prec = token.is_unary ? 13 : 11;
         token.ass = token.is_unary ? RIGHTASS : LEFTASS;
         break;
@@ -2447,12 +2447,12 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
         break;
       case T_STAR:
         is_op = 1;
-        token.is_unary = is_last_op || is_start_expr;
+        token.is_unary = is_last_op || is_start_expr || is_last_par_open;
         token.prec = token.is_unary ? 13 : 12;
         break;
       case T_AND:
         is_op = 1;
-        token.is_unary = is_last_op || is_start_expr;
+        token.is_unary = is_last_op || is_start_expr || is_last_par_open;
         token.prec = token.is_unary ? 13 : 7;
         break;
       case T_DOT:
@@ -2534,6 +2534,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
     // }
     // printf("\n\n");
 
+    is_last_par_open = t.kind == T_PARO || t.kind == T_SQO || t.kind == T_BRO;
     is_last_op = is_op;
     is_start_expr = 0;
     assert(0 <= si && si <= PARSER_STACK_CAP);
