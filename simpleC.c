@@ -3854,9 +3854,12 @@ void compile(ast_t *ast, state_t *state) {
           break;
         case T_STAR:
         case T_SLASH:
+          state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = 2}});
+          int start_sp = state->sp;
           compile(ast->as.binaryop.lhs, state);
           compile(ast->as.binaryop.rhs, state);
           state_add_ir(state, (ir_t){IR_CALL, {.sv = ast->as.binaryop.op == T_STAR ? (sv_t){mul_string, 3} : (sv_t){div_string, 3}}});
+          state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = start_sp - state->sp}});
           state_add_builtin(state, ast->as.binaryop.op == T_STAR ? BE_MUL : BE_DIV);
           break;
         default:
@@ -4552,7 +4555,7 @@ void optimize_asm(bytecode_t *bs, int *b_count, bool debug_opt, optlevel_t opt) 
 
 void help(int errorcode) {
   fprintf(stderr,
-          "Usage: simpleC [options] [files]\n\n"
+          "Usage: simpleC [options] [input-file-path]\n\n"
           "Options:\n"
           " -d <module> | opt    enable debug options for a module or optimizers\n"
           " -D <module>          stop the execution after a module and print the output\n"
@@ -4612,23 +4615,16 @@ uint8_t parse_module(char *str) {
   assert(0);
 }
 
-typedef struct {
-  enum {
-    INPUT_FILE,
-    INPUT_STRING,
-  } kind;
-  char *str;
-} input_t;
-
-#define INPUTS_MAX 128
-
 int main(int argc, char **argv) {
   (void)argc;
   assert(atexit(free_all) == 0);
 
   char *output = NULL;
-  input_t inputs[INPUTS_MAX] = {0};
-  int input_num = 0;
+  enum {
+    INPUT_FILE,
+    INPUT_STRING
+  } input_kind;
+  char *input = NULL;
 
   optlevel_t opt = 1;
   uint8_t debug_opt = 0;
@@ -4667,13 +4663,17 @@ int main(int argc, char **argv) {
           ++argv;
           break;
         case 'e':
-          assert(input_num + 1 < INPUTS_MAX);
           ++argv;
+          if (input) {
+            fprintf(stderr, "ERROR: '-e', input already provided\n");
+            help(1);
+          }
           if (!*argv) {
             fprintf(stderr, "ERROR: -e expects a string\n");
             help(1);
           }
-          inputs[input_num++] = (input_t){INPUT_STRING, *argv};
+          input_kind = INPUT_STRING;
+          input = *argv;
           ++argv;
           break;
         case 'o':
@@ -4710,8 +4710,12 @@ int main(int argc, char **argv) {
           help(1);
       }
     } else {
-      assert(input_num + 1 < INPUTS_MAX);
-      inputs[input_num++] = (input_t){INPUT_FILE, *argv};
+      if (input) {
+        fprintf(stderr, "ERROR: '%s', input already provided\n", arg);
+        help(1);
+      }
+      input_kind = INPUT_FILE;
+      input = *argv;
       ++argv;
     }
   }
@@ -4720,147 +4724,145 @@ int main(int argc, char **argv) {
   state_t state;
   state_init(&state);
   ast_t *ast;
-  for (int i = 0; i < input_num; ++i) {
-    char *buffer = NULL;
-    char *name = NULL;
-    switch (inputs[i].kind) {
-      case INPUT_FILE:
-      {
-        name = inputs[i].str;
-        FILE *file = fopen(inputs[i].str, "r");
-        if (!file) {
-          fprintf(stderr, "error: cannot open file '%s': %s\n", inputs[i].str, strerror(errno));
-          exit(1);
-        }
-        fseek(file, 0, SEEK_END);
-        int size = ftell(file);
-        fseek(file, 0, SEEK_SET);
-        buffer = alloc(size + 1);
-        fread(buffer, 1, size, file);
-        buffer[size] = 0;
-        assert(fclose(file) == 0);
-      } break;
-      case INPUT_STRING:
-        name = "cmd";
-        buffer = inputs[i].str;
-        break;
-    };
+  char *buffer = NULL;
+  char *name = NULL;
+  switch (input_kind) {
+    case INPUT_FILE:
+    {
+      name = input;
+      FILE *file = fopen(input, "r");
+      if (!file) {
+        fprintf(stderr, "error: cannot open file '%s': %s\n", input, strerror(errno));
+        exit(1);
+      }
+      fseek(file, 0, SEEK_END);
+      int size = ftell(file);
+      fseek(file, 0, SEEK_SET);
+      buffer = alloc(size + 1);
+      fread(buffer, 1, size, file);
+      buffer[size] = 0;
+      assert(fclose(file) == 0);
+    } break;
+    case INPUT_STRING:
+      name = "cmd";
+      buffer = input;
+      break;
+  };
 
+  tokenizer_init(&tokenizer, buffer, name);
+  if ((debug >> M_TOK) & 1) {
+    printf("TOKENS:\n");
+    token_t token;
+    while ((token = token_next(&tokenizer)).kind != T_NONE) {
+      token_dump(token);
+    }
     tokenizer_init(&tokenizer, buffer, name);
-    if ((debug >> M_TOK) & 1) {
-      printf("TOKENS:\n");
-      token_t token;
-      while ((token = token_next(&tokenizer)).kind != T_NONE) {
-        token_dump(token);
-      }
-      tokenizer_init(&tokenizer, buffer, name);
-    }
-    if ((exitat >> M_TOK) & 1) {
-      exit(0);
-    }
+  }
+  if ((exitat >> M_TOK) & 1) {
+    exit(0);
+  }
 
-    ast = parse(&tokenizer);
-    if ((debug >> M_PAR) & 1) {
-      printf("AST:\n");
-      ast_dump_tree(ast, false, 0);
-      printf("\n");
-    }
-    if ((exitat >> M_PAR) & 1) {
-      exit(0);
-    }
+  ast = parse(&tokenizer);
+  if ((debug >> M_PAR) & 1) {
+    printf("AST:\n");
+    ast_dump_tree(ast, false, 0);
+    printf("\n");
+  }
+  if ((exitat >> M_PAR) & 1) {
+    exit(0);
+  }
 
-    state_init(&state);
-    typecheck(ast, &state);
-    if (opt > OL_NONE) {
-      if (debug_opt) {
-        printf("OPTIMIZE AST:\n");
-      }
-      optimize_ast(&ast, debug_opt, opt);
+  state_init(&state);
+  typecheck(ast, &state);
+  if (opt > OL_NONE) {
+    if (debug_opt) {
+      printf("OPTIMIZE AST:\n");
     }
-    if ((debug >> M_TYP) & 1) {
-      printf("TYPED AST:\n");
-      ast_dump_tree(ast, true, 0);
-      printf("\n");
-    }
-    if ((exitat >> M_TYP) & 1) {
-      exit(0);
-    }
+    optimize_ast(&ast, debug_opt, opt);
+  }
+  if ((debug >> M_TYP) & 1) {
+    printf("TYPED AST:\n");
+    ast_dump_tree(ast, true, 0);
+    printf("\n");
+  }
+  if ((exitat >> M_TYP) & 1) {
+    exit(0);
+  }
 
-    scope_t *scope = &state.scopes[0];
-    symbol_t *main_symbol = NULL;
-    for (int i = 0; i < scope->symbol_num; ++i) {
-      if (sv_eq(scope->symbols[i].name.image, sv_from_cstr("main"))) {
-        main_symbol = &scope->symbols[i];
-        break;
-      }
+  scope_t *scope = &state.scopes[0];
+  symbol_t *main_symbol = NULL;
+  for (int i = 0; i < scope->symbol_num; ++i) {
+    if (sv_eq(scope->symbols[i].name.image, sv_from_cstr("main"))) {
+      main_symbol = &scope->symbols[i];
+      break;
     }
-    if (!main_symbol) {
-      fprintf(stderr, "ERROR: no main function found\n");
-      exit(1);
-    }
-    if (main_symbol->type->kind != TY_FUNC || main_symbol->type->as.func.ret->kind != TY_INT) {
-      fprintf(stderr, "ERROR: expected main to be FUNC with return type INT\n");
-      exit(1);
-    }
+  }
+  if (!main_symbol) {
+    fprintf(stderr, "ERROR: no main function found\n");
+    exit(1);
+  }
+  if (main_symbol->type->kind != TY_FUNC || main_symbol->type->as.func.ret->kind != TY_INT) {
+    fprintf(stderr, "ERROR: expected main to be FUNC with return type INT\n");
+    exit(1);
+  }
 
-    state_init_with_compiled(&state);
-    compile(ast, &state);
+  state_init_with_compiled(&state);
+  compile(ast, &state);
 
-    if (opt > OL_NONE) {
-      if (debug_opt) {
-        printf("OPTIMIZE IR:\n");
-      }
-      optimize_ir(state.irs_init, &state.ir_init_num, debug_opt, opt);
-      optimize_ir(state.irs, &state.ir_num, debug_opt, opt);
+  if (opt > OL_NONE) {
+    if (debug_opt) {
+      printf("OPTIMIZE IR:\n");
     }
-    if ((debug >> M_IR) & 1) {
-      printf("IR INIT:\n");
-      for (int i = 0; i < state.ir_init_num; i++) {
-        printf("\t");
-        ir_dump(state.irs_init[i]);
-      }
-      printf("IR:\n");
-      for (int i = 0; i < state.ir_num; i++) {
-        printf("\t");
-        ir_dump(state.irs[i]);
-      }
-      printf("\n");
+    optimize_ir(state.irs_init, &state.ir_init_num, debug_opt, opt);
+    optimize_ir(state.irs, &state.ir_num, debug_opt, opt);
+  }
+  if ((debug >> M_IR) & 1) {
+    printf("IR INIT:\n");
+    for (int i = 0; i < state.ir_init_num; i++) {
+      printf("\t");
+      ir_dump(state.irs_init[i]);
     }
-    if ((exitat >> M_IR) & 1) {
-      exit(0);
+    printf("IR:\n");
+    for (int i = 0; i < state.ir_num; i++) {
+      printf("\t");
+      ir_dump(state.irs[i]);
     }
+    printf("\n");
+  }
+  if ((exitat >> M_IR) & 1) {
+    exit(0);
+  }
 
-    state.compiled.is_init = true;
-    compile_ir_list(&state, state.irs_init, state.ir_init_num);
-    state.compiled.is_init = false;
-    compile_ir_list(&state, state.irs, state.ir_num);
+  state.compiled.is_init = true;
+  compile_ir_list(&state, state.irs_init, state.ir_init_num);
+  state.compiled.is_init = false;
+  compile_ir_list(&state, state.irs, state.ir_num);
 
-    state.compiled.is_init = true;
-    code(&state.compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 0}});
-    code(&state.compiled, (bytecode_t){BINST, PUSHA, {}});
-    code(&state.compiled, bytecode_with_string(BINSTRELLABEL, CALLR, "main"));
-    code(&state.compiled, (bytecode_t){BINST, POPA, {}});
-    code(&state.compiled, bytecode_with_string(BINSTLABEL, CALL, "exit"));
-    state.compiled.is_init = false;
+  state.compiled.is_init = true;
+  code(&state.compiled, (bytecode_t){BINSTHEX, RAM_AL, {.num = 0}});
+  code(&state.compiled, (bytecode_t){BINST, PUSHA, {}});
+  code(&state.compiled, bytecode_with_string(BINSTRELLABEL, CALLR, "main"));
+  code(&state.compiled, (bytecode_t){BINST, POPA, {}});
+  code(&state.compiled, bytecode_with_string(BINSTLABEL, CALL, "exit"));
+  state.compiled.is_init = false;
 
-    if (opt > OL_NONE) {
-      if (debug_opt) {
-        printf("OPTIMIZE ASM:\n");
-      }
-      optimize_asm(state.compiled.code, &state.compiled.code_num, debug_opt, opt);
-      optimize_asm(state.compiled.init, &state.compiled.init_num, debug_opt, opt);
+  if (opt > OL_NONE) {
+    if (debug_opt) {
+      printf("OPTIMIZE ASM:\n");
     }
-    if ((debug >> M_COM) & 1) {
-      printf("ASSEMBLY:\n");
-      dump_code(&state.compiled);
-    }
-    if ((exitat >> M_COM) & 1) {
-      exit(0);
-    }
+    optimize_asm(state.compiled.code, &state.compiled.code_num, debug_opt, opt);
+    optimize_asm(state.compiled.init, &state.compiled.init_num, debug_opt, opt);
+  }
+  if ((debug >> M_COM) & 1) {
+    printf("ASSEMBLY:\n");
+    dump_code(&state.compiled);
+  }
+  if ((exitat >> M_COM) & 1) {
+    exit(0);
+  }
 
-    if (inputs[i].kind == INPUT_FILE) {
-      free_ptr(buffer);
-    }
+  if (input_kind == INPUT_FILE) {
+    free_ptr(buffer);
   }
 
   if (!output) {
