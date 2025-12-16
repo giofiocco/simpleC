@@ -94,6 +94,7 @@ typedef enum {
   T_SHR,
   T_BREAK,
   T_LAND,
+  T_LOR,
 } token_kind_t;
 
 typedef struct {
@@ -245,6 +246,7 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_SHR: return "SHR";
     case T_BREAK: return "BREAK";
     case T_LAND: return "LAND";
+    case T_LOR: return "LOR";
   }
   // clang-format on
   assert(0);
@@ -378,6 +380,13 @@ token_t token_next(tokenizer_t *tokenizer) {
           token = token_new_and_consume_from_buffer(T_LAND, 2, tokenizer, 0);
         } else {
           token = token_new_and_consume_from_buffer(T_AND, 1, tokenizer, 0);
+        }
+        break;
+      case '|':
+        if (tokenizer->buffer[1] == tokenizer->buffer[0]) {
+          token = token_new_and_consume_from_buffer(T_LOR, 2, tokenizer, 0);
+        } else {
+          TODO;
         }
         break;
       case '/':
@@ -1276,8 +1285,8 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
 #define SYMBOL_MAX       256
 #define SCOPE_MAX        32
 #define DATA_MAX         256
-#define CODE_MAX         512
-#define IR_MAX           256
+#define CODE_MAX         1024
+#define IR_MAX           512
 #define BREAK_TARGET_MAX 8
 
 typedef struct {
@@ -2218,6 +2227,7 @@ void parse_create_ast(ast_t **output, int *oi, parser_token_t token) {
     case T_NOT:
     case T_DOT:
     case T_LAND:
+    case T_LOR:
       if (token.is_unary) {
         if (*oi < 1) {
           eprintf(token.t.loc, "cannot parse expr");
@@ -2457,6 +2467,10 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
       case T_LAND:
         is_op = 1;
         token.prec = P_LAND;
+        break;
+      case T_LOR:
+        is_op = 1;
+        token.prec = P_LOR;
         break;
 
       case T_NONE: assert(0);
@@ -3123,6 +3137,7 @@ void typecheck(ast_t *ast, state_t *state) {
         case T_SLASH:
         case T_AND:
         case T_LAND:
+        case T_LOR:
           typecheck_expandable(ast->as.binaryop.lhs, state, (type_t){TY_INT, 2, {}});
           typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
           ast->type = (type_t){TY_INT, 2, {}};
@@ -3826,15 +3841,25 @@ void compile(ast_t *ast, state_t *state) {
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
         } break;
         case T_LAND:
+        case T_LOR:
         {
-          state_add_ir(state, (ir_t){IR_INT, {.num = 1}});
-          compile(ast->as.binaryop.rhs, state);
-          compile(ast->as.binaryop.lhs, state);
-          state_add_ir(state, (ir_t){IR_OPERATION, {.inst = AND}});
+          // for LAND:
+          // push 0
+          // compile lhs
+          // jmprz $0
+          // compile rhs
+          // jmprz $0
+          // incsp; push 1
+          // 0:
+          int and = ast->as.binaryop.op == T_LAND;
           int a = state->uli++;
-          state_add_ir(state, (ir_t){IR_JMPNZ, {.num = a}});
+          state_add_ir(state, (ir_t){IR_INT, {.num = !and}});
+          compile(ast->as.binaryop.lhs, state);
+          state_add_ir(state, (ir_t){and? IR_JMPZ : IR_JMPNZ, {.num = a}});
+          compile(ast->as.binaryop.rhs, state);
+          state_add_ir(state, (ir_t){and? IR_JMPZ : IR_JMPNZ, {.num = a}});
           state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -2}});
-          state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
+          state_add_ir(state, (ir_t){IR_INT, {.num = and}});
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
         } break;
         case T_SHL:

@@ -1,10 +1,13 @@
-params: -D par
+params: -d par -D ir
 exitcode: 0
 code:
 int main() {
   int a;
   if (a != -1 && a != 2 && a != 3) {
   }
+
+  1 && 2 && 3;
+  1 || 2;
 }
 output:
 AST:
@@ -30,4 +33,89 @@ LIST
                 INT 3
           NULL
           NULL
+        STATEMENT
+          BINARYOP LAND
+            INT 1
+            BINARYOP LAND
+              INT 2
+              INT 3
+        STATEMENT
+          BINARYOP LOR
+            INT 1
+            INT 2
+
+DATA:
+	EXTERN       exit
+	GLOBAL       _start
+IR-INIT:
+IR:
+	SETLABEL main
+	CHANGE_SP 2
+	INT 0
+	INT 0
+	INT 0
+	INT 1
+	OPERATION SUB
+	ADDR_LOCAL 8
+	READ 2
+	OPERATION SUB
+	JMPZ 1
+	CHANGE_SP -2
+	INT 1
+	SETULI 1
+	JMPZ 0
+	INT 0
+	INT 0
+	INT 2
+	ADDR_LOCAL 10
+	READ 2
+	OPERATION SUB
+	JMPZ 3
+	CHANGE_SP -2
+	INT 1
+	SETULI 3
+	JMPZ 2
+	INT 0
+	INT 3
+	ADDR_LOCAL 10
+	READ 2
+	OPERATION SUB
+	JMPZ 4
+	CHANGE_SP -2
+	INT 1
+	SETULI 4
+	JMPZ 2
+	CHANGE_SP -2
+	INT 1
+	SETULI 2
+	JMPZ 0
+	CHANGE_SP -2
+	INT 1
+	SETULI 0
+	INT 0
+	INT 1
+	JMPZ 5
+	INT 0
+	INT 2
+	JMPZ 6
+	INT 3
+	JMPZ 6
+	CHANGE_SP -2
+	INT 1
+	SETULI 6
+	JMPZ 5
+	CHANGE_SP -2
+	INT 1
+	SETULI 5
+	CHANGE_SP -2
+	INT 1
+	INT 1
+	JMPNZ 7
+	INT 2
+	JMPNZ 7
+	CHANGE_SP -2
+	INT 0
+	SETULI 7
+	CHANGE_SP -6
+	FUNCEND
 
