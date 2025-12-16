@@ -93,6 +93,7 @@ typedef enum {
   T_SHL,
   T_SHR,
   T_BREAK,
+  T_LAND,
 } token_kind_t;
 
 typedef struct {
@@ -243,6 +244,7 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_SHL: return "SHL";
     case T_SHR: return "SHR";
     case T_BREAK: return "BREAK";
+    case T_LAND: return "LAND";
   }
   // clang-format on
   assert(0);
@@ -283,7 +285,6 @@ token_t token_next(tokenizer_t *tokenizer) {
   table['-'] = T_MINUS;
   table['*'] = T_STAR;
   table['/'] = T_SLASH;
-  table['&'] = T_AND;
   table[','] = T_COMMA;
   table['.'] = T_DOT;
   table['='] = T_EQUAL;
@@ -370,6 +371,13 @@ token_t token_next(tokenizer_t *tokenizer) {
           token = token_new_and_consume_from_buffer(tokenizer->buffer[0] == '<' ? T_SHL : T_SHR, 2, tokenizer, 0);
         } else {
           TODO;
+        }
+        break;
+      case '&':
+        if (tokenizer->buffer[1] == tokenizer->buffer[0]) {
+          token = token_new_and_consume_from_buffer(T_LAND, 2, tokenizer, 0);
+        } else {
+          token = token_new_and_consume_from_buffer(T_AND, 1, tokenizer, 0);
         }
         break;
       case '/':
@@ -1545,6 +1553,7 @@ void state_add_ir(state_t *state, ir_t ir) {
         case SUM:
         case SUB:
         case B_AH:
+        case AND:
           state->sp -= 2;
           break;
         case SHL:
@@ -2147,78 +2156,30 @@ ast_t *parse_bitewiseand(tokenizer_t *tokenizer) {
   return a;
 }
 
-// parsing_info_t token_parsing_info(token_kind_t kind) {
-//   switch (kind) {
-//     case T_DOT:
-//       return (parsing_info_t){14, LEFTASS};
-//     case T_NOT:
-//       return (parsing_info_t){13, RIGHTASS};
-//     case T_STAR:
-//     case T_SLASH:
-//       return (parsing_info_t){12, LEFTASS};
-//     case T_PLUS:
-//     case T_MINUS:
-//       return (parsing_info_t){11, LEFTASS};
-//     case T_SHL:
-//     case T_SHR:
-//       return (parsing_info_t){10, LEFTASS};
-//     // LESS THAN etc 9
-//     case T_EQ:
-//     case T_NEQ:
-//       return (parsing_info_t){8, LEFTASS};
-//     case T_AND:
-//       return (parsing_info_t){7, LEFTASS};
-//       // XOR 6
-//       // OR 5
-//       // LOGIC AND 4
-//       // LOGIC OR 3
-//       // EQUAL 2
-//       // COMMA 1
-//
-//     case T_SYM:
-//     case T_INT:
-//     case T_HEX:
-//     case T_STRING:
-//     case T_CHAR:
-//       break;
-//       return (parsing_info_t){PRECATOM, LEFTASS};
-//
-//     case T_PARO:
-//     case T_PARC:
-//     case T_SQO:
-//     case T_SQC:
-//     case T_BRO:
-//     case T_BRC:
-//       return (parsing_info_t){PRECPAR, LEFTASS};
-//
-//     case T_NONE:
-//     case T_RETURN:
-//     case T_TYPEDEF:
-//     case T_STRUCT:
-//     case T_SEMICOLON:
-//     case T_EQUAL:
-//     case T_VOIDKW:
-//     case T_INTKW:
-//     case T_CHARKW:
-//     case T_ENUM:
-//     case T_ASM:
-//     case T_IF:
-//     case T_ELSE:
-//     case T_FOR:
-//     case T_WHILE:
-//     case T_EXTERN:
-//     case T_BREAK:
-//     case T_COMMA:
-//       return (parsing_info_t){PRECUNVALID, LEFTASS};
-//   }
-//   assert(0);
-// }
-
 #define PARSER_STACK_CAP 1024
+
+typedef enum {
+  P_NOTOP,
+  P_COMMA,
+  P_ASSIGN,
+  P_TERNARY,
+  P_LOR,
+  P_LAND,
+  P_OR,
+  P_XOR,
+  P_AND,
+  P_EQ,
+  P_LESS,
+  P_SHL,
+  P_SUM,
+  P_MUL,
+  P_UNARY,
+  P_ACCESS
+} precedence_t;
 
 typedef struct {
   token_t t;
-  int prec;
+  precedence_t prec;
   int is_unary;
   enum {
     LEFTASS,
@@ -2256,12 +2217,17 @@ void parse_create_ast(ast_t **output, int *oi, parser_token_t token) {
     case T_AND:
     case T_NOT:
     case T_DOT:
+    case T_LAND:
       if (token.is_unary) {
-        assert(*oi >= 1);
+        if (*oi < 1) {
+          eprintf(token.t.loc, "cannot parse expr");
+        }
         ast_t *a = output[--(*oi)];
         output[(*oi)++] = ast_malloc((ast_t){A_UNARYOP, location_union(token.t.loc, a->loc), {}, {.unaryop = {token.t.kind, a}}});
       } else {
-        assert(*oi >= 2);
+        if (*oi < 2) {
+          eprintf(token.t.loc, "cannot parse expr");
+        }
         ast_t *a = output[--(*oi)];
         ast_t *b = output[--(*oi)];
         output[(*oi)++] = ast_malloc((ast_t){A_BINARYOP, location_union(a->loc, b->loc), {}, {.binaryop = {token.t.kind, b, a}}});
@@ -2332,7 +2298,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
   token_t t = {0};
   while ((t = token_peek(tokenizer)).kind != T_NONE) {
     int end_parse_expr = 0;
-    parser_token_t token = {t, 0, LEFTASS, 0, 0, {}};
+    parser_token_t token = {t, P_NOTOP, LEFTASS, 0, 0, {}};
     int is_op = 0;
 
     switch (t.kind) {
@@ -2371,7 +2337,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
             eprintf(tokenizer->last_token.loc, "expected )");
           }
           token.is_cast = 1;
-          token.prec = 13;
+          token.prec = P_UNARY;
           token.ass = RIGHTASS;
           token.is_unary = 1;
           is_op = 1;
@@ -2443,50 +2409,54 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
       case T_PLUS:
         is_op = 1;
         token.is_unary = is_last_op || is_start_expr || is_last_par_open;
-        token.prec = token.is_unary ? 13 : 11;
+        token.prec = token.is_unary ? P_UNARY : P_SUM;
         token.ass = token.is_unary ? RIGHTASS : LEFTASS;
         break;
       case T_SLASH:
         is_op = 1;
-        token.prec = 12;
+        token.prec = P_MUL;
         break;
       case T_STAR:
         is_op = 1;
         token.is_unary = is_last_op || is_start_expr || is_last_par_open;
-        token.prec = token.is_unary ? 13 : 12;
+        token.prec = token.is_unary ? P_UNARY : P_MUL;
         break;
       case T_AND:
         is_op = 1;
         token.is_unary = is_last_op || is_start_expr || is_last_par_open;
-        token.prec = token.is_unary ? 13 : 7;
+        token.prec = token.is_unary ? P_UNARY : P_AND;
         break;
       case T_DOT:
         is_op = 1;
-        token.prec = 14;
+        token.prec = P_ACCESS;
         break;
       case T_EQ:
       case T_NEQ:
         is_op = 1;
-        token.prec = 8;
+        token.prec = P_EQ;
         break;
       case T_NOT:
         is_op = 1;
         token.is_unary = 1;
-        token.prec = 13;
+        token.prec = P_UNARY;
         token.ass = RIGHTASS;
         break;
       case T_SHL:
       case T_SHR:
         is_op = 1;
-        token.prec = 10;
+        token.prec = P_SHL;
         break;
       case T_COMMA:
         if (opened_brs > 0 || opened_pars > 0) {
           is_op = 1;
-          token.prec = 1;
+          token.prec = P_COMMA;
         } else {
           end_parse_expr = 1;
         }
+        break;
+      case T_LAND:
+        is_op = 1;
+        token.prec = P_LAND;
         break;
 
       case T_NONE: assert(0);
@@ -2521,7 +2491,13 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
         stack[si++] = token;
 
       } else if (token.prec < stack[si - 1].prec || (token.ass == RIGHTASS && token.prec == stack[si - 1].prec)) {
-        parse_create_ast(output, &oi, stack[--si]);
+        if (stack[si - 1].is_unary) {
+          while (si > 0) {
+            parse_create_ast(output, &oi, stack[--si]);
+          }
+        } else {
+          parse_create_ast(output, &oi, stack[--si]);
+        }
         stack[si++] = token;
       } else {
         stack[si++] = token;
@@ -2530,6 +2506,7 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
 
     // printf("stack:\n");
     // for (int i = 0; i < si; ++i) {
+    //   printf("%c ", i == si - 1 ? '>' : ' ');
     //   token_dump(stack[i].t);
     // }
     // printf("output:\n");
@@ -3145,6 +3122,7 @@ void typecheck(ast_t *ast, state_t *state) {
         case T_STAR:
         case T_SLASH:
         case T_AND:
+        case T_LAND:
           typecheck_expandable(ast->as.binaryop.lhs, state, (type_t){TY_INT, 2, {}});
           typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
           ast->type = (type_t){TY_INT, 2, {}};
@@ -3159,7 +3137,7 @@ void typecheck(ast_t *ast, state_t *state) {
       switch (ast->as.unaryop.op) {
         case T_MINUS:
           typecheck_expandable(ast->as.unaryop.arg, state, (type_t){TY_INT, 2, {}});
-          ast->type.kind = TY_INT;
+          ast->type = (type_t){TY_INT, 2, {}};
           break;
         case T_AND:
           typecheck(ast->as.unaryop.arg, state);
@@ -3382,6 +3360,11 @@ void typecheck(ast_t *ast, state_t *state) {
     case A_BREAK:
       ast->type = (type_t){TY_VOID, 0, {}};
       break;
+  }
+  if (ast->type.size == 0 && ast->type.kind != TY_VOID && ast->type.kind != TY_FUNC) {
+    printf("ERROR at %d\n", __LINE__);
+    ast_dump(ast, 1);
+    TODO;
   }
 }
 
@@ -3840,6 +3823,18 @@ void compile(ast_t *ast, state_t *state) {
           state_add_ir(state, (ir_t){IR_JMPZ, {.num = a}});
           state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -2}});
           state_add_ir(state, (ir_t){IR_INT, {.num = ast->as.binaryop.op != T_EQ}});
+          state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
+        } break;
+        case T_LAND:
+        {
+          state_add_ir(state, (ir_t){IR_INT, {.num = 1}});
+          compile(ast->as.binaryop.rhs, state);
+          compile(ast->as.binaryop.lhs, state);
+          state_add_ir(state, (ir_t){IR_OPERATION, {.inst = AND}});
+          int a = state->uli++;
+          state_add_ir(state, (ir_t){IR_JMPNZ, {.num = a}});
+          state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = -2}});
+          state_add_ir(state, (ir_t){IR_INT, {.num = 0}});
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
         } break;
         case T_SHL:
@@ -4408,6 +4403,7 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_count) {
           case SUM:
           case SUB:
           case B_AH:
+          case AND:
             code(compiled, (bytecode_t){BINST, POPA, {}});
             code(compiled, (bytecode_t){BINST, POPB, {}});
             code(compiled, (bytecode_t){BINST, ir.arg.inst, {}});

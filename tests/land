@@ -1,0 +1,33 @@
+params: -D par
+exitcode: 0
+code:
+int main() {
+  int a;
+  if (a != -1 && a != 2 && a != 3) {
+  }
+}
+output:
+AST:
+LIST
+  FUNCDECL {INT} main
+    NULL
+    BLOCK
+      LIST
+        DECL {INT} a
+          NULL
+        IF
+          BINARYOP LAND
+            BINARYOP NEQ
+              SYM a
+              UNARYOP MINUS
+                INT 1
+            BINARYOP LAND
+              BINARYOP NEQ
+                SYM a
+                INT 2
+              BINARYOP NEQ
+                SYM a
+                INT 3
+          NULL
+          NULL
+
