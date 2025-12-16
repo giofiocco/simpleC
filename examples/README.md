@@ -5,6 +5,9 @@ use `make` to compile everything and `make run prg=<name> args=<args-for-jaris/s
 `clib_wrapper.c` is the wrapper for the `cc` version, a wrapper for the gnu c stdlib.
 `c_stdlib.asm` is the wrapper for the jaris stdlib becasuse of the different calling method of functions in simpleC and what the jaris stdlib expects.
 
+To test run `make test` optionally with `prg=<name>` or `args=<args-for-jaris/sim>`.
+
 ## List:
 
-1. rule110: see [Wikipedia link](https://en.wikipedia.org/wiki/Rule_110)
+1. rule110: [Rule 110 cellular automaton](https://en.wikipedia.org/wiki/Rule_110)
+2. gol: [Conway's game of life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life)
