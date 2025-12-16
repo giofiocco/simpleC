@@ -14,8 +14,6 @@
 #define DUMP_TREE_INDENT 2
 char *mul_string = "mul";
 char *div_string = "div";
-char *shiftl_string = "shiftl";
-char *shiftr_string = "shiftr";
 
 #define TODO                          \
   do {                                \
@@ -1325,6 +1323,7 @@ typedef enum {
   IR_MUL,         // + num
   IR_DIV,         // + num
   IR_CALL,        // + sv
+  IR_ASMCALL,     // + sv
   IR_EXTERN,      // + sv
 } ir_kind_t;
 
@@ -1377,6 +1376,8 @@ char *ir_kind_to_string(ir_kind_t kind) {
       return "DIV";
     case IR_CALL:
       return "CALL";
+    case IR_ASMCALL:
+      return "ASMCALL";
     case IR_EXTERN:
       return "EXTERN";
   }
@@ -1391,6 +1392,7 @@ void ir_dump(ir_t ir) {
       break;
     case IR_SETLABEL:
     case IR_CALL:
+    case IR_ASMCALL:
     case IR_EXTERN:
       printf(" " SV_FMT, SV_UNPACK(ir.arg.sv));
       break;
@@ -1512,6 +1514,9 @@ void state_add_ir(state_t *state, ir_t ir) {
     case IR_DIV:
     case IR_CALL:
     case IR_EXTERN:
+      break;
+    case IR_ASMCALL:
+      state->sp -= 2;
       break;
     case IR_JMPZ:
     case IR_JMPNZ:
@@ -3854,14 +3859,12 @@ void compile(ast_t *ast, state_t *state) {
           break;
         case T_STAR:
         case T_SLASH:
-          state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = 2}});
-          int start_sp = state->sp;
+        {
           compile(ast->as.binaryop.lhs, state);
           compile(ast->as.binaryop.rhs, state);
-          state_add_ir(state, (ir_t){IR_CALL, {.sv = ast->as.binaryop.op == T_STAR ? (sv_t){mul_string, 3} : (sv_t){div_string, 3}}});
-          state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = start_sp - state->sp}});
+          state_add_ir(state, (ir_t){IR_ASMCALL, {.sv = ast->as.binaryop.op == T_STAR ? (sv_t){mul_string, 3} : (sv_t){div_string, 3}}});
           state_add_builtin(state, ast->as.binaryop.op == T_STAR ? BE_MUL : BE_DIV);
-          break;
+        } break;
         default:
           printf("BINARYOP %s\n", token_kind_to_string(ast->as.binaryop.op));
           TODO;
@@ -4435,6 +4438,12 @@ void compile_ir_list(state_t *state, ir_t *irs, int ir_count) {
       case IR_CALL:
         code(compiled, bytecode_with_sv(BINSTLABEL, CALL, ir.arg.sv));
         break;
+      case IR_ASMCALL:
+        code(compiled, (bytecode_t){BINST, POPA, {}});
+        code(compiled, (bytecode_t){BINST, POPB, {}});
+        code(compiled, bytecode_with_sv(BINSTLABEL, CALL, ir.arg.sv));
+        code(compiled, (bytecode_t){BINST, PUSHA, {}});
+        break;
       case IR_EXTERN:
         code(compiled, bytecode_with_sv(BEXTERN, 0, ir.arg.sv));
         break;
@@ -4817,7 +4826,12 @@ int main(int argc, char **argv) {
     optimize_ir(state.irs, &state.ir_num, debug_opt, opt);
   }
   if ((debug >> M_IR) & 1) {
-    printf("IR INIT:\n");
+    printf("DATA:\n");
+    for (int i = 0; i < state.compiled.data_num; i++) {
+      printf("\t");
+      bytecode_dump(state.compiled.data[i]);
+    }
+    printf("IR-INIT:\n");
     for (int i = 0; i < state.ir_init_num; i++) {
       printf("\t");
       ir_dump(state.irs_init[i]);
