@@ -1,6 +1,10 @@
 # Simple C
 
-A subset of `C` compiler for [Jaris](https://github.com/giofiocco/jaris) assembly.
+A compiler for a subset of `C` that outputs [Jaris](https://github.com/giofiocco/jaris) assembly.
+
+---
+
+It can compile only one file at once (or string by `-e` flag).
 
 The file will be tokenized, white spaces are skipped (tabs are treated as single space).
 
@@ -62,7 +66,7 @@ Is possible to enable optimizzation to the AST (after typecheck), to the IR or t
 - SHL: `<<`
 - SHR: `>>`
 - BREAK: `break`
-- MOD: `%`
+- LAND: `&&`
 
 ## Comments
 

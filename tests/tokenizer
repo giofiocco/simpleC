@@ -4,12 +4,13 @@ code:
 _asd_123 012 12 0x12 0x1322 0XaBcD
 "aaa" 'a'
 ()[]{}
-return typedef struct enum __asm__
+return typedef struct enum
 ; + - * / = & , . == != !
 void int char
 if else for while break
 extern
 << >>
+< || &&
 #define A 2 1
 #define B 10
 A
@@ -33,7 +34,6 @@ RETURN 'return' @ 4:1
 TYPEDEF 'typedef' @ 4:8
 STRUCT 'struct' @ 4:16
 ENUM 'enum' @ 4:23
-ASM '__asm__' @ 4:28
 SEMICOLON ';' @ 5:1
 PLUS '+' @ 5:3
 MINUS '-' @ 5:5
@@ -57,5 +57,8 @@ BREAK 'break' @ 7:19
 EXTERN 'extern' @ 8:1
 SHL '<<' @ 9:1
 SHR '>>' @ 9:4
-INT '2' @ 10:11
-INT '1' @ 10:13
+LT '<' @ 10:1
+LOR '||' @ 10:3
+LAND '&&' @ 10:6
+INT '2' @ 11:11
+INT '1' @ 11:13

@@ -1,9 +1,12 @@
 1. in optimize_ast a flag with is_condition and then do all the optimizzations
+    if an ast subtree is a condition you can do all the optimization
+    otherwise make a function optimize_condition_ast
 1. in optimize ast first a switch with all the recursive calls and then a switch with optimizations
 1. '\n'
 1. continue should goto the update statement
 1. maybe in grammar atom EQ atom should be atom EQ expr? etc
 1. a separate compiled field only for externs and globals
+1. when error on param type instead of printing PARAM{...} print the type
 
 fix error when c_put_char(<int>);
 

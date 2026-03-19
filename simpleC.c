@@ -81,7 +81,6 @@ typedef enum {
   T_CHARKW,
   T_CHAR,
   T_ENUM,
-  T_ASM,
   T_IF,
   T_ELSE,
   T_EQ,
@@ -95,6 +94,7 @@ typedef enum {
   T_BREAK,
   T_LAND,
   T_LOR,
+  T_LT,
 } token_kind_t;
 
 typedef struct {
@@ -233,7 +233,6 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_CHARKW: return "CHARKW";
     case T_CHAR: return "CHAR";
     case T_ENUM: return "ENUM";
-    case T_ASM: return "ASM";
     case T_IF: return "IF";
     case T_ELSE: return "ELSE";
     case T_EQ: return "EQ";
@@ -247,6 +246,7 @@ char *token_kind_to_string(token_kind_t kind) {
     case T_BREAK: return "BREAK";
     case T_LAND: return "LAND";
     case T_LOR: return "LOR";
+    case T_LT: return "LT";
   }
   // clang-format on
   assert(0);
@@ -371,6 +371,8 @@ token_t token_next(tokenizer_t *tokenizer) {
       case '>':
         if (tokenizer->buffer[1] == tokenizer->buffer[0]) {
           token = token_new_and_consume_from_buffer(tokenizer->buffer[0] == '<' ? T_SHL : T_SHR, 2, tokenizer, 0);
+        } else if (tokenizer->buffer[0] == '<') {
+          token = token_new_and_consume_from_buffer(T_LT, 1, tokenizer, 0);
         } else {
           TODO;
         }
@@ -473,7 +475,6 @@ token_t token_next(tokenizer_t *tokenizer) {
               sv_eq(image, sv_from_cstr("int"))     ? T_INTKW :
               sv_eq(image, sv_from_cstr("char"))    ? T_CHARKW :
               sv_eq(image, sv_from_cstr("void"))    ? T_VOIDKW :
-              sv_eq(image, sv_from_cstr("__asm__")) ? T_ASM :
               sv_eq(image, sv_from_cstr("if"))      ? T_IF :
               sv_eq(image, sv_from_cstr("else"))    ? T_ELSE :
               sv_eq(image, sv_from_cstr("for"))     ? T_FOR :
@@ -915,9 +916,8 @@ typedef enum {
   A_ARRAY,     // binary
   A_TYPEDEF,   // typedef_
   A_CAST,      // cast
-  A_ASM,       // fac
   A_IF,        // if_
-  A_WHILE,     // while_
+  A_WHILE,     // binary
   A_EXTERN,    // ast
   A_BREAK,     //
 } ast_kind_t;
@@ -1014,7 +1014,6 @@ char *ast_kind_to_string(ast_kind_t kind) {
     case A_ARRAY: return "ARRAY";
     case A_TYPEDEF: return "TYPEDEF";
     case A_CAST: return "CAST";
-    case A_ASM: return "ASM";
     case A_IF: return "IF";
     case A_WHILE: return "WHILE";
     case A_EXTERN: return "EXTERN";
@@ -1086,7 +1085,6 @@ void ast_dump(ast_t *ast, bool dumptype) {
     case A_INT:
     case A_STRING:
     case A_SYM:
-    case A_ASM:
       printf(SV_FMT, SV_UNPACK(ast->as.fac.image));
       break;
     case A_DECL:
@@ -1233,7 +1231,6 @@ void ast_dump_tree(ast_t *ast, bool dumptype, int indent) {
       break;
     case A_STRING:
     case A_SYM:
-    case A_ASM:
       printf(" " SV_FMT, SV_UNPACK(ast->as.fac.image));
       dump_type;
       break;
@@ -2178,7 +2175,7 @@ typedef enum {
   P_XOR,
   P_AND,
   P_EQ,
-  P_LESS,
+  P_LT,
   P_SHL,
   P_SUM,
   P_MUL,
@@ -2228,6 +2225,7 @@ void parse_create_ast(ast_t **output, int *oi, parser_token_t token) {
     case T_DOT:
     case T_LAND:
     case T_LOR:
+    case T_LT:
       if (token.is_unary) {
         if (*oi < 1) {
           eprintf(token.t.loc, "cannot parse expr");
@@ -2279,7 +2277,6 @@ void parse_create_ast(ast_t **output, int *oi, parser_token_t token) {
     case T_INTKW:
     case T_CHARKW:
     case T_ENUM:
-    case T_ASM:
     case T_IF:
     case T_ELSE:
     case T_FOR:
@@ -2472,6 +2469,10 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
         is_op = 1;
         token.prec = P_LOR;
         break;
+      case T_LT:
+        is_op = 1;
+        token.prec = P_LT;
+        break;
 
       case T_NONE: assert(0);
       case T_RETURN:
@@ -2483,7 +2484,6 @@ ast_t *parse_expr(tokenizer_t *tokenizer) {
       case T_INTKW:
       case T_CHARKW:
       case T_ENUM:
-      case T_ASM:
       case T_IF:
       case T_ELSE:
       case T_FOR:
@@ -2604,18 +2604,6 @@ ast_t *parse_decl(tokenizer_t *tokenizer) {
   return ast;
 }
 
-ast_t *parse_asm(tokenizer_t *tokenizer) {
-  assert(tokenizer);
-
-  location_t start = tokenizer->loc;
-  token_expect(tokenizer, T_ASM);
-  token_expect(tokenizer, T_PARO);
-  token_t str = token_expect(tokenizer, T_STRING);
-  token_expect(tokenizer, T_PARC);
-
-  return ast_malloc((ast_t){A_ASM, location_union(start, tokenizer->loc), {}, {.fac = str}});
-}
-
 ast_t *parse_statement(tokenizer_t *tokenizer) {
   assert(tokenizer);
 
@@ -2647,15 +2635,6 @@ ast_t *parse_statement(tokenizer_t *tokenizer) {
       catch = false;
     }
     ast_t *ast = parse_decl(tokenizer);
-    token_expect(tokenizer, T_SEMICOLON);
-    catch = false;
-    return ast;
-  }
-
-  *tokenizer = savetok;
-  catch = true;
-  if (setjmp(catch_buf) == 0) {
-    ast_t *ast = parse_asm(tokenizer);
     token_expect(tokenizer, T_SEMICOLON);
     catch = false;
     return ast;
@@ -3116,7 +3095,7 @@ void typecheck(ast_t *ast, state_t *state) {
           } else {
             typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
 
-            if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR)) {
+            if (type_is_kind(type, TY_INT) || type_is_kind(type, TY_PTR) || type_is_kind(type, TY_CHAR)) {
               ast->type = *type;
             } else if (type->kind == TY_ARRAY) {
               ast->type = (type_t){TY_PTR, 2, {.ptr = type->as.array.type}};
@@ -3138,6 +3117,8 @@ void typecheck(ast_t *ast, state_t *state) {
         case T_AND:
         case T_LAND:
         case T_LOR:
+        case T_LT:
+          // TODO: if char or something else
           typecheck_expandable(ast->as.binaryop.lhs, state, (type_t){TY_INT, 2, {}});
           typecheck_expandable(ast->as.binaryop.rhs, state, (type_t){TY_INT, 2, {}});
           ast->type = (type_t){TY_INT, 2, {}};
@@ -3365,9 +3346,6 @@ void typecheck(ast_t *ast, state_t *state) {
       }
       ast->type = (type_t){TY_VOID, 0, {}};
       break;
-    case A_ASM:
-      ast->type = (type_t){TY_VOID, 0, {}};
-      break;
     case A_EXTERN:
       typecheck(ast->as.ast, state);
       ast->type = (type_t){TY_VOID, 0, {}};
@@ -3383,7 +3361,7 @@ void typecheck(ast_t *ast, state_t *state) {
   }
 }
 
-void optimize_ast(ast_t **astp, bool debug_opt, optlevel_t opt) {
+void optimize_ast(ast_t **astp, int is_cond, bool debug_opt, optlevel_t opt) {
   assert(astp);
   ast_t *ast = *astp;
   if (!ast) {
@@ -3392,122 +3370,133 @@ void optimize_ast(ast_t **astp, bool debug_opt, optlevel_t opt) {
 
   switch (ast->kind) {
     case A_NONE:
-      assert(0);
+    case A_FUNCDEF:
     case A_PARAMDEF:
     case A_INT:
-    case A_SYM:
     case A_STRING:
-    case A_TYPEDEF:
-    case A_ASM:
-    case A_FUNCDEF:
+    case A_SYM:
     case A_EXTERN:
+    case A_TYPEDEF:
     case A_BREAK:
       break;
-    case A_LIST:
     case A_ASSIGN:
-    case A_ARRAY:
     case A_PARAM:
-      optimize_ast(&ast->as.binary.left, debug_opt, opt);
-      optimize_ast(&ast->as.binary.right, debug_opt, opt);
+      optimize_ast(&ast->as.binary.left, is_cond, debug_opt, opt);
+      optimize_ast(&ast->as.binary.right, is_cond, debug_opt, opt);
+      break;
+    case A_LIST:
+    case A_ARRAY:
+      assert(is_cond == 0);
+      optimize_ast(&ast->as.binary.left, is_cond, debug_opt, opt);
+      optimize_ast(&ast->as.binary.right, is_cond, debug_opt, opt);
       break;
     case A_FUNCDECL:
-      optimize_ast(&ast->as.funcdecl.block, debug_opt, opt);
+      assert(is_cond == 0);
+      optimize_ast(&ast->as.funcdecl.block, is_cond, debug_opt, opt);
       break;
+    case A_BLOCK:
     case A_STATEMENT:
     case A_RETURN:
-    case A_BLOCK:
-      optimize_ast(&ast->as.ast, debug_opt, opt);
+      assert(is_cond == 0);
+      optimize_ast(&ast->as.ast, is_cond, debug_opt, opt);
       break;
     case A_BINARYOP:
-    {
-      ast_t *a = ast->as.binaryop.lhs;
-      ast_t *b = ast->as.binaryop.rhs;
-      optimize_ast(&a, debug_opt, opt);
-      optimize_ast(&b, debug_opt, opt);
-    } break;
+      optimize_ast(&ast->as.binaryop.lhs, is_cond, debug_opt, opt);
+      optimize_ast(&ast->as.binaryop.rhs, is_cond, debug_opt, opt);
+      break;
     case A_UNARYOP:
-      optimize_ast(&ast->as.unaryop.arg, debug_opt, opt);
+      optimize_ast(&ast->as.unaryop.arg, is_cond, debug_opt, opt);
       break;
     case A_DECL:
     case A_GLOBDECL:
-      optimize_ast(&ast->as.decl.expr, debug_opt, opt);
+      assert(is_cond == 0);
+      optimize_ast(&ast->as.decl.expr, is_cond, debug_opt, opt);
+      optimize_ast(&ast->as.decl.array_len, is_cond, debug_opt, opt); // TODO: maybe with optimize_ast array_len operation at compile time is ok
       break;
     case A_FUNCALL:
-      optimize_ast(&ast->as.funcall.params, debug_opt, opt);
+      optimize_ast(&ast->as.funcall.params, is_cond, debug_opt, opt);
       break;
     case A_CAST:
-      optimize_ast(&ast->as.cast.ast, debug_opt, opt);
+      optimize_ast(&ast->as.cast.ast, is_cond, debug_opt, opt);
       break;
     case A_IF:
-    {
-      ast_t *cond = ast->as.if_.cond;
-      if (opt >= OL_BASE && cond->kind == A_BINARYOP && (cond->as.binaryop.op == T_EQ || cond->as.binaryop.op == T_NEQ)) {
-        if (debug_opt) {
-          ast_dump(ast, 0);
-          printf(" -> ");
-        }
-
-        if (cond->as.binaryop.op == T_EQ) {
-          ast_t *then = ast->as.if_.then;
-          ast->as.if_.then = ast->as.if_.else_;
-          ast->as.if_.else_ = then;
-        }
-        cond->as.binaryop.op = T_MINUS;
-
-        if (debug_opt) {
-          ast_dump(ast, 0);
-          printf("\n");
-        }
-
-      } else if (opt >= OL_BASE && cond->kind == A_UNARYOP && cond->as.unaryop.op == T_NOT) {
-        if (debug_opt) {
-          ast_dump(ast, 0);
-          printf(" -> ");
-        }
-
-        ast->as.if_.cond = cond->as.unaryop.arg;
-        free_ptr(cond);
-
-        ast_t *then = ast->as.if_.then;
-        ast->as.if_.then = ast->as.if_.else_;
-        ast->as.if_.else_ = then;
-
-        if (debug_opt) {
-          ast_dump(ast, 0);
-          printf("\n");
-        }
-      }
-
-      optimize_ast(&cond, debug_opt, opt);
-      optimize_ast(&ast->as.if_.then, debug_opt, opt);
-      optimize_ast(&ast->as.if_.else_, debug_opt, opt);
-    } break;
+      assert(is_cond == 0);
+      optimize_ast(&ast->as.if_.cond, 1, debug_opt, opt);
+      optimize_ast(&ast->as.if_.then, 0, debug_opt, opt);
+      optimize_ast(&ast->as.if_.else_, 0, debug_opt, opt);
+      break;
     case A_WHILE:
-    {
-      ast_t *cond = ast->as.binary.left;
-      if (cond->kind == A_BINARYOP
-          && (cond->as.binaryop.op == T_EQ || cond->as.binaryop.op == T_NEQ)) {
-        if (debug_opt) {
-          ast_dump(ast, 0);
-          printf(" -> ");
-        }
+      assert(is_cond == 0);
+      optimize_ast(&ast->as.binary.left, 1, debug_opt, opt);
+      optimize_ast(&ast->as.binary.right, 0, debug_opt, opt);
+      break;
+  }
 
-        cond->as.binaryop.op = T_MINUS;
-        if (cond->as.binaryop.op == T_EQ) {
-          ast->as.binary.left =
-              ast_malloc((ast_t){A_UNARYOP, cond->loc, cond->type, {.unaryop = {T_NOT, cond}}});
-        }
+#define DEBUG_WRAP(block) \
+  do {                    \
+    if (debug_opt) {      \
+      ast_dump(ast, 0);   \
+      printf(" -> ");     \
+    }                     \
+    block;                \
+    if (debug_opt) {      \
+      ast_dump(ast, 0);   \
+      printf("\n");       \
+    }                     \
+  } while (0);
 
-        if (debug_opt) {
-          ast_dump(ast, 0);
-          printf("\n");
+  switch (ast->kind) {
+    case A_NONE:
+    case A_LIST:
+    case A_FUNCDECL:
+    case A_FUNCDEF:
+    case A_PARAMDEF:
+    case A_BLOCK:
+    case A_STATEMENT:
+    case A_RETURN:
+    case A_INT:
+    case A_STRING:
+    case A_SYM:
+    case A_DECL:
+    case A_GLOBDECL:
+    case A_ASSIGN:
+    case A_FUNCALL:
+    case A_PARAM:
+    case A_ARRAY:
+    case A_TYPEDEF:
+    case A_CAST:
+    case A_EXTERN:
+    case A_UNARYOP:
+    case A_BREAK:
+    case A_WHILE: break;
+
+    case A_IF:
+      if (opt >= OL_BASE && ast->as.if_.cond->kind == A_UNARYOP && ast->as.if_.cond->as.unaryop.op == T_NOT) {
+        DEBUG_WRAP(
+            ast_t *cond = ast->as.if_.cond;
+            ast->as.if_.cond = cond->as.unaryop.arg;
+            free_ptr(cond);
+            ast_t *then = ast->as.if_.then;
+            ast->as.if_.then = ast->as.if_.else_;
+            ast->as.if_.else_ = then;)
+      }
+      break;
+
+    case A_BINARYOP:
+      if (is_cond) {
+        if (opt >= OL_BASE && ast->as.binaryop.op == T_EQ) {
+          DEBUG_WRAP(
+              ast->as.binaryop.op = T_MINUS;
+              *astp = ast_malloc((ast_t){A_UNARYOP, ast->loc, {}, {.unaryop = {T_NOT, ast}}});)
+        } else if (opt >= OL_BASE && ast->as.binaryop.op == T_NEQ) {
+          DEBUG_WRAP(
+              ast->as.binaryop.op = T_MINUS;)
         }
       }
-
-      optimize_ast(&cond, debug_opt, opt);
-      optimize_ast(&ast->as.binary.right, debug_opt, opt);
-    } break;
+      break;
   }
+
+#undef DEBUG_WRAP
 }
 
 void data(compiled_t *compiled, bytecode_t b) {
@@ -3862,6 +3851,9 @@ void compile(ast_t *ast, state_t *state) {
           state_add_ir(state, (ir_t){IR_INT, {.num = and}});
           state_add_ir(state, (ir_t){IR_SETULI, {.num = a}});
         } break;
+        case T_LT:
+          TODO;
+          break;
         case T_SHL:
         case T_SHR:
         {
@@ -4059,9 +4051,6 @@ void compile(ast_t *ast, state_t *state) {
         state_add_ir(state, (ir_t){IR_CHANGE_SP, {.num = tsize - size}});
         compile(ast->as.cast.ast, state);
       }
-      break;
-    case A_ASM:
-      TODO;
       break;
     case A_IF:
       // condition CMPA JMPRZ $a
@@ -4599,8 +4588,8 @@ void help(int errorcode) {
           "                          - 0: none\n"
           "                          - 1: base [default]\n"
           "                          - 2: math (simple calculations at compile time)\n"
-          "                          - 3: smart addr (some semplifications in read an write operations)\n"
-          "                          - 4: all\n"
+          "                          - 3: smart addr (some optimizations in read an write operations)\n"
+          "                          - 4: all the above\n"
           " --dev                print the source code loc where the error is thrown\n"
           " -h | --help          print this page and exit\n\n"
           "Modules:\n"
@@ -4808,7 +4797,7 @@ int main(int argc, char **argv) {
     if (debug_opt) {
       printf("OPTIMIZE AST:\n");
     }
-    optimize_ast(&ast, debug_opt, opt);
+    optimize_ast(&ast, 0, debug_opt, opt);
   }
   if ((debug >> M_TYP) & 1) {
     printf("TYPED AST:\n");
