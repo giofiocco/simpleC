@@ -21,6 +21,9 @@ int c_rng_next(int *rng) {
   return *rng;
 }
 
+void set_sprite(int index, char *data) {
+}
+
 int mod(int a, int b) {
   return a % b;
 }

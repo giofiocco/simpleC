@@ -1,0 +1,4 @@
+#!/bin/sh
+
+make -C .. simpleC
+../simpleC --dev -D par -o build/$1.asm src/$1.c

@@ -1,6 +1,6 @@
 TARGET=$(patsubst src/%.c,%,$(wildcard src/*.c))
 MEM=build/example.mem
-SIMPLEC_FLAGS?=--dev
+SIMPLEC_FLAGS?=--dev -O4
 prg?=all
 
 .SECONDARY:

@@ -5,7 +5,8 @@ use `make` to compile everything and `make run prg=<name> args=<args-for-jaris/s
 `clib_wrapper.c` is the wrapper for the `cc` version, a wrapper for the gnu c stdlib.
 `c_stdlib.asm` is the wrapper for the jaris stdlib becasuse of the different calling method of functions in simpleC and what the jaris stdlib expects.
 
-To test run `make test` optionally with `prg=<name>` or `args=<args-for-jaris/sim>`.
+To test run `make test` optionally with `prg=<name>` and/or `args=<args-for-jaris/sim>`,
+it will run the `cc` and `simpleC` versions, collect the output and compare it.
 
 ## List:
 
