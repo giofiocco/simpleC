@@ -1,3 +1,5 @@
+# MOVED TO [codeberg](https://codeberg.org/giofiocco/Aleph0C)
+
 # Simple C
 
 A compiler for a subset of `C` that outputs [Jaris](https://github.com/giofiocco/jaris) assembly.
